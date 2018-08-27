@@ -6,8 +6,14 @@ package mozilla.components.browser.session.engine
 
 import mozilla.components.browser.session.Session
 import mozilla.components.concept.engine.EngineSession
+import mozilla.components.concept.engine.Settings
+import mozilla.components.concept.engine.HitResult
 import org.junit.Assert
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.mockito.Mockito.mock
 
 class EngineObserverTest {
 
@@ -15,14 +21,26 @@ class EngineObserverTest {
     fun testEngineSessionObserver() {
         val session = Session("")
         val engineSession = object : EngineSession() {
+            override val settings: Settings
+                get() = mock(Settings::class.java)
+
             override fun goBack() {}
             override fun goForward() {}
             override fun reload() {}
+            override fun stopLoading() {}
             override fun restoreState(state: Map<String, Any>) {}
+            override fun enableTrackingProtection(policy: TrackingProtectionPolicy) {}
+            override fun disableTrackingProtection() {}
             override fun saveState(): Map<String, Any> {
                 return emptyMap()
             }
 
+            override fun loadData(data: String, mimeType: String, encoding: String) {
+                notifyObservers { onLocationChange(data) }
+                notifyObservers { onProgress(100) }
+                notifyObservers { onLoadingStateChange(true) }
+                notifyObservers { onNavigationStateChange(true, true) }
+            }
             override fun loadUrl(url: String) {
                 notifyObservers { onLocationChange(url) }
                 notifyObservers { onProgress(100) }
@@ -45,14 +63,21 @@ class EngineObserverTest {
     fun testEngineSessionObserverWithSecurityChanges() {
         val session = Session("")
         val engineSession = object : EngineSession() {
+            override val settings: Settings
+                get() = mock(Settings::class.java)
+
             override fun goBack() {}
             override fun goForward() {}
+            override fun stopLoading() {}
             override fun reload() {}
             override fun restoreState(state: Map<String, Any>) {}
+            override fun enableTrackingProtection(policy: TrackingProtectionPolicy) {}
+            override fun disableTrackingProtection() {}
             override fun saveState(): Map<String, Any> {
                 return emptyMap()
             }
 
+            override fun loadData(data: String, mimeType: String, encoding: String) {}
             override fun loadUrl(url: String) {
                 if (url.startsWith("https://")) {
                     notifyObservers { onSecurityChange(true, "host", "issuer") }
@@ -68,5 +93,89 @@ class EngineObserverTest {
 
         engineSession.loadUrl("https://mozilla.org")
         Assert.assertEquals(Session.SecurityInfo(true, "host", "issuer"), session.securityInfo)
+    }
+
+    @Test
+    fun testEngineSessionObserverWithTrackingProtection() {
+        val session = Session("")
+        val engineSession = object : EngineSession() {
+            override val settings: Settings
+                get() = mock(Settings::class.java)
+
+            override fun goBack() {}
+            override fun goForward() {}
+            override fun stopLoading() {}
+            override fun reload() {}
+            override fun restoreState(state: Map<String, Any>) {}
+            override fun enableTrackingProtection(policy: TrackingProtectionPolicy) {
+                notifyObservers { onTrackerBlockingEnabledChange(true) }
+            }
+            override fun disableTrackingProtection() {
+                notifyObservers { onTrackerBlockingEnabledChange(false) }
+            }
+            override fun saveState(): Map<String, Any> {
+                return emptyMap()
+            }
+
+            override fun loadUrl(url: String) {}
+            override fun loadData(data: String, mimeType: String, encoding: String) {}
+        }
+        val observer = EngineObserver(session)
+        engineSession.register(observer)
+
+        engineSession.enableTrackingProtection()
+        assertTrue(session.trackerBlockingEnabled)
+
+        engineSession.disableTrackingProtection()
+        assertFalse(session.trackerBlockingEnabled)
+
+        observer.onTrackerBlocked("tracker1")
+        assertEquals(listOf("tracker1"), session.trackersBlocked)
+
+        observer.onTrackerBlocked("tracker2")
+        assertEquals(listOf("tracker1", "tracker2"), session.trackersBlocked)
+    }
+
+    @Test
+    fun testEngineObserverClearsWebsiteTitleIfNewPageStartsLoading() {
+        val session = Session("https://www.mozilla.org")
+        session.title = "Hello World"
+
+        val observer = EngineObserver(session)
+        observer.onTitleChange("Mozilla")
+
+        assertEquals("Mozilla", session.title)
+
+        observer.onLocationChange("https://getpocket.com")
+
+        assertEquals("", session.title)
+    }
+
+    @Test
+    fun testEngineObserverClearsBlockedTrackersNewPageStartsLoading() {
+        val session = Session("https://www.mozilla.org")
+        val observer = EngineObserver(session)
+
+        observer.onTrackerBlocked("tracker1")
+        observer.onTrackerBlocked("tracker2")
+        assertEquals(listOf("tracker1", "tracker2"), session.trackersBlocked)
+
+        observer.onLoadingStateChange(true)
+        assertEquals(emptyList<String>(), session.trackersBlocked)
+    }
+
+    @Test
+    fun testEngineObserverPassingHitResult() {
+        val session = Session("https://www.mozilla.org")
+        val observer = EngineObserver(session)
+        val hitResult = HitResult.UNKNOWN("data://foobar")
+
+        observer.onLongPress(hitResult)
+
+        session.hitResult.consume {
+            assertEquals("data://foobar", it.src)
+            assertTrue(it is HitResult.UNKNOWN)
+            true
+        }
     }
 }

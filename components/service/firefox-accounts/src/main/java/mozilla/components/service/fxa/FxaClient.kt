@@ -18,8 +18,6 @@ internal interface FxaClient : Library {
 
         init {
             try {
-                System.loadLibrary("crypto")
-                System.loadLibrary("ssl")
                 System.loadLibrary("fxa_client")
                 INSTANCE = Native.loadLibrary(JNA_LIBRARY_NAME, FxaClient::class.java) as FxaClient
             } catch (e: UnsatisfiedLinkError) {
@@ -53,6 +51,7 @@ internal interface FxaClient : Library {
     ): RawFxAccount
 
     fun fxa_from_json(json: String, e: Error.ByReference): RawFxAccount
+    fun fxa_to_json(fxa: RawFxAccount, e: Error.ByReference): Pointer
 
     fun fxa_begin_oauth_flow(
         fxa: RawFxAccount,

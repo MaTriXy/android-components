@@ -4,15 +4,29 @@
 
 package mozilla.components.browser.engine.system
 
+import android.net.Uri
 import android.net.http.SslCertificate
+import android.os.Bundle
+import android.os.Message
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import android.webkit.WebView.HitTestResult
+import mozilla.components.browser.engine.system.matcher.UrlMatcher
 import mozilla.components.concept.engine.EngineSession
+import mozilla.components.concept.engine.HitResult
+import mozilla.components.support.test.eq
+import mozilla.components.support.test.mock
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.Mockito.`when`
 import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.verify
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 
@@ -42,7 +56,6 @@ class SystemEngineViewTest {
         engineSession.register(object : EngineSession.Observer {
             override fun onLoadingStateChange(loading: Boolean) { observedLoadingState = loading }
             override fun onLocationChange(url: String) { observedUrl = url }
-            override fun onProgress(progress: Int) { }
             override fun onNavigationStateChange(canGoBack: Boolean?, canGoForward: Boolean?) {
                 observedCanGoBack = true
                 observedCanGoForward = true
@@ -77,6 +90,100 @@ class SystemEngineViewTest {
     }
 
     @Test
+    fun testHitResultTypeHandling() {
+        val engineSession = SystemEngineSession()
+        val engineView = SystemEngineView(RuntimeEnvironment.application)
+        var hitTestResult: HitResult = HitResult.UNKNOWN("")
+        engineView.render(engineSession)
+        engineSession.register(object : EngineSession.Observer {
+            override fun onLongPress(hitResult: HitResult) {
+                hitTestResult = hitResult
+            }
+        })
+
+        engineView.handleLongClick(HitTestResult.EMAIL_TYPE, "mailto:asa@mozilla.com")
+        assertTrue(hitTestResult is HitResult.EMAIL)
+        assertEquals("mailto:asa@mozilla.com", hitTestResult.src)
+
+        engineView.handleLongClick(HitTestResult.GEO_TYPE, "geo:1,-1")
+        assertTrue(hitTestResult is HitResult.GEO)
+        assertEquals("geo:1,-1", hitTestResult.src)
+
+        engineView.handleLongClick(HitTestResult.PHONE_TYPE, "tel:+123456789")
+        assertTrue(hitTestResult is HitResult.PHONE)
+        assertEquals("tel:+123456789", hitTestResult.src)
+
+        engineView.handleLongClick(HitTestResult.IMAGE_TYPE, "image.png")
+        assertTrue(hitTestResult is HitResult.IMAGE)
+        assertEquals("image.png", hitTestResult.src)
+
+        engineView.handleLongClick(HitTestResult.SRC_ANCHOR_TYPE, "https://mozilla.org")
+        assertTrue(hitTestResult is HitResult.UNKNOWN)
+        assertEquals("https://mozilla.org", hitTestResult.src)
+
+        var result = engineView.handleLongClick(HitTestResult.SRC_IMAGE_ANCHOR_TYPE, "image.png")
+        assertFalse(result) // Intentional for image links; see ImageHandler tests.
+
+        result = engineView.handleLongClick(HitTestResult.EDIT_TEXT_TYPE, "https://mozilla.org")
+        assertFalse(result)
+    }
+
+    @Test
+    fun testImageHandler() {
+        val engineSession = SystemEngineSession()
+        val engineView = SystemEngineView(RuntimeEnvironment.application)
+        val handler = SystemEngineView.ImageHandler(engineSession)
+        val message = mock(Message::class.java)
+        val bundle = mock(Bundle::class.java)
+        var observerNotified = false
+
+        `when`(message.data).thenReturn(bundle)
+        `when`(message.data.getString("url")).thenReturn("https://mozilla.org")
+        `when`(message.data.getString("src")).thenReturn("file.png")
+
+        engineView.render(engineSession)
+        engineSession.register(object : EngineSession.Observer {
+            override fun onLongPress(hitResult: HitResult) {
+                observerNotified = true
+            }
+        })
+
+        handler.handleMessage(message)
+        assertTrue(observerNotified)
+
+        observerNotified = false
+        val nullHandler = SystemEngineView.ImageHandler(null)
+        nullHandler.handleMessage(message)
+        assertFalse(observerNotified)
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun testNullImageSrc() {
+        val engineSession = SystemEngineSession()
+        val handler = SystemEngineView.ImageHandler(engineSession)
+        val message = mock(Message::class.java)
+        val bundle = mock(Bundle::class.java)
+
+        `when`(message.data).thenReturn(bundle)
+        `when`(message.data.getString("url")).thenReturn("https://mozilla.org")
+
+        handler.handleMessage(message)
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun testNullImageUri() {
+        val engineSession = SystemEngineSession()
+        val handler = SystemEngineView.ImageHandler(engineSession)
+        val message = mock(Message::class.java)
+        val bundle = mock(Bundle::class.java)
+
+        `when`(message.data).thenReturn(bundle)
+        `when`(message.data.getString("src")).thenReturn("file.png")
+
+        handler.handleMessage(message)
+    }
+
+    @Test
     fun testWebChromeClientNotifiesObservers() {
         val engineSession = SystemEngineSession()
         val engineView = SystemEngineView(RuntimeEnvironment.application)
@@ -84,14 +191,105 @@ class SystemEngineViewTest {
 
         var observedProgress = 0
         engineSession.register(object : EngineSession.Observer {
-            override fun onLoadingStateChange(loading: Boolean) { }
-            override fun onLocationChange(url: String) { }
             override fun onProgress(progress: Int) { observedProgress = progress }
-            override fun onNavigationStateChange(canGoBack: Boolean?, canGoForward: Boolean?) { }
-            override fun onSecurityChange(secure: Boolean, host: String?, issuer: String?) { }
         })
 
         engineView.currentWebView.webChromeClient.onProgressChanged(null, 100)
         assertEquals(100, observedProgress)
+    }
+
+    @Test
+    fun testWebViewClientNotifiesObserversAboutTitleChanges() {
+        val engineSession = SystemEngineSession()
+
+        val engineView = SystemEngineView(RuntimeEnvironment.application)
+        engineView.render(engineSession)
+
+        val observer: EngineSession.Observer = mock()
+        engineSession.register(observer)
+
+        engineView.currentWebView.webChromeClient.onReceivedTitle(engineView.currentWebView, "Hello World!")
+
+        verify(observer).onTitleChange(eq("Hello World!"))
+    }
+
+    @Test
+    fun testDownloadListenerNotifiesObservers() {
+        val engineSession = SystemEngineSession()
+        val engineView = SystemEngineView(RuntimeEnvironment.application)
+        engineView.render(engineSession)
+
+        var observerNotified = false
+
+        engineSession.register(object : EngineSession.Observer {
+            override fun onExternalResource(
+                url: String,
+                fileName: String?,
+                contentLength: Long?,
+                contentType: String?,
+                cookie: String?,
+                userAgent: String?
+            ) {
+                assertEquals("https://download.mozilla.org", url)
+                assertEquals("image.png", fileName)
+                assertEquals(1337L, contentLength)
+                assertNull(cookie)
+                assertEquals("Components/1.0", userAgent)
+
+                observerNotified = true
+            }
+        })
+
+        val listener = engineView.createDownloadListener()
+        listener.onDownloadStart(
+            "https://download.mozilla.org",
+            "Components/1.0",
+            "attachment; filename=\"image.png\"",
+            "image/png",
+            1337)
+
+        assertTrue(observerNotified)
+    }
+
+    @Test
+    fun testWebViewClientTrackingProtection() {
+        SystemEngineView.URL_MATCHER = UrlMatcher(arrayOf("blocked.random"))
+
+        val engineSession = SystemEngineSession()
+        val engineView = SystemEngineView(RuntimeEnvironment.application)
+        engineView.render(engineSession)
+
+        val webViewClient = engineView.currentWebView.webViewClient
+        val invalidRequest = mock(WebResourceRequest::class.java)
+        `when`(invalidRequest.isForMainFrame).thenReturn(false)
+        `when`(invalidRequest.url).thenReturn(Uri.parse("market://foo.bar/"))
+
+        var response = webViewClient.shouldInterceptRequest(engineView.currentWebView, invalidRequest)
+        assertNull(response)
+
+        engineSession.trackingProtectionEnabled = true
+        response = webViewClient.shouldInterceptRequest(engineView.currentWebView, invalidRequest)
+        assertNotNull(response)
+        assertNull(response.data)
+        assertNull(response.encoding)
+        assertNull(response.mimeType)
+
+        val faviconRequest = mock(WebResourceRequest::class.java)
+        `when`(faviconRequest.isForMainFrame).thenReturn(false)
+        `when`(faviconRequest.url).thenReturn(Uri.parse("http://foo/favicon.ico"))
+        response = webViewClient.shouldInterceptRequest(engineView.currentWebView, faviconRequest)
+        assertNotNull(response)
+        assertNull(response.data)
+        assertNull(response.encoding)
+        assertNull(response.mimeType)
+
+        val blockedRequest = mock(WebResourceRequest::class.java)
+        `when`(blockedRequest.isForMainFrame).thenReturn(false)
+        `when`(blockedRequest.url).thenReturn(Uri.parse("http://blocked.random"))
+        response = webViewClient.shouldInterceptRequest(engineView.currentWebView, blockedRequest)
+        assertNotNull(response)
+        assertNull(response.data)
+        assertNull(response.encoding)
+        assertNull(response.mimeType)
     }
 }

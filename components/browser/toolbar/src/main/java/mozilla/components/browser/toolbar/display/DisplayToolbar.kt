@@ -4,15 +4,16 @@
 
 package mozilla.components.browser.toolbar.display
 
-import android.animation.LayoutTransition
 import android.annotation.SuppressLint
 import android.content.Context
+import android.transition.TransitionManager
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.ProgressBar
 import android.widget.TextView
 import mozilla.components.browser.menu.BrowserMenuBuilder
 import mozilla.components.browser.toolbar.BrowserToolbar
@@ -20,7 +21,6 @@ import mozilla.components.browser.toolbar.R
 import mozilla.components.concept.toolbar.Toolbar
 import mozilla.components.support.ktx.android.view.dp
 import mozilla.components.support.ktx.android.view.isVisible
-import mozilla.components.ui.progress.AnimatedProgressBar
 
 /**
  * Sub-component of the browser toolbar responsible for displaying the URL and related controls.
@@ -56,6 +56,7 @@ import mozilla.components.ui.progress.AnimatedProgressBar
  *
  */
 @SuppressLint("ViewConstructor") // This view is only instantiated in code
+@Suppress("LargeClass")
 internal class DisplayToolbar(
     context: Context,
     val toolbar: BrowserToolbar
@@ -114,7 +115,11 @@ internal class DisplayToolbar(
         }
     }
 
-    private val progressView = AnimatedProgressBar(context)
+    private val progressView = ProgressBar(
+        context, null, android.R.attr.progressBarStyleHorizontal
+    ).apply {
+        visibility = View.GONE
+    }
 
     private val browserActions: MutableList<DisplayAction> = mutableListOf()
     private val pageActions: MutableList<DisplayAction> = mutableListOf()
@@ -148,8 +153,6 @@ internal class DisplayToolbar(
         addView(urlView)
         addView(menuView)
         addView(progressView)
-
-        layoutTransition = LayoutTransition()
     }
 
     /**
@@ -221,6 +224,8 @@ internal class DisplayToolbar(
      * should be updated if needed.
      */
     fun invalidateActions() {
+        TransitionManager.beginDelayedTransition(this)
+
         for (action in navigationActions + pageActions + browserActions) {
             val visible = action.actual.visible()
 
@@ -238,8 +243,6 @@ internal class DisplayToolbar(
 
             action.view?.let { action.actual.bind(it) }
         }
-
-        requestLayout()
     }
 
     // We measure the views manually to avoid overhead by using complex ViewGroup implementations

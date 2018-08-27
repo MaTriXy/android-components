@@ -16,8 +16,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.ArgumentMatchers
+import org.mockito.Mockito.`when`
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
+import org.mockito.Mockito.spy
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoMoreInteractions
 import org.robolectric.RobolectricTestRunner
@@ -217,19 +219,24 @@ class BrowserToolbarTest {
     fun `display and edit toolbar will be laid out at the exact same position`() {
         val toolbar = BrowserToolbar(RuntimeEnvironment.application)
         val displayToolbar = mock(DisplayToolbar::class.java)
-        val ediToolbar = mock(EditToolbar::class.java)
+        val editToolbar = mock(EditToolbar::class.java)
 
         toolbar.displayToolbar = displayToolbar
-        toolbar.editToolbar = ediToolbar
+        toolbar.editToolbar = editToolbar
 
         toolbar.removeAllViews()
         toolbar.addView(toolbar.displayToolbar)
         toolbar.addView(toolbar.editToolbar)
 
+        `when`(displayToolbar.measuredWidth).thenReturn(1000)
+        `when`(displayToolbar.measuredHeight).thenReturn(200)
+        `when`(editToolbar.measuredWidth).thenReturn(1000)
+        `when`(editToolbar.measuredHeight).thenReturn(200)
+
         toolbar.layout(100, 100, 1100, 300)
 
-        verify(displayToolbar).layout(100, 100, 1100, 300)
-        verify(ediToolbar).layout(100, 100, 1100, 300)
+        verify(displayToolbar).layout(0, 0, 1000, 200)
+        verify(editToolbar).layout(0, 0, 1000, 200)
     }
 
     @Test
@@ -375,5 +382,40 @@ class BrowserToolbarTest {
         toolbar.onUrlClicked = { false }
 
         assertFalse(displayToolbar.onUrlClicked())
+    }
+
+    @Test
+    fun `layout of children will factor in padding`() {
+        val toolbar = BrowserToolbar(RuntimeEnvironment.application)
+        toolbar.setPadding(50, 20, 60, 15)
+        toolbar.removeAllViews()
+
+        val displayToolbar = spy(DisplayToolbar(RuntimeEnvironment.application, toolbar)).also {
+            toolbar.displayToolbar = it
+        }
+
+        val editToolbar = spy(EditToolbar(RuntimeEnvironment.application, toolbar)).also {
+            toolbar.editToolbar = it
+        }
+
+        listOf(displayToolbar, editToolbar).forEach {
+            toolbar.addView(it)
+        }
+
+        val widthSpec = View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY)
+        val heightSpec = View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY)
+        toolbar.measure(widthSpec, heightSpec)
+
+        assertEquals(1000, toolbar.measuredWidth)
+        assertEquals(200, toolbar.measuredHeight)
+
+        toolbar.layout(0, 0, 1000, 1000)
+
+        listOf(displayToolbar, editToolbar).forEach {
+            assertEquals(890, it.measuredWidth)
+            assertEquals(165, it.measuredHeight)
+
+            verify(it).layout(50, 20, 940, 185)
+        }
     }
 }

@@ -6,11 +6,11 @@ apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
 android {
-    compileSdkVersion rootProject.ext.build['compileSdkVersion']
+    compileSdkVersion Config.compileSdkVersion
 
     defaultConfig {
-        minSdkVersion rootProject.ext.build['minSdkVersion']
-        targetSdkVersion rootProject.ext.build['targetSdkVersion']
+        minSdkVersion Config.minSdkVersion
+        targetSdkVersion Config.targetSdkVersion
     }
 
     lintOptions {
@@ -22,6 +22,7 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            consumerProguardFiles 'proguard-rules-consumer.pro'
         }
     }
 }
@@ -35,30 +36,48 @@ repositories {
     }
 }
 
-configurations{
-    jni
+configurations {
+    fxa
+
+    // There's an interaction between Gradle's resolution of dependencies with different types
+    // (@jar, @aar) for `implementation` and `testImplementation` and with Android Studio's built-in
+    // JUnit test runner.  The runtime classpath in the built-in JUnit test runner gets the
+    // dependency from the `implementation`, which is type @aar, and therefore the JNA dependency
+    // doesn't provide the JNI dispatch libraries in the correct Java resource directories.  I think
+    // what's happening is that @aar type in `implementation` resolves to the @jar type in
+    // `testImplementation`, and that it wins the dependency resolution battle.
+    //
+    // A workaround is to add a new configuration which depends on the @jar type and to reference
+    // the underlying JAR file directly in `testImplementation`.  This JAR file doesn't resolve to
+    // the @aar type in `implementation`.  This works when invoked via `gradle`, but also sets the
+    // correct runtime classpath when invoked with Android Studio's built-in JUnit test runner.
+    // Success!
+    jnaForTest
 }
 
 dependencies {
-    jni "mozilla:fxa_client_android:${rootProject.ext.dependencies['fxa']}@zip"
-    jni "mozilla:fxa_client_android_deps:${rootProject.ext.dependencies['fxa']}@zip"
+    jnaForTest Deps.jnaForTest
 
-    implementation "org.jetbrains.kotlin:kotlin-stdlib:${rootProject.ext.dependencies['kotlin']}"
-    implementation "net.java.dev.jna:jna:${rootProject.ext.dependencies['jna']}"
-    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:${rootProject.ext.dependencies['coroutines']}"
+    fxa Deps.mozilla_fxa
 
-    testImplementation "junit:junit:${rootProject.ext.dependencies['junit']}"
-    testImplementation "org.robolectric:robolectric:${rootProject.ext.dependencies['robolectric']}"
-    testImplementation "org.mockito:mockito-core:${rootProject.ext.dependencies['mockito']}"
+    implementation Deps.kotlin_stdlib
+    implementation Deps.jna
+    implementation Deps.kotlin_coroutines
+
+    testImplementation files(configurations.jnaForTest.files)
+
+    testImplementation Deps.testing_junit
+    testImplementation Deps.testing_robolectric
+    testImplementation Deps.testing_mockito
 }
 
-task unzipJniLibs(type: Copy) {
-    def outputDir = "$project.projectDir/src/main/jniLibs"
-    from configurations.jni.files.collect { zipTree(it) }
-    into outputDir
-}
+ext.jniOutputDir = "src/main/jniLibs"
 
-preBuild.dependsOn(unzipJniLibs)
+task unzipFxaLibs(type: Copy) {
+    from configurations.fxa.files.collect { zipTree(it) }
+    into jniOutputDir
+}
+preBuild.dependsOn(unzipFxaLibs)
 
 archivesBaseName = "fxa"
 

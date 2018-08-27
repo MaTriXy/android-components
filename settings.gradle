@@ -87,6 +87,9 @@ project(':ui-icons').projectDir = new File('components/ui/icons')
 include ':ui-progress'
 project(':ui-progress').projectDir = new File('components/ui/progress')
 
+include ':ui-tabcounter'
+project(':ui-tabcounter').projectDir = new File('components/ui/tabcounter')
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Services
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -94,12 +97,18 @@ project(':ui-progress').projectDir = new File('components/ui/progress')
 include ':service-firefox-accounts'
 project(':service-firefox-accounts').projectDir = new File('components/service/firefox-accounts')
 
+include ':service-fretboard'
+project(':service-fretboard').projectDir = new File('components/service/fretboard')
+
 include ':service-telemetry'
 project(':service-telemetry').projectDir = new File('components/service/telemetry')
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Support components
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+include ':support-base'
+project(':support-base').projectDir = new File(rootDir, 'components/support/base')
 
 include ':support-ktx'
 project(':support-ktx').projectDir = new File(rootDir, 'components/support/ktx')
@@ -109,6 +118,13 @@ project(':support-test').projectDir = new File(rootDir, 'components/support/test
 
 include ':support-utils'
 project(':support-utils').projectDir = new File(rootDir, 'components/support/utils')
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Tooling
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+include ':tooling-lint'
+project(':tooling-lint').projectDir = new File(rootDir, 'components/tooling/lint')
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Samples

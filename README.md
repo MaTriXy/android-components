@@ -8,6 +8,8 @@
 
 _A collection of Android libraries to build browsers or browser-like applications._
 
+ For more information [see the website](https://mozilla-mobile.github.io/android-components/).
+
 # Getting Involved
 
 We encourage you to participate in this open source project. We love pull requests, bug reports, ideas, (security) code reviews or any kind of positive contribution.
@@ -86,7 +88,7 @@ The following diagram does not contain all available components. See [Components
 # Components
 
 * 🔴 **In Development** - Not ready to be used in shipping products.
-* ⚪ **Preview** - This component is almost ready and can be (partially) tested in products.
+* ⚪ **Preview** - This component is almost/partially ready and can be tested in products.
 * 🔵 **Production ready** - Used by shipping products.
 
 ## Browser
@@ -109,11 +111,11 @@ High-level components for building browser(-like) apps.
 
 * 🔵 [**Search**](components/browser/search/README.md) - Search plugins and companion code to load, parse and use them.
 
-* 🔴 [**Session**](components/browser/session/README.md) - A generic representation of a browser session.
+* ⚪ [**Session**](components/browser/session/README.md) - A generic representation of a browser session.
 
 * 🔴 [**Tabstray**](components/browser/tabstray/README.md) - A customizable tabs tray for browsers.
 
-* 🔴 [**Toolbar**](components/browser/toolbar/README.md) - A customizable toolbar for browsers.
+* ⚪ [**Toolbar**](components/browser/toolbar/README.md) - A customizable toolbar for browsers.
 
 ## Concept
 
@@ -123,7 +125,7 @@ _API contracts and abstraction layers for browser components._
 
 * 🔴 [**Tabstray**](components/concept/tabstray/README.md) - Abstract definition of a tabs tray component.
 
-* 🔴 [**Toolbar**](components/concept/toolbar/README.md) - Abstract definition of a browser toolbar component.
+* ⚪ [**Toolbar**](components/concept/toolbar/README.md) - Abstract definition of a browser toolbar component.
 
 ## Feature
 
@@ -149,13 +151,17 @@ _Generic low-level UI components for building apps._
 
 * 🔵 [**Icons**](components/ui/icons/README.md) - A collection of often used browser icons.
 
-* 🔵 [**Progress**](components/ui/progress/README.md) - An animated progress bar following the Photon Design System. 
+* 🔵 [**Progress**](components/ui/progress/README.md) - An animated progress bar following the Photon Design System.
+
+* ⚪ [**Tabcounter**](components/ui/tabcounter/README.md) - A button that shows the current tab count and can animate state changes.
 
 ## Service
 
 _Components and libraries to interact with backend services._
 
-* 🔴 [**Firefox Accounts (FxA)**](components/service/firefox-accounts/README.md) - A library for integrating with Firefox Accounts.
+* 🔵 [**Firefox Accounts (FxA)**](components/service/firefox-accounts/README.md) - A library for integrating with Firefox Accounts.
+
+* ⚪ [**Fretboard**](components/service/fretboard/README.md) - An Android framework for segmenting users in order to run A/B tests and rollout features gradually.
 
 * 🔵 [**Telemetry**](components/service/telemetry/README.md) - A generic library for sending telemetry pings from Android applications to Mozilla's telemetry service.
 
@@ -163,11 +169,17 @@ _Components and libraries to interact with backend services._
 
 _Supporting components with generic helper code._
 
+* ⚪ [**Base**](components/support/base/README.md) - Base component containing building blocks for components.
+
 * 🔵 [**Ktx**](components/support/ktx/README.md) - A set of Kotlin extensions on top of the Android framework and Kotlin standard library.
 
 * ⚪ [**Test**](components/support/test/README.md) - A collection of helpers for testing components.
 
 * 🔵 [**Utils**](components/support/utils/README.md) - Generic utility classes to be shared between projects.
+
+## Tooling
+
+* 🔵 [**Lint**](components/tooling/lint/README.md) - Custom Lint rules for the components repository.
 
 # Sample apps
 

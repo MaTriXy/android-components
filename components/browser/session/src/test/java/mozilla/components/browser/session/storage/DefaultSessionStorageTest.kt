@@ -6,11 +6,13 @@ package mozilla.components.browser.session.storage
 
 import android.util.AtomicFile
 import mozilla.components.browser.session.Session
+import mozilla.components.browser.session.Session.Source
 import mozilla.components.browser.session.SessionManager
 import mozilla.components.browser.session.tab.CustomTabConfig
 import mozilla.components.concept.engine.Engine
 import mozilla.components.concept.engine.EngineSession
 import org.json.JSONException
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -128,6 +130,35 @@ class DefaultSessionStorageTest {
     }
 
     @Test
+    fun testPersistIgnoresPrivateSessions() {
+        val session = Session("http://mozilla.org", true)
+        val engineSessionState = mutableMapOf("k0" to "v0", "k1" to 1, "k2" to true, "k3" to emptyList<Any>())
+
+        val engineSession = mock(EngineSession::class.java)
+        `when`(engineSession.saveState()).thenReturn(engineSessionState)
+
+        val engine = mock(Engine::class.java)
+        `when`(engine.name()).thenReturn("gecko")
+        `when`(engine.createSession()).thenReturn(mock(EngineSession::class.java))
+
+        val sessionManager = SessionManager(engine)
+        sessionManager.add(session, true, engineSession)
+
+        // Persist current sessions
+        val storage = DefaultSessionStorage(RuntimeEnvironment.application)
+        val persisted = storage.persist(sessionManager)
+        assertTrue(persisted)
+
+        // Restore session using a fresh SessionManager
+        val restoredSessionManager = SessionManager(engine)
+        val restored = storage.restore(restoredSessionManager)
+        assertTrue(restored)
+
+        // Nothing to restore as private sessions should not be persisted
+        assertEquals(0, restoredSessionManager.sessions.size)
+    }
+
+    @Test
     fun testRestoreReturnsFalseOnIOException() {
         val engine = mock(Engine::class.java)
         `when`(engine.name()).thenReturn("gecko")
@@ -241,6 +272,21 @@ class DefaultSessionStorageTest {
         storage.start(SessionManager(engine))
         storage.stop()
         verify(scheduledFuture).cancel(ArgumentMatchers.eq(false))
+    }
+
+    @Test
+    fun testDeserializeWithInvalidSource() {
+        val storage = DefaultSessionStorage(RuntimeEnvironment.application)
+
+        val json = JSONObject()
+        json.put("url", "testUrl")
+        json.put("source", Source.NEW_TAB.name)
+        assertEquals(Source.NEW_TAB, storage.deserializeSession("testId", json).source)
+
+        val jsonInvalid = JSONObject()
+        jsonInvalid.put("url", "testUrl")
+        jsonInvalid.put("source", "invalidSource")
+        assertEquals(Source.NONE, storage.deserializeSession("testId", jsonInvalid).source)
     }
 
     @Suppress("UNCHECKED_CAST")

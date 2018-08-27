@@ -1,0 +1,31 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+apply plugin: 'java-library'
+apply plugin: 'kotlin'
+
+targetCompatibility = JavaVersion.VERSION_1_7
+sourceCompatibility = JavaVersion.VERSION_1_7
+
+dependencies {
+  compileOnly Deps.tools_lintapi
+  compileOnly Deps.kotlin_stdlib
+
+  testImplementation Deps.tools_lint
+  testImplementation Deps.tools_linttests
+}
+
+jar {
+  manifest {
+    attributes('Lint-Registry-v2': 'mozilla.components.tooling.lint.LintIssueRegistry')
+  }
+}
+
+task lint {
+  doLast {
+    // Do nothing. We execute the same set of tasks for all our modules in parallel on taskcluster.
+    // This project doesn't have a lint task. To avoid special casing our automation I just added
+    // an empty lint task here.
+  }
+}
