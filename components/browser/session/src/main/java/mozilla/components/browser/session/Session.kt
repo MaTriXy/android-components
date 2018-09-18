@@ -46,6 +46,9 @@ class Session(
         fun onTrackerBlockingEnabledChanged(session: Session, blockingEnabled: Boolean) = Unit
         fun onTrackerBlocked(session: Session, blocked: String, all: List<String>) = Unit
         fun onLongPress(session: Session, hitResult: HitResult): Boolean = false
+        fun onFindResult(session: Session, result: FindResult) = Unit
+        fun onDesktopModeChanged(session: Session, enabled: Boolean) = Unit
+        fun onFullScreenChanged(session: Session, enabled: Boolean) = Unit
     }
 
     /**
@@ -107,6 +110,15 @@ class Session(
          */
         USER_ENTERED
     }
+
+    /**
+     * A value type representing a result of a "find in page" operation.
+     *
+     * @property activeMatchOrdinal the zero-based ordinal of the currently selected match.
+     * @property numberOfMatches the match count
+     * @property isDoneCounting true if the find operation has completed, otherwise false.
+     */
+    data class FindResult(val activeMatchOrdinal: Int, val numberOfMatches: Int, val isDoneCounting: Boolean)
 
     /**
      * The currently loading or loaded URL.
@@ -198,9 +210,37 @@ class Session(
         }
     }
 
+    /**
+     * List of results of that latest "find in page" operation.
+     */
+    var findResults: List<FindResult> by Delegates.observable(emptyList()) { _, old, new ->
+        notifyObservers(old, new) {
+            if (new.isNotEmpty()) {
+                onFindResult(this@Session, findResults.last())
+            }
+        }
+    }
+
+    /**
+     * The target of the latest long click operation.
+     */
     var hitResult: Consumable<HitResult> by Delegates.vetoable(Consumable.empty()) { _, _, result ->
         val consumers = wrapConsumers<HitResult> { onLongPress(this@Session, it) }
         !result.consumeBy(consumers)
+    }
+
+    /**
+     * Desktop Mode state, true if the desktop mode is requested, otherwise false.
+     */
+    var desktopMode: Boolean by Delegates.observable(false) { _, old, new ->
+        notifyObservers(old, new) { onDesktopModeChanged(this@Session, new) }
+    }
+
+    /**
+     * Exits fullscreen mode if it's in that state.
+     */
+    var fullScreenMode: Boolean by Delegates.observable(false) { _, old, new ->
+        notifyObservers(old, new) { notifyObservers { onFullScreenChanged(this@Session, fullScreenMode) } }
     }
 
     /**

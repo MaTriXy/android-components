@@ -6,8 +6,8 @@ package mozilla.components.browser.session.engine
 
 import mozilla.components.browser.session.Session
 import mozilla.components.concept.engine.EngineSession
-import mozilla.components.concept.engine.Settings
 import mozilla.components.concept.engine.HitResult
+import mozilla.components.concept.engine.Settings
 import org.junit.Assert
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -31,6 +31,14 @@ class EngineObserverTest {
             override fun restoreState(state: Map<String, Any>) {}
             override fun enableTrackingProtection(policy: TrackingProtectionPolicy) {}
             override fun disableTrackingProtection() {}
+            override fun toggleDesktopMode(enable: Boolean, reload: Boolean) {
+                notifyObservers { onDesktopModeChange(enable) }
+            }
+            override fun clearData() {}
+            override fun findAll(text: String) {}
+            override fun findNext(forward: Boolean) {}
+            override fun clearFindMatches() {}
+            override fun exitFullScreenMode() {}
             override fun saveState(): Map<String, Any> {
                 return emptyMap()
             }
@@ -51,12 +59,14 @@ class EngineObserverTest {
         engineSession.register(EngineObserver(session))
 
         engineSession.loadUrl("http://mozilla.org")
+        engineSession.toggleDesktopMode(true)
         Assert.assertEquals("http://mozilla.org", session.url)
         Assert.assertEquals("", session.searchTerms)
         Assert.assertEquals(100, session.progress)
         Assert.assertEquals(true, session.loading)
         Assert.assertEquals(true, session.canGoForward)
         Assert.assertEquals(true, session.canGoBack)
+        Assert.assertEquals(true, session.desktopMode)
     }
 
     @Test
@@ -73,6 +83,12 @@ class EngineObserverTest {
             override fun restoreState(state: Map<String, Any>) {}
             override fun enableTrackingProtection(policy: TrackingProtectionPolicy) {}
             override fun disableTrackingProtection() {}
+            override fun toggleDesktopMode(enable: Boolean, reload: Boolean) {}
+            override fun clearData() {}
+            override fun findAll(text: String) {}
+            override fun findNext(forward: Boolean) {}
+            override fun clearFindMatches() {}
+            override fun exitFullScreenMode() {}
             override fun saveState(): Map<String, Any> {
                 return emptyMap()
             }
@@ -113,12 +129,19 @@ class EngineObserverTest {
             override fun disableTrackingProtection() {
                 notifyObservers { onTrackerBlockingEnabledChange(false) }
             }
+
+            override fun toggleDesktopMode(enable: Boolean, reload: Boolean) {}
             override fun saveState(): Map<String, Any> {
                 return emptyMap()
             }
 
             override fun loadUrl(url: String) {}
             override fun loadData(data: String, mimeType: String, encoding: String) {}
+            override fun clearData() {}
+            override fun findAll(text: String) {}
+            override fun findNext(forward: Boolean) {}
+            override fun clearFindMatches() {}
+            override fun exitFullScreenMode() {}
         }
         val observer = EngineObserver(session)
         engineSession.register(observer)
@@ -152,7 +175,7 @@ class EngineObserverTest {
     }
 
     @Test
-    fun testEngineObserverClearsBlockedTrackersNewPageStartsLoading() {
+    fun testEngineObserverClearsBlockedTrackersIfNewPageStartsLoading() {
         val session = Session("https://www.mozilla.org")
         val observer = EngineObserver(session)
 
@@ -177,5 +200,46 @@ class EngineObserverTest {
             assertTrue(it is HitResult.UNKNOWN)
             true
         }
+    }
+
+    @Test
+    fun testEngineObserverClearsFindResults() {
+        val session = Session("https://www.mozilla.org")
+        val observer = EngineObserver(session)
+
+        val result1 = Session.FindResult(0, 1, false)
+        val result2 = Session.FindResult(1, 2, true)
+        observer.onFindResult(0, 1, false)
+        observer.onFindResult(1, 2, true)
+        assertEquals(listOf(result1, result2), session.findResults)
+
+        observer.onFind("mozilla")
+        assertEquals(emptyList<Session.FindResult>(), session.findResults)
+    }
+
+    @Test
+    fun testEngineObserverClearsFindResultIfNewPageStartsLoading() {
+        val session = Session("https://www.mozilla.org")
+        val observer = EngineObserver(session)
+
+        val result1 = Session.FindResult(0, 1, false)
+        val result2 = Session.FindResult(1, 2, true)
+        observer.onFindResult(0, 1, false)
+        observer.onFindResult(1, 2, true)
+        assertEquals(listOf(result1, result2), session.findResults)
+
+        observer.onLoadingStateChange(true)
+        assertEquals(emptyList<String>(), session.findResults)
+    }
+
+    @Test
+    fun testEngineObserverNotifiesFullscreenMode() {
+        val session = Session("https://www.mozilla.org")
+        val observer = EngineObserver(session)
+
+        observer.onFullScreenChange(true)
+        assertEquals(true, session.fullScreenMode)
+        observer.onFullScreenChange(false)
+        assertEquals(false, session.fullScreenMode)
     }
 }

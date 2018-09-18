@@ -10,17 +10,21 @@ import kotlinx.coroutines.experimental.async
 import mozilla.components.browser.engine.gecko.GeckoEngine
 import mozilla.components.browser.menu.BrowserMenuBuilder
 import mozilla.components.browser.menu.item.BrowserMenuItemToolbar
+import mozilla.components.browser.menu.item.SimpleBrowserMenuCheckbox
 import mozilla.components.browser.menu.item.SimpleBrowserMenuItem
 import mozilla.components.browser.search.SearchEngineManager
 import mozilla.components.browser.session.Session
 import mozilla.components.browser.session.SessionManager
 import mozilla.components.browser.session.storage.DefaultSessionStorage
+import mozilla.components.concept.engine.DefaultSettings
 import mozilla.components.concept.engine.Engine
 import mozilla.components.feature.search.SearchUseCases
 import mozilla.components.feature.session.SessionIntentProcessor
 import mozilla.components.feature.session.SessionUseCases
+import mozilla.components.feature.session.TextSearchHandler
 import mozilla.components.feature.tabs.TabsUseCases
 import org.mozilla.geckoview.GeckoRuntime
+import org.mozilla.samples.browser.request.SampleRequestInterceptor
 
 /**
  * Helper class for lazily instantiating components needed by the application.
@@ -28,8 +32,12 @@ import org.mozilla.geckoview.GeckoRuntime
 class Components(private val applicationContext: Context) {
     // Engine
     val engine: Engine by lazy {
+        val defaultSettings = DefaultSettings().apply {
+            requestInterceptor = SampleRequestInterceptor()
+        }
+
         val runtime = GeckoRuntime.getDefault(applicationContext)
-        GeckoEngine(runtime)
+        GeckoEngine(runtime, defaultSettings)
     }
 
     // Session
@@ -47,7 +55,19 @@ class Components(private val applicationContext: Context) {
     }
 
     val sessionUseCases by lazy { SessionUseCases(sessionManager) }
-    val sessionIntentProcessor by lazy { SessionIntentProcessor(sessionUseCases, sessionManager) }
+    val sessionIntentProcessor by lazy {
+        SessionIntentProcessor(
+            sessionUseCases, sessionManager,
+            textSearchHandler = textSearchHandler
+        )
+    }
+
+    private val textSearchHandler by lazy {
+        val handler: TextSearchHandler = { searchTerm, session ->
+            searchUseCases.defaultSearch.invoke(searchTerm, session)
+        }
+        handler
+    }
 
     // Search
     private val searchEngineManager by lazy {
@@ -70,6 +90,12 @@ class Components(private val applicationContext: Context) {
             },
             SimpleBrowserMenuItem("Settings") {
                 Toast.makeText(applicationContext, "Settings", Toast.LENGTH_SHORT).show()
+            },
+            SimpleBrowserMenuItem("Clear Data") {
+                sessionUseCases.clearData.invoke()
+            },
+            SimpleBrowserMenuCheckbox("Request desktop site") { checked ->
+                sessionUseCases.requestDesktopSite.invoke(checked)
             }
         )
     }

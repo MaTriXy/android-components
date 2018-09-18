@@ -4,12 +4,12 @@
 
 // Synchronized version numbers for dependencies used by (some) modules
 private object Versions {
-    const val kotlin = "1.2.60"
+    const val kotlin = "1.2.61"
     const val coroutines = "0.23.4"
 
     const val junit = "4.12"
     const val robolectric = "3.8"
-    const val mockito = "2.19.0"
+    const val mockito = "2.21.0"
     const val mockwebserver = "3.10.0"
 
     const val support_libraries = "27.1.1"
@@ -23,7 +23,8 @@ private object Versions {
 
     const val jna = "4.5.2"
 
-    const val fxa = "0.2.3"
+    const val fxa = "0.2.4"
+    const val sync_logins = "0.3.0"
 }
 
 // Synchronized dependencies used by (some) modules
@@ -56,6 +57,7 @@ object Deps {
     const val tools_linttests = "com.android.tools.lint:lint-tests:${Versions.lint}"
 
     const val mozilla_fxa = "mozilla:fxa_client_android:${Versions.fxa}@zip"
+    const val mozilla_sync_logins = "org.mozilla.sync15:logins:${Versions.sync_logins}"
 
     const val jna = "net.java.dev.jna:jna:${Versions.jna}@aar"
     const val jnaForTest = "net.java.dev.jna:jna:${Versions.jna}@jar"

@@ -4,6 +4,200 @@ title: Changelog
 permalink: /changelog/
 ---
 
+# 0.23 (2018-09-13)
+
+* [Commits](https://github.com/mozilla-mobile/android-components/compare/v0.22...v0.23),
+[Milestone](https://github.com/mozilla-mobile/android-components/milestone/23?closed=1),
+[API reference](https://mozilla-mobile.github.io/android-components/api/0.23/index)
+
+* Compiled against:
+  * Android
+    * SDK: 27
+    * Support Libraries: 27.1.1
+  * Kotlin
+    * Standard library: 1.2.61
+    * Coroutines: 0.23.4
+  * GeckoView
+    * Nightly: **64.0.20180905100117** 🔺
+    * Beta: **63.0b3** (0269319281578bff4e01d77a21350bf91ba08620) 🔺
+    * Release: **62.0** (9cbae12a3fff404ed2c12070ad475424d0ae869f) 🔺
+
+* Added initial documentation for the browser-session component: https://github.com/mozilla-mobile/android-components/blob/master/components/browser/session/README.md
+* **sync-logins**: New component for integrating with Firefox Sync (for Logins). A sample app showcasing this new functionality can be found at: https://github.com/mozilla-mobile/android-components/tree/master/samples/sync-logins
+* **browser-engine-***:
+  * Added support for fullscreen mode and the ability to exit it programmatically if needed.
+  ```Kotlin
+  session.register(object : Session.Observer {
+      fun onFullScreenChange(enabled: Boolean) {
+          if (enabled) {
+              // ..
+              sessionManager.getEngineSession().exitFullScreenMode()
+          }
+      }
+  })
+  ```
+* **concept-engine**, **browser-engine-system**, **browser-engine-gecko(-beta/nightly)**:
+  * We've extended support for intercepting requests to also include intercepting of errors
+  ```Kotlin
+  val interceptor = object : RequestInterceptor {
+    override fun onErrorRequest(
+      session: EngineSession, 
+      errorCode: Int, 
+      uri: String?
+    ) {
+      engineSession.loadData("<html><body>Couldn't load $uri!</body></html>")
+    }
+  }
+  // GeckoEngine (beta/nightly) and SystemEngine support request interceptors.
+  GeckoEngine(runtime, DefaultSettings(requestInterceptor = interceptor))
+  ```
+* **browser-engine-system**:
+    * Added functionality to clear all browsing data
+    ```Kotlin
+    sessionManager.getEngineSession().clearData()
+    ``` 
+    * `onNavigationStateChange` is now called earlier (when the title of a web page is available) to allow for faster toolbar updates.
+* **feature-session**: Added support for processing `ACTION_SEND` intents (`ACTION_VIEW` was already supported)   
+   
+  ```Kotlin
+  // Triggering a search if the provided EXTRA_TEXT is not a URL
+  val searchHandler: TextSearchHandler = { searchTerm, session ->
+       searchUseCases.defaultSearch.invoke(searchTerm, session)
+  }
+      
+  // Handles both ACTION_VIEW and ACTION_SEND intents
+  val intentProcessor = SessionIntentProcessor(
+      sessionUseCases, sessionManager, textSearchHandler = searchHandler
+  )    
+  intentProcessor.process(intent)
+  ```
+* Replaced some miscellaneous uses of Java 8 `forEach` with Kotlin's for consistency and backward-compatibility.
+* Various bug fixes (see [Commits](https://github.com/mozilla-mobile/android-components/compare/v0.22...v0.23) for details).
+
+# 0.22 (2018-09-07)
+
+* [Commits](https://github.com/mozilla-mobile/android-components/compare/v0.21...v0.22),
+[Milestone](https://github.com/mozilla-mobile/android-components/milestone/22?closed=1),
+[API reference](https://mozilla-mobile.github.io/android-components/api/0.22/index)
+
+* Compiled against:
+  * Android
+    * SDK: 27
+    * Support Libraries: 27.1.1
+  * Kotlin
+    * Standard library: 1.2.61
+    * Coroutines: 0.23.4
+  * GeckoView
+    * Nightly: **64.0.20180905100117** 🔺
+    * Beta: **63.0b3** (0269319281578bff4e01d77a21350bf91ba08620) 🔺
+    * Release: **62.0** (9cbae12a3fff404ed2c12070ad475424d0ae869f) 🔺
+
+* We now provide aggregated API docs. The docs for this release are hosted at: https://mozilla-mobile.github.io/android-components/api/0.22
+* **browser-engine-***:
+  * EngineView now exposes lifecycle methods with default implementations. A `LifecycleObserver` implementation is provided which forwards events to EngineView instances.
+  ```Kotlin
+  lifecycle.addObserver(EngineView.LifecycleObserver(view))
+   ```
+  * Added engine setting for blocking web fonts:
+  ```Kotlin
+  GeckoEngine(runtime, DefaultSettings(webFontsEnabled = false))
+  ```
+  * `setDesktopMode()` was renamed to `toggleDesktopMode()`.
+* **browser-engine-system**: The `X-Requested-With` header is now cleared (set to an empty String).
+* **browser-session**: Desktop mode can be observed now:
+  ```Kotlin
+  session.register(object : Session.Observer {
+      fun onDesktopModeChange(enabled: Boolean) {
+          // ..
+      }
+  })
+  ```
+* **service-fretboard**:
+  * `Fretboard` now has synchronous methods for adding and clearing overrides: `setOverrideNow()`, `clearOverrideNow`, `clearAllOverridesNow`.
+  * Access to `Experiment.id` is now deprecated and is scheduled to be removed in a future release (target: 0.24). The `id` is an implementation detail of the underlying storage service and was not meant to be exposed to apps.
+* **ui-tabcounter**: Due to a packaging error previous releases of this component didn't contain any compiled code. This is the first usable release of the component.
+
+
+# 0.21 (2018-08-31)
+
+* [Commits](https://github.com/mozilla-mobile/android-components/compare/v0.20...v0.21),
+[Milestone](https://github.com/mozilla-mobile/android-components/milestone/21?closed=1),
+[API reference](https://mozilla-mobile.github.io/android-components/api/0.21/index)
+
+* Compiled against:
+  * Android support libraries 27.1.1
+  * Kotlin Standard library **1.2.61** 🔺
+  * Kotlin coroutines 0.23.4
+  * GeckoView
+    * Nightly: **63.0.20180830111743** 🔺
+    * Beta: **62.0b21** (7ce198bb7ce027d450af3f69a609896671adfab8) 🔺
+    * Release: 61.0 (785d242a5b01d5f1094882aa2144d8e5e2791e06)
+
+* **concept-engine**, **engine-system**, **engine-gecko**: Added API to set default session configuration e.g. to enable tracking protection for all sessions by default.
+    ```Kotlin
+    // DefaultSettings can be set on GeckoEngine and SystemEngine.
+    GeckoEngine(runtime, DefaultSettings(
+        trackingProtectionPolicy = TrackingProtectionPolicy.all(),
+        javascriptEnabled = false))
+    ```
+* **concept-engine**, **engine-system**, **engine-gecko-beta/nightly**:
+  * Added support for intercepting request and injecting custom content. This can be used for internal pages (e.g. *focus:about*, *firefox:home*) and error pages.
+    ```Kotlin
+    // GeckoEngine (beta/nightly) and SystemEngine support request interceptors.
+    GeckoEngine(runtime, DefaultSettings(
+        requestInterceptor = object : RequestInterceptor {
+            override fun onLoadRequest(session: EngineSession, uri: String): RequestInterceptor.InterceptionResponse? {
+                return when (uri) {
+                    "sample:about" -> RequestInterceptor.InterceptionResponse("<h1>I am the sample browser</h1>")
+                    else -> null
+               }
+           }
+       }
+    )
+    ```
+  * Added APIs to support "find in page".
+    ```Kotlin
+        // Finds and highlights all occurrences of "hello"
+        engineSession.findAll("hello")
+
+        // Finds and highlights the next or previous match
+        engineSession.findNext(forward = true)
+
+        // Clears the highlighted results
+        engineSession.clearFindMatches()
+
+        // The current state of "Find in page" can be observed on a Session object:
+        session.register(object : Session.Observer {
+            fun onFindResult(session: Session, result: FindResult) {
+                // ...
+            }
+        })
+    ```
+* **browser-engine-gecko-nightly**: Added option to enable/disable desktop mode ("Request desktop site").
+    ```Kotlin
+        engineSession.setDesktopMode(true, reload = true)
+    ```
+* **browser-engine-gecko(-nightly/beta)**: Added API for observing long presses on web content (links, audio, videos, images, phone numbers, geo locations, email addresses).
+    ```Kotlin
+        session.register(object : Session.Observer {
+            fun onLongPress(session: Session, hitResult: HitResult): Boolean {
+                // HitResult is a sealed class representing the different types of content that can be long pressed.
+                // ...
+
+                // Returning true will "consume" the event. If no observer consumes the event then it will be
+                // set on the Session object to be consumed at a later time.
+                return true
+            }
+        })
+    ```
+* **lib-dataprotect**: New component to protect local user data using the [Android keystore system](https://developer.android.com/training/articles/keystore). This component doesn't contain any code in this release. In the next sprints the Lockbox team will move code from the [prototype implementation](https://github.com/linuxwolf/android-dataprotect) to the component.
+* **support-testing**: New helper test function to assert that a code block throws an exception:
+    ```Kotlin
+    expectException(IllegalStateException::class) {
+        // Do something that should throw IllegalStateException..
+    }
+    ```
+
 # 0.20 (2018-08-24)
 
 * [Commits](https://github.com/mozilla-mobile/android-components/compare/v0.19.1...v0.20),

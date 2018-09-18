@@ -1,23 +1,17 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 
 buildscript {
-    // Synchronized versions numbers of GeckoView (Nightly) artifacts.
-    ext.geckoNightly = [
-        // Discover nightly builds: https://tools.taskcluster.net/index/gecko.v2.mozilla-central.nightly
-        version: '63.0.20180820100132'
-    ]
-
     // Synchronized versions numbers of GeckoView (Beta) artifacts.
     ext.geckoBeta = [
-        // mozilla-beta: FENNEC_62_0b15_RELEASE
-        revision: '7ce198bb7ce027d450af3f69a609896671adfab8',
-        version: '62.0.20180806191531'
+        // mozilla-beta: FENNEC_63_0b3
+        revision: '0269319281578bff4e01d77a21350bf91ba08620',
+        version: '63.0.20180904170936'
     ]
 
     ext.geckoRelease = [
-        // mozilla-release: FENNEC_61_0_RELEASE
-        revision: '785d242a5b01d5f1094882aa2144d8e5e2791e06',
-        version: '61.0.20180621125625'
+        // mozilla-release: FENNEC_62_0_RELEASE
+        revision: '9cbae12a3fff404ed2c12070ad475424d0ae869f',
+        version: '62.0.20180830143136'
     ]
 
     repositories {
@@ -95,6 +89,10 @@ subprojects {
 
     afterEvaluate {
         if (it.hasProperty('android')) {
+            jacoco {
+                toolVersion = "0.8.2"
+            }
+
             dependencies {
                 lintChecks project(':tooling-lint')
             }
@@ -109,12 +107,6 @@ subprojects {
                 lintOptions {
                     warningsAsErrors true
                     abortOnError true
-                }
-
-                task docs(type: org.jetbrains.dokka.gradle.DokkaAndroidTask) {
-                    outputFormat = 'javadoc'
-                    reportUndocumented = false
-                    outputDirectory = "${project.rootDir}/build/javadoc/${project.name}"
                 }
             }
 
@@ -164,6 +156,40 @@ subprojects {
         }
     }
 }
+
+evaluationDependsOnChildren()
+
+task docs(type: org.jetbrains.dokka.gradle.DokkaAndroidTask, overwrite: true) {
+    moduleName = "$rootProject.name"
+    outputDirectory = "$buildDir/javadoc"
+    outputFormat = "html"
+    jdkVersion = 7
+
+    subprojects.findAll {
+        it.hasProperty("android") && !it.name.startsWith("samples")
+    }.each {
+        classpath += files(it.android.getBootClasspath().join(File.pathSeparator))
+        it.android.libraryVariants.all { variant ->
+            classpath += files(variant.javaCompile.classpath.files)
+        }
+    }
+
+    sourceDirs = files(subprojects.findAll {
+        !it.name.startsWith("samples")
+    }.collect { p ->
+        def path = new File(p.projectDir, "/src/main/java")
+
+        def relativePath = rootDir.toPath().relativize(path.toPath()).toString()
+        linkMapping {
+            dir = path
+            url = "https://github.com/mozilla-mobile/android-components/blob/master/$relativePath"
+            suffix = "#L"
+        }
+
+        return path
+    })
+}
+
 
 task clean(type: Delete) {
     delete rootProject.buildDir

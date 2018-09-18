@@ -4,14 +4,16 @@
 
 package mozilla.components.browser.engine.gecko
 
+import android.annotation.SuppressLint
 import kotlinx.coroutines.experimental.CompletableDeferred
 import kotlinx.coroutines.experimental.runBlocking
 import mozilla.components.concept.engine.EngineSession
-import mozilla.components.concept.engine.Settings
 import mozilla.components.concept.engine.HitResult
-import mozilla.components.support.ktx.kotlin.isPhone
+import mozilla.components.concept.engine.Settings
+import mozilla.components.concept.engine.request.RequestInterceptor
 import mozilla.components.support.ktx.kotlin.isEmail
 import mozilla.components.support.ktx.kotlin.isGeoLocation
+import mozilla.components.support.ktx.kotlin.isPhone
 import org.mozilla.gecko.util.ThreadUtils
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
@@ -28,14 +30,25 @@ import org.mozilla.geckoview.GeckoSessionSettings
 @Suppress("TooManyFunctions")
 class GeckoEngineSession(
     runtime: GeckoRuntime,
-    privateMode: Boolean = false
+    privateMode: Boolean = false,
+    defaultSettings: Settings? = null
 ) : EngineSession() {
 
     internal var geckoSession = GeckoSession()
 
+    /**
+     * See [EngineSession.settings]
+     */
+    override val settings: Settings = object : Settings {
+        override var requestInterceptor: RequestInterceptor? = null
+    }
+
     private var initialLoad = true
 
     init {
+        defaultSettings?.trackingProtectionPolicy?.let { enableTrackingProtection(it) }
+        defaultSettings?.requestInterceptor?.let { settings.requestInterceptor = it }
+
         geckoSession.settings.setBoolean(GeckoSessionSettings.USE_PRIVATE_MODE, privateMode)
         geckoSession.open(runtime)
 
@@ -148,16 +161,76 @@ class GeckoEngineSession(
     /**
      * See [EngineSession.settings]
      */
-    override val settings: Settings
-        get() = throw UnsupportedOperationException("""Not supported by this implementation:
-            Use Engine.settings instead""".trimIndent())
+    override fun toggleDesktopMode(enable: Boolean, reload: Boolean) {
+        val currentMode = geckoSession.settings.getInt(GeckoSessionSettings.USER_AGENT_MODE)
+        val newMode = if (enable) {
+            GeckoSessionSettings.USER_AGENT_MODE_DESKTOP
+        } else {
+            GeckoSessionSettings.USER_AGENT_MODE_MOBILE
+        }
+
+        if (newMode != currentMode) {
+            geckoSession.settings.setInt(GeckoSessionSettings.USER_AGENT_MODE, newMode)
+            notifyObservers { onDesktopModeChange(enable) }
+        }
+
+        if (reload) {
+            geckoSession.reload()
+        }
+    }
+
+    /**
+     * See [EngineSession.clearData]
+     */
+    override fun clearData() {
+        // API not available yet.
+    }
+
+    /**
+     * See [EngineSession.findAll]
+     */
+    override fun findAll(text: String) {
+        notifyObservers { onFind(text) }
+        geckoSession.finder.find(text, 0).then { result: GeckoSession.FinderResult? ->
+            result?.let {
+                notifyObservers { onFindResult(it.current, it.total, true) }
+            }
+            GeckoResult<Void>()
+        }
+    }
+
+    /**
+     * See [EngineSession.findNext]
+     */
+    @SuppressLint("WrongConstant") // FinderFindFlags annotation doesn't include a 0 value.
+    override fun findNext(forward: Boolean) {
+        val findFlags = if (forward) 0 else GeckoSession.FINDER_FIND_BACKWARDS
+        geckoSession.finder.find(null, findFlags).then { result: GeckoSession.FinderResult? ->
+            result?.let {
+                notifyObservers { onFindResult(it.current, it.total, true) }
+            }
+            GeckoResult<Void>()
+        }
+    }
+
+    /**
+     * See [EngineSession.clearFindMatches]
+     */
+    override fun clearFindMatches() {
+        geckoSession.finder.clear()
+    }
+
+    /**
+     * See [EngineSession.exitFullScreenMode]
+     */
+    override fun exitFullScreenMode() {
+        geckoSession.exitFullScreen()
+    }
 
     /**
      * NavigationDelegate implementation for forwarding callbacks to observers of the session.
      */
     private fun createNavigationDelegate() = object : GeckoSession.NavigationDelegate {
-        override fun onLoadError(session: GeckoSession?, uri: String?, category: Int, error: Int) = Unit
-
         override fun onLocationChange(session: GeckoSession?, url: String) {
             // Ignore initial load of about:blank (see https://github.com/mozilla-mobile/android-components/issues/403)
             if (initialLoad && url == ABOUT_BLANK) {
@@ -174,7 +247,14 @@ class GeckoEngineSession(
             target: Int,
             flags: Int
         ): GeckoResult<Boolean>? {
-            return GeckoResult.fromValue(false)
+            val response = settings.requestInterceptor?.onLoadRequest(
+                this@GeckoEngineSession,
+                uri
+            )?.apply {
+                loadData(data, mimeType, encoding)
+            }
+
+            return GeckoResult.fromValue(response != null)
         }
 
         override fun onCanGoForward(session: GeckoSession?, canGoForward: Boolean) {
@@ -189,11 +269,25 @@ class GeckoEngineSession(
             session: GeckoSession,
             uri: String
         ): GeckoResult<GeckoSession> = GeckoResult.fromValue(null)
+
+        override fun onLoadError(
+            session: GeckoSession?,
+            uri: String,
+            category: Int,
+            error: Int
+        ): GeckoResult<String> {
+            settings.requestInterceptor?.onErrorRequest(
+                this@GeckoEngineSession,
+                error,
+                uri
+            )
+            return GeckoResult.fromValue(null)
+        }
     }
 
     /**
-    * ProgressDelegate implementation for forwarding callbacks to observers of the session.
-    */
+     * ProgressDelegate implementation for forwarding callbacks to observers of the session.
+     */
     private fun createProgressDelegate() = object : GeckoSession.ProgressDelegate {
         override fun onProgressChange(session: GeckoSession?, progress: Int) {
             notifyObservers { onProgress(progress) }
@@ -251,7 +345,9 @@ class GeckoEngineSession(
 
         override fun onCrash(session: GeckoSession?) = Unit
 
-        override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) = Unit
+        override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
+            notifyObservers { onFullScreenChange(fullScreen) }
+        }
 
         override fun onExternalResponse(session: GeckoSession, response: GeckoSession.WebResponseInfo) {
             notifyObservers {

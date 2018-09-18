@@ -95,10 +95,34 @@ class SessionUseCases(
         }
     }
 
+    class RequestDesktopSiteUseCase internal constructor(
+        private val sessionManager: SessionManager
+    ) {
+        /**
+         * Request the desktop version of the current session and reloads the page.
+         */
+        fun invoke(enable: Boolean, session: Session = sessionManager.selectedSessionOrThrow) {
+            sessionManager.getOrCreateEngineSession(session).toggleDesktopMode(enable, true)
+        }
+    }
+
+    class ClearDataUseCase internal constructor(
+        private val sessionManager: SessionManager
+    ) {
+        /**
+         * Clears all user data sources available.
+         */
+        fun invoke(session: Session = sessionManager.selectedSessionOrThrow) {
+            sessionManager.getOrCreateEngineSession(session).clearData()
+        }
+    }
+
     val loadUrl: LoadUrlUseCase by lazy { LoadUrlUseCase(sessionManager) }
     val loadData: LoadDataUseCase by lazy { LoadDataUseCase(sessionManager) }
     val reload: ReloadUrlUseCase by lazy { ReloadUrlUseCase(sessionManager) }
     val stopLoading: StopLoadingUseCase by lazy { StopLoadingUseCase(sessionManager) }
     val goBack: GoBackUseCase by lazy { GoBackUseCase(sessionManager) }
     val goForward: GoForwardUseCase by lazy { GoForwardUseCase(sessionManager) }
+    val requestDesktopSite: RequestDesktopSiteUseCase by lazy { RequestDesktopSiteUseCase(sessionManager) }
+    val clearData: ClearDataUseCase by lazy { ClearDataUseCase(sessionManager) }
 }

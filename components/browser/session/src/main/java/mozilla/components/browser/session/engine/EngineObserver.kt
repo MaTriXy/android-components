@@ -11,6 +11,7 @@ import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.HitResult
 import mozilla.components.support.base.observer.Consumable
 
+@Suppress("TooManyFunctions")
 internal class EngineObserver(val session: Session) : EngineSession.Observer {
 
     override fun onLocationChange(url: String) {
@@ -30,6 +31,7 @@ internal class EngineObserver(val session: Session) : EngineSession.Observer {
     override fun onLoadingStateChange(loading: Boolean) {
         session.loading = loading
         if (loading) {
+            session.findResults = emptyList()
             session.trackersBlocked = emptyList()
         }
     }
@@ -56,6 +58,14 @@ internal class EngineObserver(val session: Session) : EngineSession.Observer {
         session.hitResult = Consumable.from(hitResult)
     }
 
+    override fun onFind(text: String) {
+        session.findResults = emptyList()
+    }
+
+    override fun onFindResult(activeMatchOrdinal: Int, numberOfMatches: Int, isDoneCounting: Boolean) {
+        session.findResults += Session.FindResult(activeMatchOrdinal, numberOfMatches, isDoneCounting)
+    }
+
     override fun onExternalResource(
         url: String,
         fileName: String?,
@@ -66,5 +76,13 @@ internal class EngineObserver(val session: Session) : EngineSession.Observer {
     ) {
         val download = Download(url, fileName, contentType, contentLength, userAgent, Environment.DIRECTORY_DOWNLOADS)
         session.download = Consumable.from(download)
+    }
+
+    override fun onDesktopModeChange(enabled: Boolean) {
+        session.desktopMode = enabled
+    }
+
+    override fun onFullScreenChange(enabled: Boolean) {
+        session.fullScreenMode = enabled
     }
 }

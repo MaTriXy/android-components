@@ -30,6 +30,10 @@ abstract class EngineSession(
         fun onTrackerBlockingEnabledChange(enabled: Boolean) = Unit
         fun onTrackerBlocked(url: String) = Unit
         fun onLongPress(hitResult: HitResult) = Unit
+        fun onDesktopModeChange(enabled: Boolean) = Unit
+        fun onFind(text: String) = Unit
+        fun onFindResult(activeMatchOrdinal: Int, numberOfMatches: Int, isDoneCounting: Boolean) = Unit
+        fun onFullScreenChange(enabled: Boolean) = Unit
 
         @Suppress("LongParameterList")
         fun onExternalResource(
@@ -64,6 +68,17 @@ abstract class EngineSession(
             fun all(): TrackingProtectionPolicy = TrackingProtectionPolicy(ALL)
             fun select(vararg categories: Int): TrackingProtectionPolicy =
                 TrackingProtectionPolicy(categories.sum())
+        }
+
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is TrackingProtectionPolicy) return false
+            if (categories != other.categories) return false
+            return true
+        }
+
+        override fun hashCode(): Int {
+            return categories
         }
     }
 
@@ -139,6 +154,41 @@ abstract class EngineSession(
      * Disables tracking protection for this engine session.
      */
     abstract fun disableTrackingProtection()
+
+    /**
+     * Enables/disables Desktop Mode with an optional ability to reload the session right after.
+     */
+    abstract fun toggleDesktopMode(enable: Boolean, reload: Boolean = false)
+
+    /**
+     * Clears all user data sources available.
+     */
+    abstract fun clearData()
+
+    /**
+     * Finds and highlights all occurrences of the provided String and highlights them asynchronously.
+     *
+     * @param text the String to search for
+     */
+    abstract fun findAll(text: String)
+
+    /**
+     * Finds and highlights the next or previous match found by [findAll].
+     *
+     * @param forward true if the next match should be highlighted, false for
+     * the previous match.
+     */
+    abstract fun findNext(forward: Boolean)
+
+    /**
+     * Clears the highlighted results of previous calls to [findAll] / [findNext].
+     */
+    abstract fun clearFindMatches()
+
+    /**
+     * Exits fullscreen mode if currently in it that state.
+     */
+    abstract fun exitFullScreenMode()
 
     /**
      * Close the session. This may free underlying objects. Call this when you are finished using

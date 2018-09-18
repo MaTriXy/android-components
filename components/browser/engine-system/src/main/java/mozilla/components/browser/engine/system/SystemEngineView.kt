@@ -4,16 +4,21 @@
 
 package mozilla.components.browser.engine.system
 
+import android.annotation.TargetApi
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import android.net.http.SslError
+import android.os.Build
 import android.os.Handler
 import android.os.Message
 import android.util.AttributeSet
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
+import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -36,14 +41,16 @@ import java.net.URI
 /**
  * WebView-based implementation of EngineView.
  */
+@Suppress("TooManyFunctions")
 class SystemEngineView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
 ) : FrameLayout(context, attrs, defStyleAttr), EngineView, View.OnLongClickListener {
-    internal val currentWebView = createWebView(context)
+    internal var currentWebView = createWebView(context)
     internal var currentUrl = ""
     private var session: SystemEngineSession? = null
+    internal var fullScreenCallback: WebChromeClient.CustomViewCallback? = null
 
     init {
         // Currently this implementation supports only a single WebView. Eventually this
@@ -60,6 +67,7 @@ class SystemEngineView @JvmOverloads constructor(
         this.session = internalSession
 
         internalSession.view = WeakReference(this)
+        internalSession.initSettings()
 
         internalSession.scheduledLoad.data?.let {
             currentWebView.loadData(it, internalSession.scheduledLoad.mimeType, "UTF-8")
@@ -67,7 +75,7 @@ class SystemEngineView @JvmOverloads constructor(
         }
 
         internalSession.scheduledLoad.url?.let {
-            currentWebView.loadUrl(it)
+            currentWebView.loadUrl(it, additionalHeaders)
             internalSession.scheduledLoad = ScheduledLoad()
         }
     }
@@ -77,11 +85,27 @@ class SystemEngineView @JvmOverloads constructor(
         return handleLongClick(result.type, result.extra)
     }
 
+    override fun onPause() {
+        currentWebView.onPause()
+        currentWebView.pauseTimers()
+    }
+
+    override fun onResume() {
+        currentWebView.onResume()
+        currentWebView.resumeTimers()
+    }
+
+    override fun onDestroy() {
+        currentWebView.destroy()
+    }
+
     private fun createWebView(context: Context): WebView {
         val webView = WebView(context)
+        webView.tag = "mosac_system_engine_webview"
         webView.webViewClient = createWebViewClient(webView)
         webView.webChromeClient = createWebChromeClient()
         webView.setDownloadListener(createDownloadListener())
+        webView.setFindListener(createFindListener())
         return webView
     }
 
@@ -103,7 +127,6 @@ class SystemEngineView @JvmOverloads constructor(
                 session?.internalNotifyObservers {
                     onLocationChange(it)
                     onLoadingStateChange(false)
-                    onNavigationStateChange(webView.canGoBack(), webView.canGoForward())
                     onSecurityChange(cert != null, cert?.let { URI(url).host }, cert?.issuedBy?.oName)
                 }
             }
@@ -111,6 +134,10 @@ class SystemEngineView @JvmOverloads constructor(
 
         @Suppress("ReturnCount")
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+            if (session?.webFontsEnabled == false && UrlMatcher.isWebFont(request.url)) {
+                return WebResourceResponse(null, null, null)
+            }
+
             if (session?.trackingProtectionEnabled == true) {
                 val resourceUri = request.url
                 val scheme = resourceUri.scheme
@@ -138,7 +165,45 @@ class SystemEngineView @JvmOverloads constructor(
                     return WebResourceResponse(null, null, null)
                 }
             }
+
+            session?.let { session ->
+                session.settings.requestInterceptor?.let { interceptor ->
+                    interceptor.onLoadRequest(
+                        session, request.url.toString()
+                    )?.apply {
+                        return WebResourceResponse(mimeType, encoding, data.byteInputStream())
+                    }
+                }
+            }
+
             return super.shouldInterceptRequest(view, request)
+        }
+
+        override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+            handler.cancel()
+
+            session?.let { session ->
+                session.settings.requestInterceptor?.onErrorRequest(session, error.primaryError, error.url)
+            }
+        }
+
+        override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+            session?.let { session ->
+                session.settings.requestInterceptor?.onErrorRequest(session, errorCode, failingUrl)
+            }
+        }
+
+        @TargetApi(Build.VERSION_CODES.M)
+        override fun onReceivedError(view: WebView?, request: WebResourceRequest, error: WebResourceError) {
+            session?.let { session ->
+                if (request.isForMainFrame) {
+                    session.settings.requestInterceptor?.onErrorRequest(
+                        session,
+                        error.errorCode,
+                        request.url.toString()
+                    )
+                }
+            }
         }
     }
 
@@ -148,7 +213,20 @@ class SystemEngineView @JvmOverloads constructor(
         }
 
         override fun onReceivedTitle(view: WebView, title: String?) {
-            session?.internalNotifyObservers { onTitleChange(title ?: "") }
+            session?.internalNotifyObservers {
+                onTitleChange(title ?: "")
+                onNavigationStateChange(view.canGoBack(), view.canGoForward())
+            }
+        }
+
+        override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+            addFullScreenView(view, callback)
+            session?.internalNotifyObservers { onFullScreenChange(true) }
+        }
+
+        override fun onHideCustomView() {
+            removeFullScreenView()
+            session?.internalNotifyObservers { onFullScreenChange(false) }
         }
     }
 
@@ -158,6 +236,14 @@ class SystemEngineView @JvmOverloads constructor(
                 val fileName = DownloadUtils.guessFileName(contentDisposition, url, mimetype)
                 val cookie = CookieManager.getInstance().getCookie(url)
                 onExternalResource(url, fileName, contentLength, mimetype, cookie, userAgent)
+            }
+        }
+    }
+
+    internal fun createFindListener(): WebView.FindListener {
+        return WebView.FindListener { activeMatchOrdinal: Int, numberOfMatches: Int, isDoneCounting: Boolean ->
+            session?.internalNotifyObservers {
+                onFindResult(activeMatchOrdinal, numberOfMatches, isDoneCounting)
             }
         }
     }
@@ -195,6 +281,26 @@ class SystemEngineView @JvmOverloads constructor(
             return true
         }
         return false
+    }
+
+    internal fun addFullScreenView(view: View, callback: WebChromeClient.CustomViewCallback) {
+        val webView = findViewWithTag<WebView>("mosac_system_engine_webview")
+        webView?.apply { this.visibility = View.GONE }
+
+        fullScreenCallback = callback
+
+        view.tag = "mosac_system_engine_fullscreen"
+        addView(view)
+    }
+
+    internal fun removeFullScreenView() {
+        val view = findViewWithTag<View>("mosac_system_engine_fullscreen")
+        val webView = findViewWithTag<WebView>("mosac_system_engine_webview")
+        view?.let {
+            fullScreenCallback?.onCustomViewHidden()
+            webView?.apply { this.visibility = View.VISIBLE }
+            removeView(view)
+        }
     }
 
     class ImageHandler(val session: SystemEngineSession?) : Handler() {

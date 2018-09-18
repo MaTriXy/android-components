@@ -7,12 +7,13 @@ package mozilla.components.browser.session
 import mozilla.components.browser.session.Session.Source
 import mozilla.components.browser.session.tab.CustomTabConfig
 import mozilla.components.concept.engine.HitResult
+import mozilla.components.support.base.observer.Consumable
 import mozilla.components.support.test.any
 import mozilla.components.support.test.eq
 import mozilla.components.support.test.mock
-import mozilla.components.support.base.observer.Consumable
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -436,6 +437,9 @@ class SessionTest {
                 eq(listOf("trackerUrl1", "trackerUrl2")))
 
         assertEquals(listOf("trackerUrl1", "trackerUrl2"), session.trackersBlocked)
+
+        session.trackersBlocked = emptyList()
+        verifyNoMoreInteractions(observer)
     }
 
     @Test
@@ -452,5 +456,65 @@ class SessionTest {
                 eq(true))
 
         assertTrue(session.trackerBlockingEnabled)
+    }
+
+    @Test
+    fun `observer is notified on find result`() {
+        val observer = mock(Session.Observer::class.java)
+        val session = Session("https://www.mozilla.org")
+        session.register(observer)
+
+        val result1 = Session.FindResult(0, 1, false)
+        session.findResults += result1
+        verify(observer).onFindResult(
+                eq(session),
+                eq(result1)
+        )
+        assertEquals(listOf(result1), session.findResults)
+
+        result1.copy()
+        val result2 = result1.copy(1, 2)
+        session.findResults += result2
+        verify(observer).onFindResult(
+                eq(session),
+                eq(result2)
+        )
+        assertEquals(listOf(result1, result2), session.findResults)
+
+        assertEquals(session.findResults[0].activeMatchOrdinal, 0)
+        assertEquals(session.findResults[0].numberOfMatches, 1)
+        assertFalse(session.findResults[0].isDoneCounting)
+        assertEquals(session.findResults[1].activeMatchOrdinal, 1)
+        assertEquals(session.findResults[1].numberOfMatches, 2)
+        assertFalse(session.findResults[1].isDoneCounting)
+        assertNotEquals(result1, result2)
+
+        session.findResults = emptyList()
+        verifyNoMoreInteractions(observer)
+    }
+
+    @Test
+    fun `observer is notified when desktop mode is set`() {
+        val observer = mock(Session.Observer::class.java)
+        val session = Session("https://www.mozilla.org")
+        session.register(observer)
+        session.desktopMode = true
+        verify(observer).onDesktopModeChanged(
+                eq(session),
+                eq(true))
+        assertTrue(session.desktopMode)
+    }
+
+    @Test
+    fun `observer is notified on fullscreen mode`() {
+        val observer = mock(Session.Observer::class.java)
+        val session = Session("https://www.mozilla.org")
+        session.register(observer)
+        session.fullScreenMode = true
+        verify(observer).onFullScreenChanged(session, true)
+        reset(observer)
+        session.unregister(observer)
+        session.fullScreenMode = false
+        verify(observer, never()).onFullScreenChanged(session, false)
     }
 }
