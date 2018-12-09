@@ -27,19 +27,16 @@ dependencies {
     implementation project(':support-utils')
     implementation project(':support-ktx')
 
-    implementation Deps.kotlin_stdlib
+    implementation Dependencies.kotlin_stdlib
+    implementation Dependencies.support_design
 
-    testImplementation Deps.testing_junit
-    testImplementation Deps.testing_robolectric
-    testImplementation Deps.testing_mockito
+    testImplementation project(':support-test')
+    testImplementation Dependencies.testing_junit
+    testImplementation Dependencies.testing_robolectric
+    testImplementation Dependencies.testing_mockito
 
-    testImplementation Deps.support_customtabs
+    testImplementation Dependencies.support_customtabs
 }
 
-archivesBaseName = "feature-session"
-
 apply from: '../../../publish.gradle'
-ext.configurePublish(
-        'org.mozilla.components',
-        'feature-session',
-        'Feature implementation connecting an engine implementation with the session module.')
+ext.configurePublish(Config.componentsGroupId, archivesBaseName, gradle.componentDescriptions[archivesBaseName])

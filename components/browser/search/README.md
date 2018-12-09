@@ -6,10 +6,10 @@ Search plugins and companion code to load, parse and use them.
 
 ### Setting up the dependency
 
-Use gradle to download the library from JCenter:
+Use Gradle to download the library from [maven.mozilla.org](https://maven.mozilla.org/) ([Setup repository](../../../README.md#maven-repository)):
 
 ```Groovy
-implementation "org.mozilla.components:search:{latest-version}
+implementation "org.mozilla.components:browser-search:{latest-version}"
 ```
 
 ## License

@@ -11,14 +11,16 @@ import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineSession.TrackingProtectionPolicy
 import mozilla.components.concept.engine.EngineView
 import mozilla.components.concept.engine.Settings
+import mozilla.components.concept.engine.history.HistoryTrackingDelegate
 import org.mozilla.geckoview.GeckoRuntime
 
 /**
  * Gecko-based implementation of Engine interface.
  */
 class GeckoEngine(
-    private val runtime: GeckoRuntime,
-    private val defaultSettings: Settings? = null
+    context: Context,
+    private val defaultSettings: Settings? = null,
+    private val runtime: GeckoRuntime = GeckoRuntime.getDefault(context)
 ) : Engine {
 
     /**
@@ -40,7 +42,7 @@ class GeckoEngine(
     /**
      * See [Engine.settings]
      */
-    override val settings: Settings = object : Settings {
+    override val settings: Settings = object : Settings() {
         override var javascriptEnabled: Boolean
             get() = runtime.settings.javaScriptEnabled
             set(value) { runtime.settings.javaScriptEnabled = value }
@@ -56,11 +58,20 @@ class GeckoEngine(
                     runtime.settings.trackingProtectionCategories = it.categories
                 }
             }
+
+        override var remoteDebuggingEnabled: Boolean
+            get() = runtime.settings.remoteDebuggingEnabled
+            set(value) { runtime.settings.remoteDebuggingEnabled = value }
+
+        override var historyTrackingDelegate: HistoryTrackingDelegate?
+            get() = defaultSettings?.historyTrackingDelegate
+            set(value) { defaultSettings?.historyTrackingDelegate = value }
     }.apply {
         defaultSettings?.let {
             this.javascriptEnabled = it.javascriptEnabled
             this.webFontsEnabled = it.webFontsEnabled
             this.trackingProtectionPolicy = it.trackingProtectionPolicy
+            this.remoteDebuggingEnabled = it.remoteDebuggingEnabled
         }
     }
 }

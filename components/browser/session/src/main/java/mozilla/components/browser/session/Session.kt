@@ -4,9 +4,13 @@
 
 package mozilla.components.browser.session
 
+import android.graphics.Bitmap
 import mozilla.components.browser.session.engine.EngineSessionHolder
 import mozilla.components.browser.session.tab.CustomTabConfig
 import mozilla.components.concept.engine.HitResult
+import mozilla.components.concept.engine.permission.PermissionRequest
+import mozilla.components.concept.engine.prompt.PromptRequest
+import mozilla.components.concept.engine.window.WindowRequest
 import mozilla.components.support.base.observer.Consumable
 import mozilla.components.support.base.observer.Observable
 import mozilla.components.support.base.observer.ObserverRegistry
@@ -31,6 +35,12 @@ class Session(
     internal val engineSessionHolder = EngineSessionHolder()
 
     /**
+     * Id of parent session, usually refer to the session which created this one. The clue to indicate if this session
+     * is terminated, which target we should go back.
+     */
+    internal var parentId: String? = null
+
+    /**
      * Interface to be implemented by classes that want to observe a session.
      */
     interface Observer {
@@ -49,6 +59,12 @@ class Session(
         fun onFindResult(session: Session, result: FindResult) = Unit
         fun onDesktopModeChanged(session: Session, enabled: Boolean) = Unit
         fun onFullScreenChanged(session: Session, enabled: Boolean) = Unit
+        fun onThumbnailChanged(session: Session, bitmap: Bitmap?) = Unit
+        fun onContentPermissionRequested(session: Session, permissionRequest: PermissionRequest): Boolean = false
+        fun onAppPermissionRequested(session: Session, permissionRequest: PermissionRequest): Boolean = false
+        fun onPromptRequested(session: Session, promptRequest: PromptRequest): Boolean = false
+        fun onOpenWindowRequested(session: Session, windowRequest: WindowRequest): Boolean = false
+        fun onCloseWindowRequested(session: Session, windowRequest: WindowRequest): Boolean = false
     }
 
     /**
@@ -230,6 +246,13 @@ class Session(
     }
 
     /**
+     * The target of the latest thumbnail.
+     */
+    var thumbnail: Bitmap? by Delegates.observable<Bitmap?>(null) {
+        _, _, new -> notifyObservers { onThumbnailChanged(this@Session, new) }
+    }
+
+    /**
      * Desktop Mode state, true if the desktop mode is requested, otherwise false.
      */
     var desktopMode: Boolean by Delegates.observable(false) { _, old, new ->
@@ -241,6 +264,56 @@ class Session(
      */
     var fullScreenMode: Boolean by Delegates.observable(false) { _, old, new ->
         notifyObservers(old, new) { notifyObservers { onFullScreenChanged(this@Session, fullScreenMode) } }
+    }
+
+    /**
+     * [Consumable] permission request from web content. A [PermissionRequest]
+     * must be consumed i.e. either [PermissionRequest.grant] or
+     * [PermissionRequest.reject] must be called. A content permission request
+     * can also be cancelled, which will result in a new empty [Consumable].
+     */
+    var contentPermissionRequest: Consumable<PermissionRequest> by Delegates.vetoable(Consumable.empty()) {
+        _, _, request ->
+            val consumers = wrapConsumers<PermissionRequest> { onContentPermissionRequested(this@Session, it) }
+            !request.consumeBy(consumers)
+    }
+
+    /**
+     * [Consumable] permission request for the app. A [PermissionRequest]
+     * must be consumed i.e. either [PermissionRequest.grant] or
+     * [PermissionRequest.reject] must be called.
+     */
+    var appPermissionRequest: Consumable<PermissionRequest> by Delegates.vetoable(Consumable.empty()) {
+        _, _, request ->
+            val consumers = wrapConsumers<PermissionRequest> { onAppPermissionRequested(this@Session, it) }
+            !request.consumeBy(consumers)
+    }
+
+    /**
+     * [Consumable] State for a prompt request from web content.
+     */
+    var promptRequest: Consumable<PromptRequest> by Delegates.vetoable(Consumable.empty()) {
+            _, _, request ->
+        val consumers = wrapConsumers<PromptRequest> { onPromptRequested(this@Session, it) }
+        !request.consumeBy(consumers)
+    }
+
+    /**
+     * [Consumable] request to open/create a window.
+     */
+    var openWindowRequest: Consumable<WindowRequest> by Delegates.vetoable(Consumable.empty()) {
+        _, _, request ->
+        val consumers = wrapConsumers<WindowRequest> { onOpenWindowRequested(this@Session, it) }
+        !request.consumeBy(consumers)
+    }
+
+    /**
+     * [Consumable] request to close a window.
+     */
+    var closeWindowRequest: Consumable<WindowRequest> by Delegates.vetoable(Consumable.empty()) {
+        _, _, request ->
+        val consumers = wrapConsumers<WindowRequest> { onCloseWindowRequested(this@Session, it) }
+        !request.consumeBy(consumers)
     }
 
     /**
@@ -268,5 +341,9 @@ class Session(
 
     override fun hashCode(): Int {
         return id.hashCode()
+    }
+
+    override fun toString(): String {
+        return "Session($id, $url)"
     }
 }

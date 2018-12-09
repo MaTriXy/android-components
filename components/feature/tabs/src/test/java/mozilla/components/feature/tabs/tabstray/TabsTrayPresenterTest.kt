@@ -16,6 +16,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.Mockito.anyInt
+import org.mockito.Mockito.anyList
 import org.mockito.Mockito.never
 import org.mockito.Mockito.spy
 import org.mockito.Mockito.times
@@ -167,66 +169,88 @@ class TabsTrayPresenterTest {
     }
 
     @Test
-    fun `presenter will close tabs tray and execute callback when all sessions get removed`() {
+    fun `presenter will close tabs tray when all sessions get removed`() {
         val sessionManager = SessionManager(engine = mock())
 
         sessionManager.add(Session("A"))
         sessionManager.add(Session("B"))
 
         var closed = false
-        var callbackExecuted = false
 
         val presenter = TabsTrayPresenter(
             mock(),
             sessionManager,
-            closeTabsTray = { closed = true },
-            onTabsTrayEmpty = { callbackExecuted = true })
+            closeTabsTray = { closed = true })
 
         presenter.start()
 
         assertFalse(closed)
-        assertFalse(callbackExecuted)
 
         sessionManager.removeAll()
 
         assertTrue(closed)
-        assertTrue(callbackExecuted)
 
         presenter.stop()
     }
 
     @Test
-    fun `presenter will close tabs tray and execute callback when last session gets removed`() {
+    fun `presenter will close tabs tray when last session gets removed`() {
         val sessionManager = SessionManager(engine = mock())
 
         val session1 = Session("A").also { sessionManager.add(it) }
         val session2 = Session("B").also { sessionManager.add(it) }
 
         var closed = false
-        var callbackExecuted = false
 
         val presenter = TabsTrayPresenter(
                 mock(),
                 sessionManager,
-                closeTabsTray = { closed = true },
-                onTabsTrayEmpty = { callbackExecuted = true })
+                closeTabsTray = { closed = true })
 
         presenter.start()
 
         assertFalse(closed)
-        assertFalse(callbackExecuted)
 
         sessionManager.remove(session1)
 
         assertFalse(closed)
-        assertFalse(callbackExecuted)
 
         sessionManager.remove(session2)
 
         assertTrue(closed)
-        assertTrue(callbackExecuted)
 
         presenter.stop()
+    }
+
+    @Test
+    fun `presenter calls update and display sessions when calculating diff`() {
+        val sessionManager = SessionManager(engine = mock())
+
+        sessionManager.add(Session("https://www.mozilla.org"))
+        sessionManager.add(Session("https://getpocket.com"))
+
+        val tabsTray: MockedTabsTray = spy(MockedTabsTray())
+        val presenter = TabsTrayPresenter(tabsTray, sessionManager, mock())
+
+        presenter.calculateDiffAndUpdateTabsTray()
+
+        verify(tabsTray).displaySessions(anyList(), anyInt())
+        verify(tabsTray).updateSessions(anyList(), anyInt())
+    }
+
+    @Test
+    fun `presenter invokes session filtering`() {
+        val sessionManager = SessionManager(engine = mock())
+
+        sessionManager.add(Session("https://www.mozilla.org"))
+        sessionManager.add(Session("https://getpocket.com", private = true))
+
+        val tabsTray: MockedTabsTray = spy(MockedTabsTray())
+        val presenter = TabsTrayPresenter(tabsTray, sessionManager, mock(), { it.private })
+
+        presenter.calculateDiffAndUpdateTabsTray()
+
+        assertTrue(tabsTray.displaySessionsList?.size == 1)
     }
 }
 
@@ -256,7 +280,7 @@ private class MockedTabsTray : TabsTray {
 
     override fun register(observer: TabsTray.Observer) {}
 
-    override fun register(observer: TabsTray.Observer, owner: LifecycleOwner) {}
+    override fun register(observer: TabsTray.Observer, owner: LifecycleOwner, autoPause: Boolean) {}
 
     override fun register(observer: TabsTray.Observer, view: View) {}
 
@@ -267,4 +291,8 @@ private class MockedTabsTray : TabsTray {
     override fun notifyObservers(block: TabsTray.Observer.() -> Unit) {}
 
     override fun <R> wrapConsumers(block: TabsTray.Observer.(R) -> Boolean): List<(R) -> Boolean> = emptyList()
+
+    override fun pauseObserver(observer: TabsTray.Observer) {}
+
+    override fun resumeObserver(observer: TabsTray.Observer) {}
 }

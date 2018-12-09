@@ -4,12 +4,12 @@
 
 package mozilla.components.browser.tabstray
 
-import android.graphics.Color
-import android.support.v4.content.ContextCompat
+import android.content.res.ColorStateList
+import android.support.v7.widget.AppCompatImageButton
 import android.support.v7.widget.CardView
 import android.support.v7.widget.RecyclerView
 import android.view.View
-import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.TextView
 import mozilla.components.browser.session.Session
 import mozilla.components.concept.tabstray.TabsTray
@@ -19,13 +19,15 @@ import mozilla.components.support.base.observer.Observable
  * A RecyclerView ViewHolder implementation for "tab" items.
  */
 class TabViewHolder(
-    itemView: View
+    itemView: View,
+    private val tabsTray: BrowserTabsTray
 ) : RecyclerView.ViewHolder(itemView), Session.Observer {
-    private val cardView: CardView = itemView as CardView
+    private val cardView: CardView = (itemView as CardView).apply {
+        elevation = tabsTray.styling.itemElevation
+    }
     private val tabView: TextView = itemView.findViewById(R.id.mozac_browser_tabstray_url)
-    private val closeView: ImageButton = itemView.findViewById(R.id.mozac_browser_tabstray_close)
-    private val selectedColor = ContextCompat.getColor(
-        itemView.context, mozilla.components.ui.colors.R.color.photonBlue40)
+    private val closeView: AppCompatImageButton = itemView.findViewById(R.id.mozac_browser_tabstray_close)
+    private val thumbnailView: ImageView = itemView.findViewById(R.id.mozac_browser_tabstray_thumbnail)
 
     private var session: Session? = null
 
@@ -35,7 +37,13 @@ class TabViewHolder(
     fun bind(session: Session, isSelected: Boolean, observable: Observable<TabsTray.Observer>) {
         this.session = session.also { it.register(this) }
 
-        tabView.text = session.url
+        val title = if (session.title.isNotEmpty()) {
+            session.title
+        } else {
+            session.url
+        }
+
+        tabView.text = title
 
         itemView.setOnClickListener {
             observable.notifyObservers { onTabSelected(session) }
@@ -46,10 +54,16 @@ class TabViewHolder(
         }
 
         if (isSelected) {
-            cardView.setCardBackgroundColor(selectedColor)
+            tabView.setTextColor(tabsTray.styling.selectedItemTextColor)
+            cardView.setCardBackgroundColor(tabsTray.styling.selectedItemBackgroundColor)
+            closeView.imageTintList = ColorStateList.valueOf(tabsTray.styling.selectedItemTextColor)
         } else {
-            cardView.setCardBackgroundColor(Color.WHITE)
+            tabView.setTextColor(tabsTray.styling.itemTextColor)
+            cardView.setCardBackgroundColor(tabsTray.styling.itemBackgroundColor)
+            closeView.imageTintList = ColorStateList.valueOf(tabsTray.styling.itemTextColor)
         }
+
+        thumbnailView.setImageBitmap(session.thumbnail)
     }
 
     /**

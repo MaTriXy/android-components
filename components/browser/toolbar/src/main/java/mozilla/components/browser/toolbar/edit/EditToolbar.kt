@@ -14,6 +14,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.ImageView
 import mozilla.components.browser.toolbar.BrowserToolbar
 import mozilla.components.browser.toolbar.R
+import mozilla.components.concept.toolbar.Toolbar
 import mozilla.components.support.ktx.android.content.res.pxToDp
 import mozilla.components.support.ktx.android.view.showKeyboard
 import mozilla.components.ui.autocomplete.InlineAutocompleteEditText
@@ -41,13 +42,16 @@ class EditToolbar(
         background = null
         setLines(1)
         textSize = URL_TEXT_SIZE
-        inputType = InputType.TYPE_TEXT_VARIATION_URI
+        inputType = InputType.TYPE_TEXT_VARIATION_URI or InputType.TYPE_CLASS_TEXT
 
         val padding = resources.pxToDp(URL_PADDING_DP)
         setPadding(padding, padding, padding, padding)
         setSelectAllOnFocus(true)
 
         setOnCommitListener { toolbar.onUrlEntered(text.toString()) }
+        setOnTextChangeListener { text, _ ->
+            editListener?.onTextChanged(text)
+        }
     }
 
     private val cancelView = ImageView(context).apply {
@@ -60,6 +64,8 @@ class EditToolbar(
             toolbar.displayMode()
         }
     }
+
+    internal var editListener: Toolbar.OnEditListener? = null
 
     init {
         addView(urlView)

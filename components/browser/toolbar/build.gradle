@@ -30,19 +30,16 @@ dependencies {
     implementation project(':ui-icons')
 
     implementation project(':support-ktx')
+    api project(':support-base')
 
-    implementation Deps.support_appcompat
-    implementation Deps.kotlin_stdlib
+    implementation Dependencies.support_appcompat
+    implementation Dependencies.kotlin_stdlib
 
-    testImplementation Deps.testing_junit
-    testImplementation Deps.testing_robolectric
-    testImplementation Deps.testing_mockito
+    testImplementation project(':support-test')
+    testImplementation Dependencies.testing_junit
+    testImplementation Dependencies.testing_robolectric
+    testImplementation Dependencies.testing_mockito
 }
 
-archivesBaseName = "toolbar"
-
 apply from: '../../../publish.gradle'
-ext.configurePublish(
-        'org.mozilla.components',
-        'toolbar',
-        'A customizable toolbar for browsers.')
+ext.configurePublish(Config.componentsGroupId, archivesBaseName, gradle.componentDescriptions[archivesBaseName])

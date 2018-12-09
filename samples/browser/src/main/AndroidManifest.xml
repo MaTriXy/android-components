@@ -7,6 +7,7 @@
     package="org.mozilla.samples.browser">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
     <application
         android:allowBackup="true"
@@ -53,7 +54,7 @@
         </activity>
 
         <service
-            android:name="mozilla.components.browser.session.tab.CustomTabsService"
+            android:name=".customtabs.CustomTabsService"
             android:exported="true"
             tools:ignore="ExportedService">
             <intent-filter>

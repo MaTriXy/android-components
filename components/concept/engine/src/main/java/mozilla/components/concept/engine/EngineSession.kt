@@ -4,7 +4,12 @@
 
 package mozilla.components.concept.engine
 
+import android.graphics.Bitmap
 import android.support.annotation.CallSuper
+import mozilla.components.concept.engine.permission.PermissionRequest
+
+import mozilla.components.concept.engine.prompt.PromptRequest
+import mozilla.components.concept.engine.window.WindowRequest
 import mozilla.components.support.base.observer.Observable
 import mozilla.components.support.base.observer.ObserverRegistry
 
@@ -34,11 +39,18 @@ abstract class EngineSession(
         fun onFind(text: String) = Unit
         fun onFindResult(activeMatchOrdinal: Int, numberOfMatches: Int, isDoneCounting: Boolean) = Unit
         fun onFullScreenChange(enabled: Boolean) = Unit
+        fun onThumbnailChange(bitmap: Bitmap?) = Unit
+        fun onAppPermissionRequest(permissionRequest: PermissionRequest) = permissionRequest.reject()
+        fun onContentPermissionRequest(permissionRequest: PermissionRequest) = permissionRequest.reject()
+        fun onCancelContentPermissionRequest(permissionRequest: PermissionRequest) = Unit
+        fun onPromptRequest(promptRequest: PromptRequest) = Unit
+        fun onOpenWindowRequest(windowRequest: WindowRequest) = Unit
+        fun onCloseWindowRequest(windowRequest: WindowRequest) = Unit
 
         @Suppress("LongParameterList")
         fun onExternalResource(
             url: String,
-            fileName: String? = null,
+            fileName: String,
             contentLength: Long? = null,
             contentType: String? = null,
             cookie: String? = null,
@@ -62,13 +74,17 @@ abstract class EngineSession(
             const val ANALYTICS: Int = 1 shl 1
             const val SOCIAL: Int = 1 shl 2
             const val CONTENT: Int = 1 shl 3
-            internal const val ALL: Int = (1 shl 4) - 1
+            // This policy is just to align categories with GeckoView (which has CATEGORY_TEST = 1 << 4)
+            const val TEST: Int = 1 shl 4
+            internal const val ALL: Int = (1 shl 5) - 1
 
             fun none(): TrackingProtectionPolicy = TrackingProtectionPolicy(NONE)
             fun all(): TrackingProtectionPolicy = TrackingProtectionPolicy(ALL)
             fun select(vararg categories: Int): TrackingProtectionPolicy =
                 TrackingProtectionPolicy(categories.sum())
         }
+
+        fun contains(category: Int) = (categories and category) != 0
 
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
@@ -191,9 +207,14 @@ abstract class EngineSession(
     abstract fun exitFullScreenMode()
 
     /**
+     * Takes a screenshot of the actual tab
+     */
+    abstract fun captureThumbnail(): Bitmap?
+
+    /**
      * Close the session. This may free underlying objects. Call this when you are finished using
      * this session.
      */
     @CallSuper
-    fun close() = delegate.unregisterObservers()
+    open fun close() = delegate.unregisterObservers()
 }

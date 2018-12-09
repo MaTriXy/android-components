@@ -4,21 +4,31 @@
 
 package mozilla.components.browser.session.engine
 
+import android.graphics.Bitmap
 import mozilla.components.browser.session.Session
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.HitResult
 import mozilla.components.concept.engine.Settings
+import mozilla.components.concept.engine.permission.PermissionRequest
+
+import mozilla.components.concept.engine.prompt.PromptRequest
+
+import mozilla.components.concept.engine.window.WindowRequest
+
+import mozilla.components.support.base.observer.Consumable
 import org.junit.Assert
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.spy
+import org.mockito.Mockito.verify
 
 class EngineObserverTest {
 
     @Test
-    fun testEngineSessionObserver() {
+    fun engineSessionObserver() {
         val session = Session("")
         val engineSession = object : EngineSession() {
             override val settings: Settings
@@ -39,9 +49,8 @@ class EngineObserverTest {
             override fun findNext(forward: Boolean) {}
             override fun clearFindMatches() {}
             override fun exitFullScreenMode() {}
-            override fun saveState(): Map<String, Any> {
-                return emptyMap()
-            }
+            override fun captureThumbnail(): Bitmap? = null
+            override fun saveState(): Map<String, Any> = emptyMap()
 
             override fun loadData(data: String, mimeType: String, encoding: String) {
                 notifyObservers { onLocationChange(data) }
@@ -70,7 +79,7 @@ class EngineObserverTest {
     }
 
     @Test
-    fun testEngineSessionObserverWithSecurityChanges() {
+    fun engineSessionObserverWithSecurityChanges() {
         val session = Session("")
         val engineSession = object : EngineSession() {
             override val settings: Settings
@@ -89,10 +98,8 @@ class EngineObserverTest {
             override fun findNext(forward: Boolean) {}
             override fun clearFindMatches() {}
             override fun exitFullScreenMode() {}
-            override fun saveState(): Map<String, Any> {
-                return emptyMap()
-            }
-
+            override fun captureThumbnail(): Bitmap? = null
+            override fun saveState(): Map<String, Any> = emptyMap()
             override fun loadData(data: String, mimeType: String, encoding: String) {}
             override fun loadUrl(url: String) {
                 if (url.startsWith("https://")) {
@@ -112,7 +119,7 @@ class EngineObserverTest {
     }
 
     @Test
-    fun testEngineSessionObserverWithTrackingProtection() {
+    fun engineSessionObserverWithTrackingProtection() {
         val session = Session("")
         val engineSession = object : EngineSession() {
             override val settings: Settings
@@ -131,10 +138,8 @@ class EngineObserverTest {
             }
 
             override fun toggleDesktopMode(enable: Boolean, reload: Boolean) {}
-            override fun saveState(): Map<String, Any> {
-                return emptyMap()
-            }
-
+            override fun captureThumbnail(): Bitmap? = null
+            override fun saveState(): Map<String, Any> = emptyMap()
             override fun loadUrl(url: String) {}
             override fun loadData(data: String, mimeType: String, encoding: String) {}
             override fun clearData() {}
@@ -160,7 +165,7 @@ class EngineObserverTest {
     }
 
     @Test
-    fun testEngineObserverClearsWebsiteTitleIfNewPageStartsLoading() {
+    fun engineObserverClearsWebsiteTitleIfNewPageStartsLoading() {
         val session = Session("https://www.mozilla.org")
         session.title = "Hello World"
 
@@ -175,7 +180,7 @@ class EngineObserverTest {
     }
 
     @Test
-    fun testEngineObserverClearsBlockedTrackersIfNewPageStartsLoading() {
+    fun engineObserverClearsBlockedTrackersIfNewPageStartsLoading() {
         val session = Session("https://www.mozilla.org")
         val observer = EngineObserver(session)
 
@@ -188,7 +193,7 @@ class EngineObserverTest {
     }
 
     @Test
-    fun testEngineObserverPassingHitResult() {
+    fun engineObserverPassingHitResult() {
         val session = Session("https://www.mozilla.org")
         val observer = EngineObserver(session)
         val hitResult = HitResult.UNKNOWN("data://foobar")
@@ -203,7 +208,7 @@ class EngineObserverTest {
     }
 
     @Test
-    fun testEngineObserverClearsFindResults() {
+    fun engineObserverClearsFindResults() {
         val session = Session("https://www.mozilla.org")
         val observer = EngineObserver(session)
 
@@ -218,7 +223,7 @@ class EngineObserverTest {
     }
 
     @Test
-    fun testEngineObserverClearsFindResultIfNewPageStartsLoading() {
+    fun engineObserverClearsFindResultIfNewPageStartsLoading() {
         val session = Session("https://www.mozilla.org")
         val observer = EngineObserver(session)
 
@@ -233,7 +238,7 @@ class EngineObserverTest {
     }
 
     @Test
-    fun testEngineObserverNotifiesFullscreenMode() {
+    fun engineObserverNotifiesFullscreenMode() {
         val session = Session("https://www.mozilla.org")
         val observer = EngineObserver(session)
 
@@ -241,5 +246,79 @@ class EngineObserverTest {
         assertEquals(true, session.fullScreenMode)
         observer.onFullScreenChange(false)
         assertEquals(false, session.fullScreenMode)
+    }
+
+    @Test
+    fun `Engine observer notified when thumbnail is assigned`() {
+        val session = Session("https://www.mozilla.org")
+        val observer = EngineObserver(session)
+        val emptyBitmap = spy(Bitmap::class.java)
+        observer.onThumbnailChange(emptyBitmap)
+        assertEquals(emptyBitmap, session.thumbnail)
+    }
+
+    @Test
+    fun engineSessionObserverWithContentPermissionRequests() {
+        val permissionRequest = mock(PermissionRequest::class.java)
+        val session = Session("")
+        val observer = EngineObserver(session)
+
+        assertTrue(session.contentPermissionRequest.isConsumed())
+        observer.onContentPermissionRequest(permissionRequest)
+        assertFalse(session.contentPermissionRequest.isConsumed())
+
+        observer.onCancelContentPermissionRequest(permissionRequest)
+        assertTrue(session.contentPermissionRequest.isConsumed())
+    }
+
+    @Test
+    fun engineSessionObserverWithAppPermissionRequests() {
+        val permissionRequest = mock(PermissionRequest::class.java)
+        val session = Session("")
+        val observer = EngineObserver(session)
+
+        assertTrue(session.appPermissionRequest.isConsumed())
+        observer.onAppPermissionRequest(permissionRequest)
+        assertFalse(session.appPermissionRequest.isConsumed())
+    }
+
+    @Test
+    fun engineObserverConsumesContentPermissionRequestIfNewPageStartsLoading() {
+        val permissionRequest = mock(PermissionRequest::class.java)
+        val session = Session("https://www.mozilla.org")
+        session.contentPermissionRequest = Consumable.from(permissionRequest)
+
+        val observer = EngineObserver(session)
+        observer.onLocationChange("https://getpocket.com")
+
+        verify(permissionRequest).reject()
+        assertTrue(session.contentPermissionRequest.isConsumed())
+    }
+
+    @Test
+    fun engineSessionObserverWithOnPromptRequest() {
+
+        val promptRequest = mock(PromptRequest::class.java)
+        val session = Session("")
+        val observer = EngineObserver(session)
+
+        assertTrue(session.promptRequest.isConsumed())
+        observer.onPromptRequest(promptRequest)
+        assertFalse(session.promptRequest.isConsumed())
+    }
+
+    @Test
+    fun engineSessionObserverWithWindowRequests() {
+        val windowRequest = mock(WindowRequest::class.java)
+        val session = Session("")
+        val observer = EngineObserver(session)
+
+        assertTrue(session.openWindowRequest.isConsumed())
+        observer.onOpenWindowRequest(windowRequest)
+        assertFalse(session.openWindowRequest.isConsumed())
+
+        assertTrue(session.closeWindowRequest.isConsumed())
+        observer.onCloseWindowRequest(windowRequest)
+        assertFalse(session.closeWindowRequest.isConsumed())
     }
 }

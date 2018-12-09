@@ -6,7 +6,6 @@ package mozilla.components.feature.session
 
 import mozilla.components.browser.session.Session
 import mozilla.components.browser.session.SessionManager
-import mozilla.components.browser.session.storage.SessionStorage
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineView
 import org.junit.Test
@@ -18,19 +17,17 @@ import org.mockito.Mockito.verify
 class SessionFeatureTest {
     private val sessionManager = mock(SessionManager::class.java)
     private val engineView = mock(EngineView::class.java)
-    private val sessionStorage = mock(SessionStorage::class.java)
     private val sessionUseCases = SessionUseCases(sessionManager)
 
     @Test
-    fun testStart() {
-        val feature = SessionFeature(sessionManager, sessionUseCases, engineView, sessionStorage)
+    fun start() {
+        val feature = SessionFeature(sessionManager, sessionUseCases, engineView)
         feature.start()
         verify(sessionManager).register(feature.presenter)
-        verify(sessionStorage).start(sessionManager)
     }
 
     @Test
-    fun testHandleBackPressed() {
+    fun handleBackPressed() {
         val session = Session("https://www.mozilla.org")
         `when`(sessionManager.selectedSession).thenReturn(session)
         `when`(sessionManager.selectedSessionOrThrow).thenReturn(session)
@@ -49,10 +46,9 @@ class SessionFeatureTest {
     }
 
     @Test
-    fun testStop() {
-        val feature = SessionFeature(sessionManager, sessionUseCases, engineView, sessionStorage)
+    fun stop() {
+        val feature = SessionFeature(sessionManager, sessionUseCases, engineView)
         feature.stop()
         verify(sessionManager).unregister(feature.presenter)
-        verify(sessionStorage).stop()
     }
 }

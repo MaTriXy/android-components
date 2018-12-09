@@ -10,8 +10,10 @@ import android.support.annotation.VisibleForTesting;
 
 import org.mozilla.telemetry.config.TelemetryConfiguration;
 import org.mozilla.telemetry.event.TelemetryEvent;
+import org.mozilla.telemetry.measurement.ClientIdMeasurement;
 import org.mozilla.telemetry.measurement.DefaultSearchMeasurement;
 import org.mozilla.telemetry.measurement.EventsMeasurement;
+import org.mozilla.telemetry.measurement.ExperimentsMapMeasurement;
 import org.mozilla.telemetry.net.TelemetryClient;
 import org.mozilla.telemetry.ping.TelemetryCorePingBuilder;
 import org.mozilla.telemetry.ping.TelemetryEventPingBuilder;
@@ -27,6 +29,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import kotlin.Unit;
+import kotlin.jvm.functions.Function0;
 
 public class Telemetry {
     private final TelemetryConfiguration configuration;
@@ -146,7 +151,7 @@ public class Telemetry {
         builder.getSessionCountMeasurement().countSession();
     }
 
-    public Telemetry recordSessionEnd() {
+    public Telemetry recordSessionEnd(Function0<Unit> onFailure) {
         if (!configuration.isCollectionEnabled()) {
             return this;
         }
@@ -156,9 +161,21 @@ public class Telemetry {
         }
 
         final TelemetryCorePingBuilder builder = (TelemetryCorePingBuilder) pingBuilders.get(TelemetryCorePingBuilder.TYPE);
-        builder.getSessionDurationMeasurement().recordSessionEnd();
+        boolean endedSuccessfully = builder.getSessionDurationMeasurement().recordSessionEnd();
+        if (!endedSuccessfully) {
+            onFailure.invoke();
+        }
 
         return this;
+    }
+
+    public Telemetry recordSessionEnd() {
+        return recordSessionEnd(new Function0<Unit>() {
+            @Override
+            public Unit invoke() {
+                throw new IllegalStateException("Expected session to be started before session end is called");
+            }
+        });
     }
 
     /**
@@ -212,6 +229,37 @@ public class Telemetry {
         return this;
     }
 
+    /**
+     * Records all experiments the client knows of in the event ping.
+     *
+     * @param experiments A map of experiments the client knows of. Mapping experiment name to a Boolean value that is
+     *                    true if the client is part of the experiment and false if the client is not part of the
+     *                    experiment.
+     */
+    public Telemetry recordExperiments(Map<String, Boolean> experiments) {
+        if (!configuration.isCollectionEnabled()) {
+            return this;
+        }
+
+        final TelemetryPingBuilder mobileEventBuilder = pingBuilders.get(TelemetryMobileEventPingBuilder.TYPE);
+        final TelemetryPingBuilder focusEventBuilder = pingBuilders.get(TelemetryEventPingBuilder.TYPE);
+
+        final ExperimentsMapMeasurement measurement;
+
+        if (mobileEventBuilder != null) {
+            measurement = ((TelemetryMobileEventPingBuilder) mobileEventBuilder).getExperimentsMapMeasurement();
+        } else if (focusEventBuilder != null) {
+            measurement = ((TelemetryEventPingBuilder) focusEventBuilder).getExperimentsMapMeasurement();
+        } else {
+            throw new IllegalStateException("Expect either TelemetryEventPingBuilder or " +
+                    "TelemetryMobileEventPingBuilder to be record experiments");
+        }
+
+        measurement.setExperiments(experiments);
+
+        return this;
+    }
+
     public Telemetry setDefaultSearchProvider(DefaultSearchMeasurement.DefaultSearchEngineProvider provider) {
         if (!pingBuilders.containsKey(TelemetryCorePingBuilder.TYPE)) {
             throw new IllegalStateException("This configuration does not contain a core ping builder");
@@ -234,6 +282,13 @@ public class Telemetry {
 
     public TelemetryConfiguration getConfiguration() {
         return configuration;
+    }
+
+    /**
+     * Returns the unique client id for this installation (UUID).
+     */
+    public String getClientId() {
+        return (String) new ClientIdMeasurement(configuration).flush();
     }
 
     /**

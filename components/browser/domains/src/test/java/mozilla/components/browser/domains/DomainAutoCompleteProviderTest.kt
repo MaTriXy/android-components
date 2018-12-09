@@ -7,7 +7,6 @@ package mozilla.components.browser.domains
 import android.preference.PreferenceManager
 import mozilla.components.browser.domains.DomainAutoCompleteProvider.AutocompleteSource.CUSTOM_LIST
 import mozilla.components.browser.domains.DomainAutoCompleteProvider.AutocompleteSource.DEFAULT_LIST
-import mozilla.components.browser.domains.DomainAutoCompleteProvider.Domain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,10 +15,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(constants = BuildConfig::class)
 class DomainAutoCompleteProviderTest {
 
     @After
@@ -31,43 +28,14 @@ class DomainAutoCompleteProviderTest {
     }
 
     @Test
-    fun testDomainCreation() {
-        val firstItem = Domain.create("https://mozilla.com")
-
-        assertTrue(firstItem.protocol == "https://")
-        assertFalse(firstItem.hasWww)
-        assertTrue(firstItem.host == "mozilla.com")
-
-        val secondItem = Domain.create("www.mozilla.com")
-
-        assertTrue(secondItem.protocol == "http://")
-        assertTrue(secondItem.hasWww)
-        assertTrue(secondItem.host == "mozilla.com")
-    }
-
-    @Test
-    fun testDomainCanCreateUrl() {
-        val firstItem = Domain.create("https://mozilla.com")
-        assertEquals("https://mozilla.com", firstItem.url)
-
-        val secondItem = Domain.create("www.mozilla.com")
-        assertEquals("http://www.mozilla.com", secondItem.url)
-    }
-
-    @Test(expected = IllegalStateException::class)
-    fun testDomainCreationWithBadURLThrowsException() {
-        Domain.create("http://www.")
-    }
-
-    @Test
-    fun testAutocompletionWithShippedDomains() {
+    fun autocompletionWithShippedDomains() {
         val provider = DomainAutoCompleteProvider()
         provider.initialize(RuntimeEnvironment.application, true, false, false)
 
-        val domains = listOf("mozilla.org", "google.com", "facebook.com")
-        provider.onDomainsLoaded(domains, emptyList())
+        provider.shippedDomains = listOf("mozilla.org", "google.com", "facebook.com").into()
+        provider.customDomains = emptyList()
 
-        val size = domains.size
+        val size = provider.shippedDomains.size
 
         assertCompletion(provider, "m", DEFAULT_LIST, size, "mozilla.org", "http://mozilla.org")
         assertCompletion(provider, "www", DEFAULT_LIST, size, "www.mozilla.org", "http://mozilla.org")
@@ -83,13 +51,14 @@ class DomainAutoCompleteProviderTest {
     }
 
     @Test
-    fun testAutocompletionWithCustomDomains() {
+    fun autocompletionWithCustomDomains() {
         val domains = listOf("facebook.com", "google.com", "mozilla.org")
         val customDomains = listOf("gap.com", "www.fanfiction.com", "https://mobile.de")
 
         val provider = DomainAutoCompleteProvider()
         provider.initialize(RuntimeEnvironment.application, true, true, false)
-        provider.onDomainsLoaded(domains, customDomains)
+        provider.shippedDomains = domains.into()
+        provider.customDomains = customDomains.into()
 
         assertCompletion(provider, "f", CUSTOM_LIST, customDomains.size, "fanfiction.com", "http://www.fanfiction.com")
         assertCompletion(provider, "fa", CUSTOM_LIST, customDomains.size, "fanfiction.com", "http://www.fanfiction.com")
@@ -106,7 +75,7 @@ class DomainAutoCompleteProviderTest {
     }
 
     @Test
-    fun testAutocompletionWithoutDomains() {
+    fun autocompletionWithoutDomains() {
         val filter = DomainAutoCompleteProvider()
         assertNoCompletion(filter, "mozilla")
     }

@@ -26,20 +26,29 @@ android {
         }
     }
 
-    flavorDimensions "channel", "abi"
+    flavorDimensions "engine", "abi"
 
     productFlavors {
         // GeckoView release channels
-        nightly {
-            dimension "channel"
+        geckoNightly {
+            dimension "engine"
         }
-        beta {
-            dimension "channel"
+        geckoBeta {
+            dimension "engine"
         }
-        production {
-            dimension "channel"
+        geckoRelease {
+            dimension "engine"
         }
 
+        // WebView
+        system {
+            dimension "engine"
+        }
+
+        servo {
+            dimension "engine"
+        }
+        
         // Processor architecture
         arm {
             dimension "abi"
@@ -50,6 +59,9 @@ android {
         aarch64 {
             dimension "abi"
         }
+        universal {
+            dimension "abi"
+        }
     }
 
     variantFilter { variant ->
@@ -58,64 +70,97 @@ android {
             // release versions.
             setIgnore(true)
         }
+
+        def flavors = variant.flavors*.name.toString().toLowerCase()
+        if (flavors.contains("system") && !flavors.contains("universal")) {
+            setIgnore(true)
+        }
+
+        if (flavors.contains("gecko") && flavors.contains("universal")) {
+            setIgnore(true)
+        }
+
+        if (flavors.contains("servo") && !flavors.contains("arm")) {
+            setIgnore(true)
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 }
 
-
 configurations {
-    nightlyArmImplementation {}
-    nightlyX86Implementation {}
-    nightlyAarch64Implementation {}
+    geckoNightlyArmImplementation {}
+    geckoNightlyX86Implementation {}
+    geckoNightlyAarch64Implementation {}
 
-    betaArmImplementation {}
-    betaX86Implementation {}
-    betaAarch64Implementation {}
+    geckoBetaArmImplementation {}
+    geckoBetaX86Implementation {}
+    geckoBetaAarch64Implementation {}
 
-    productionArmImplementation {}
-    productionX86Implementation {}
-    productionAarch64Implementation {}
+    geckoReleaseArmImplementation {}
+    geckoReleaseX86Implementation {}
+    geckoReleaseAarch64Implementation {}
 }
 
 dependencies {
+    implementation project(':concept-awesomebar')
     implementation project(':concept-engine')
     implementation project(':concept-tabstray')
     implementation project(':concept-toolbar')
+    implementation project(':concept-storage')
 
+    implementation project(':browser-awesomebar')
     implementation project(':browser-engine-system')
-
+    implementation project(':browser-domains')
     implementation project(':browser-search')
     implementation project(':browser-session')
     implementation project(':browser-tabstray')
     implementation project(':browser-toolbar')
     implementation project(':browser-menu')
+    implementation project(':browser-storage-memory')
 
+    implementation project(':feature-awesomebar')
+    implementation project(':feature-contextmenu')
+    implementation project(':feature-customtabs')
+    implementation project(':feature-intent')
     implementation project(':feature-search')
     implementation project(':feature-session')
+    implementation project(':feature-storage')
     implementation project(':feature-toolbar')
     implementation project(':feature-tabs')
+    implementation project(':feature-prompts')
 
     implementation project(':ui-autocomplete')
 
     implementation project(':support-utils')
+    implementation project(':feature-downloads')
+    implementation project(':support-ktx')
 
-    nightlyImplementation project(':browser-engine-gecko-nightly')
-    nightlyArmImplementation Gecko.geckoview_nightly_arm
-    nightlyX86Implementation Gecko.geckoview_nightly_x86
-    nightlyAarch64Implementation Gecko.geckoview_nightly_aarch64
+    servoImplementation project(':browser-engine-servo')
 
-    betaImplementation project(':browser-engine-gecko-beta')
-    betaArmImplementation "org.mozilla.geckoview:geckoview-beta-armeabi-v7a:${rootProject.ext.geckoBeta['version']}"
-    betaX86Implementation "org.mozilla.geckoview:geckoview-beta-x86:${rootProject.ext.geckoBeta['version']}"
-    betaAarch64Implementation "org.mozilla.geckoview:geckoview-beta-arm64-v8a:${rootProject.ext.geckoBeta['version']}"
+    geckoNightlyImplementation project(':browser-engine-gecko-nightly')
+    geckoNightlyArmImplementation Gecko.geckoview_nightly_arm
+    geckoNightlyX86Implementation Gecko.geckoview_nightly_x86
+    geckoNightlyAarch64Implementation Gecko.geckoview_nightly_aarch64
 
-    productionImplementation project(':browser-engine-gecko')
-    productionArmImplementation "org.mozilla:geckoview-release-armeabi-v7a:${rootProject.ext.geckoRelease['version']}"
-    productionX86Implementation "org.mozilla:geckoview-release-x86:${rootProject.ext.geckoRelease['version']}"
-    productionAarch64Implementation "org.mozilla:geckoview-release-arm64-v8a:${rootProject.ext.geckoRelease['version']}"
+    geckoBetaImplementation project(':browser-engine-gecko-beta')
+    geckoBetaArmImplementation Gecko.geckoview_beta_arm
+    geckoBetaX86Implementation Gecko.geckoview_beta_x86
+    geckoBetaAarch64Implementation Gecko.geckoview_beta_aarch64
 
-    implementation Deps.kotlin_stdlib
-    implementation Deps.kotlin_coroutines
+    geckoReleaseImplementation project(':browser-engine-gecko')
+    geckoReleaseArmImplementation Gecko.geckoview_release_arm
+    geckoReleaseX86Implementation Gecko.geckoview_release_x86
+    geckoReleaseAarch64Implementation Gecko.geckoview_release_aarch64
 
-    implementation Deps.support_appcompat
-    implementation Deps.support_constraintlayout
+    implementation Dependencies.support_design
+
+    implementation Dependencies.kotlin_stdlib
+    implementation Dependencies.kotlin_coroutines
+
+    implementation Dependencies.support_appcompat
+    implementation Dependencies.support_constraintlayout
 }

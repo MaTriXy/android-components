@@ -2,23 +2,45 @@
 <!-- This Source Code Form is subject to the terms of the Mozilla Public
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    tools:context=".MainActivity">
 
-    <mozilla.components.browser.toolbar.BrowserToolbar
-        android:id="@+id/toolbar"
+<android.support.design.widget.CoordinatorLayout
+        xmlns:android="http://schemas.android.com/apk/res/android"
+        xmlns:app="http://schemas.android.com/apk/res-auto"
+        xmlns:tools="http://schemas.android.com/tools"
+        xmlns:mozac="http://schemas.android.com/apk/res-auto"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:background="#aaaaaa" />
+        android:layout_height="match_parent"
+        tools:context=".BrowserActivity">
 
-    <mozilla.components.concept.engine.EngineView
-        android:id="@+id/engineView"
+    <android.support.design.widget.AppBarLayout
+            android:layout_height="wrap_content"
+            android:layout_width="match_parent">
+
+        <mozilla.components.browser.toolbar.BrowserToolbar
+                android:id="@+id/toolbar"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:background="#aaaaaa"/>
+
+    </android.support.design.widget.AppBarLayout>
+
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_height="match_parent"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
-</LinearLayout>
+        <mozilla.components.concept.engine.EngineView
+            android:id="@+id/engineView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <mozilla.components.browser.awesomebar.BrowserAwesomeBar
+            android:id="@+id/awesomeBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="4dp"
+            android:visibility="gone" />
+
+    </FrameLayout>
+
+</android.support.design.widget.CoordinatorLayout>

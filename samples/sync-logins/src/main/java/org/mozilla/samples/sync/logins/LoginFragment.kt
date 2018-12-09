@@ -27,14 +27,13 @@ class LoginFragment : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         arguments?.let {
-            authUrl = it.getString(AUTH_URL)
-            redirectUrl = it.getString(REDIRECT_URL)
+            authUrl = it.getString(AUTH_URL)!!
+            redirectUrl = it.getString(REDIRECT_URL)!!
         }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?,
-                              savedInstanceState: Bundle?): View? {
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         val view: View = inflater.inflate(R.layout.fragment_view, container, false)
         val webView = view.findViewById<WebView>(R.id.webview)
         // Need JS, cookies and localStorage.

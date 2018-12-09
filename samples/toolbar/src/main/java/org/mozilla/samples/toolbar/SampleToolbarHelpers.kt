@@ -5,18 +5,16 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.drawable.ClipDrawable
-import android.support.annotation.DrawableRes
 import android.support.v7.widget.RecyclerView
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ImageButton
 import android.widget.TextView
-import kotlinx.coroutines.experimental.android.UI
-import kotlinx.coroutines.experimental.delay
-import kotlinx.coroutines.experimental.launch
-import mozilla.components.browser.toolbar.BrowserToolbar
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 // Code needed for assembling the sample application - but not needed to actually explain the toolbar
 
@@ -27,6 +25,7 @@ enum class ToolbarConfiguration(val label: String) {
     SEEDLING("Seedling")
 }
 
+@Suppress("MagicNumber")
 class ConfigurationAdapter(val configuration: ToolbarConfiguration) : RecyclerView.Adapter<ConfigurationViewHolder>() {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ConfigurationViewHolder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_toolbar_configuration, parent, false)
@@ -74,6 +73,7 @@ object Extra {
 /**
  * A custom view to be drawn behind the URL and page actions. Acts as a custom progress view.
  */
+@Suppress("MagicNumber")
 class UrlBoxProgressView(
     context: Context
 ) : View(context) {
@@ -98,7 +98,7 @@ class UrlBoxProgressView(
             // again. However we want to show the full progress bar briefly so we wait 250ms before
             // going back to 0.
             if (value == 100) {
-                launch(UI) {
+                CoroutineScope(Dispatchers.Main).launch {
                     delay(250)
                     progress = 0
                 }
@@ -127,41 +127,5 @@ class UrlBoxProgressView(
     override fun onDraw(canvas: Canvas?) {
         backgroundDrawable.draw(canvas)
         progressDrawable.draw(canvas)
-    }
-}
-
-/**
- * A custom page action that either shows a reload button or a stop button based on the provided
- * <code>isLoading</code> lambda.
- */
-class ReloadPageAction(
-    @DrawableRes private val reloadImageResource: Int,
-    private val reloadContentDescription: String,
-    private val stopImageResource: Int,
-    private val stopContentDescription: String,
-    private val isLoading: () -> Boolean,
-    background: Int? = null,
-    listener: () -> Unit
-) : BrowserToolbar.Button(
-    reloadImageResource,
-    reloadContentDescription,
-    listener = listener,
-    background = background
-) {
-    var loading: Boolean = false
-        private set
-
-    override fun bind(view: View) {
-        loading = isLoading.invoke()
-
-        val button = view as ImageButton
-
-        if (loading) {
-            button.setImageResource(stopImageResource)
-            button.contentDescription = stopContentDescription
-        } else {
-            button.setImageResource(reloadImageResource)
-            button.contentDescription = reloadContentDescription
-        }
     }
 }

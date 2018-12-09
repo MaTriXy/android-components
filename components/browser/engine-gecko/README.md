@@ -8,10 +8,10 @@ See [concept-engine](../../concept/engine/README.md) for a documentation of the 
 
 ### Setting up the dependency
 
-Use gradle to download the library from JCenter:
+Use Gradle to download the library from [maven.mozilla.org](https://maven.mozilla.org/) ([Setup repository](../../../README.md#maven-repository)):
 
 ```Groovy
-implementation "org.mozilla.components:engine-gecko-nightly:{latest-version}
+implementation "org.mozilla.components:browser-engine-gecko:{latest-version}"
 ```
 
 ### Initializing

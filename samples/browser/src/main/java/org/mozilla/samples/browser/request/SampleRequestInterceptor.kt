@@ -4,14 +4,27 @@
 
 package org.mozilla.samples.browser.request
 
+import android.content.Context
+import mozilla.components.browser.errorpages.ErrorPages
+import mozilla.components.browser.errorpages.ErrorType
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.request.RequestInterceptor
+import mozilla.components.concept.engine.request.RequestInterceptor.InterceptionResponse
+import mozilla.components.concept.engine.request.RequestInterceptor.ErrorResponse
 
-class SampleRequestInterceptor : RequestInterceptor {
-    override fun onLoadRequest(session: EngineSession, uri: String): RequestInterceptor.InterceptionResponse? {
+class SampleRequestInterceptor(val context: Context) : RequestInterceptor {
+    override fun onLoadRequest(session: EngineSession, uri: String): InterceptionResponse? {
         return when (uri) {
-            "sample:about" -> RequestInterceptor.InterceptionResponse("<h1>I am the sample browser</h1>")
+            "sample:about" -> InterceptionResponse.Content("<h1>I am the sample browser</h1>")
             else -> null
         }
+    }
+
+    override fun onErrorRequest(
+        session: EngineSession,
+        errorType: ErrorType,
+        uri: String?
+    ): ErrorResponse? {
+        return ErrorResponse(ErrorPages.createErrorPage(context, errorType, uri))
     }
 }

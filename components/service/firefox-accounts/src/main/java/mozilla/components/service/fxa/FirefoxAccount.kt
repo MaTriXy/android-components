@@ -4,21 +4,43 @@
 
 package mozilla.components.service.fxa
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.plus
+import org.mozilla.fxaclient.internal.FirefoxAccount as InternalFxAcct
+import org.mozilla.fxaclient.internal.FxaException.Unauthorized as Unauthorized
+
+/**
+ * Facilitates testing consumers of FirefoxAccount.
+ */
+interface FirefoxAccountShaped {
+    fun getAccessToken(singleScope: String): Deferred<AccessTokenInfo>
+    fun getTokenServerEndpointURL(): String
+}
+
 /**
  * FirefoxAccount represents the authentication state of a client.
- *
- * @param <T> The type of the value delivered via the FxaResult.
  */
-class FirefoxAccount(override var rawPointer: RawFxAccount?) : RustObject<RawFxAccount>() {
+class FirefoxAccount internal constructor(private val inner: InternalFxAcct) : AutoCloseable, FirefoxAccountShaped {
 
-    constructor(config: Config, clientId: String, redirectUri: String): this(null) {
-        this.rawPointer = safeSync { e ->
-            FxaClient.INSTANCE.fxa_new(config.consumePointer(), clientId, redirectUri, e)
-        }
-    }
+    private val job = Job()
+    private val scope = CoroutineScope(Dispatchers.IO) + job
 
-    override fun destroy(p: RawFxAccount) {
-        safeSync { FxaClient.INSTANCE.fxa_free(p) }
+    /**
+     * Construct a FirefoxAccount from a [Config], a clientId, and a redirectUri.
+     *
+     * Note that it is not necessary to `close` the Config if this constructor is used (however
+     * doing so will not cause an error).
+     */
+    constructor(config: Config)
+            : this(InternalFxAcct(config))
+
+    override fun close() {
+        job.cancel()
+        inner.close()
     }
 
     /**
@@ -26,14 +48,14 @@ class FirefoxAccount(override var rawPointer: RawFxAccount?) : RustObject<RawFxA
      *
      * @param scopes List of OAuth scopes for which the client wants access
      * @param wantsKeys Fetch keys for end-to-end encryption of data from Mozilla-hosted services
-     * @return FxaResult<String> that resolves to the flow URL when complete
+     * @return Deferred<String> that resolves to the flow URL when complete
      */
-    fun beginOAuthFlow(scopes: Array<String>, wantsKeys: Boolean): FxaResult<String> {
-        return safeAsync { e ->
-            val scope = scopes.joinToString(" ")
-            val p = FxaClient.INSTANCE.fxa_begin_oauth_flow(validPointer(), scope, wantsKeys, e)
-            getAndConsumeString(p) ?: ""
-        }
+    fun beginOAuthFlow(scopes: Array<String>, wantsKeys: Boolean): Deferred<String> {
+        return scope.async { inner.beginOAuthFlow(scopes, wantsKeys) }
+    }
+
+    fun beginPairingFlow(pairingUrl: String, scopes: Array<String>): Deferred<String> {
+        return scope.async { inner.beginPairingFlow(pairingUrl, scopes) }
     }
 
     /**
@@ -41,12 +63,19 @@ class FirefoxAccount(override var rawPointer: RawFxAccount?) : RustObject<RawFxA
      * or from the server (requires the client to have access to the profile scope).
      *
      * @param ignoreCache Fetch the profile information directly from the server
-     * @return FxaResult<[Profile]> representing the user's basic profile info
+     * @return Deferred<[Profile]> representing the user's basic profile info
+     * @throws Unauthorized We couldn't find any suitable access token to make that call.
+     * The caller should then start the OAuth Flow again with the "profile" scope.
      */
-    fun getProfile(ignoreCache: Boolean): FxaResult<Profile> {
-        return safeAsync { e ->
-            val p = FxaClient.INSTANCE.fxa_profile(validPointer(), ignoreCache, e)
-            Profile(p)
+    fun getProfile(ignoreCache: Boolean): Deferred<Profile> {
+        return scope.async {
+            val internalProfile = inner.getProfile(ignoreCache)
+            Profile(
+                    uid = internalProfile.uid,
+                    email = internalProfile.email,
+                    avatar = internalProfile.avatar,
+                    displayName = internalProfile.displayName
+            )
         }
     }
 
@@ -54,43 +83,17 @@ class FirefoxAccount(override var rawPointer: RawFxAccount?) : RustObject<RawFxA
      * Convenience method to fetch the profile from a cached account by default, but fall back
      * to retrieval from the server.
      *
-     * @return FxaResult<[Profile]> representing the user's basic profile info
+     * @return Deferred<[Profile]> representing the user's basic profile info
+     * @throws Unauthorized We couldn't find any suitable access token to make that call.
+     * The caller should then start the OAuth Flow again with the "profile" scope.
      */
-    fun getProfile(): FxaResult<Profile> {
-        return getProfile(false)
-    }
-
-    /**
-     * Creates a new SAML assertion from the account state, which can be posted to the token server
-     * endpoint fetched from [getTokenServerEndpointURL] in order to get an access token.
-     *
-     * @return String representing the SAML assertion
-     */
-    fun newAssertion(audience: String): String? {
-        return safeSync { e ->
-            val p = FxaClient.INSTANCE.fxa_assertion_new(this.validPointer(), audience, e)
-            getAndConsumeString(p)
-        }
-    }
+    fun getProfile(): Deferred<Profile> = getProfile(false)
 
     /**
      * Fetches the token server endpoint, for authentication using the SAML bearer flow.
      */
-    fun getTokenServerEndpointURL(): String? {
-        return safeSync { e ->
-            val p = FxaClient.INSTANCE.fxa_get_token_server_endpoint_url(validPointer(), e)
-            getAndConsumeString(p)
-        }
-    }
-
-    /**
-     * Fetches keys for encryption/decryption of Firefox Sync data.
-     */
-    fun getSyncKeys(): SyncKeys {
-        return safeSync { e ->
-            val p = FxaClient.INSTANCE.fxa_get_sync_keys(validPointer(), e)
-            SyncKeys(p)
-        }
+    override fun getTokenServerEndpointURL(): String {
+        return inner.getTokenServerEndpointURL()
     }
 
     /**
@@ -99,26 +102,22 @@ class FirefoxAccount(override var rawPointer: RawFxAccount?) : RustObject<RawFxA
      *
      * Modifies the FirefoxAccount state.
      */
-    fun completeOAuthFlow(code: String, state: String): FxaResult<OAuthInfo> {
-        return safeAsync { e ->
-            val p = FxaClient.INSTANCE.fxa_complete_oauth_flow(validPointer(), code, state, e)
-            OAuthInfo(p)
-        }
+    fun completeOAuthFlow(code: String, state: String): Deferred<Unit> {
+        return scope.async { inner.completeOAuthFlow(code, state) }
     }
 
     /**
-     * Fetches a new access token for the desired scopes using an internally stored refresh token.
+     * Tries to fetch an access token for the given scope.
      *
-     * @param scopes List of OAuth scopes for which the client wants access
-     * @return FxaResult<[OAuthInfo]> that stores the token, along with its scopes and keys when complete
-     * @throws FxaException.Unauthorized if the token could not be retrieved (eg. expired refresh token)
+     * @param scope Single OAuth scope (no spaces) for which the client wants access
+     * @return [AccessTokenInfo] that stores the token, along with its scope, key and
+     *                           expiration timestamp (in seconds) since epoch when complete
+     * @throws Unauthorized We couldn't provide an access token for this scope.
+     * The caller should then start the OAuth Flow again with the desired scope.
      */
-    fun getOAuthToken(scopes: Array<String>): FxaResult<OAuthInfo> {
-        return safeAsync { e ->
-            val scope = scopes.joinToString(" ")
-            val p = FxaClient.INSTANCE.fxa_get_oauth_token(validPointer(), scope, e)
-                    ?: throw FxaException.Unauthorized("Restart OAuth flow")
-            OAuthInfo(p)
+    override fun getAccessToken(singleScope: String): Deferred<AccessTokenInfo> {
+        return scope.async {
+            inner.getAccessToken(singleScope).let { AccessTokenInfo.fromInternal(it) }
         }
     }
 
@@ -129,38 +128,17 @@ class FirefoxAccount(override var rawPointer: RawFxAccount?) : RustObject<RawFxA
      *
      * @return String containing the authentication details in JSON format
      */
-    fun toJSONString(): String? {
-        return safeSync { e ->
-            val p = FxaClient.INSTANCE.fxa_to_json(validPointer(), e)
-            getAndConsumeString(p)
-        }
-    }
+    fun toJSONString(): String = inner.toJSONString()
 
     companion object {
-        fun from(
-            config: Config,
-            clientId: String,
-            redirectUri: String,
-            webChannelResponse: String
-        ): FxaResult<FirefoxAccount> {
-            return RustObject.safeAsync { e ->
-                val p = FxaClient.INSTANCE.fxa_from_credentials(config.consumePointer(),
-                        clientId, redirectUri, webChannelResponse, e)
-                FirefoxAccount(p)
-            }
-        }
-
         /**
          * Restores the account's authentication state from a JSON string produced by
          * [FirefoxAccount.toJSONString].
          *
-         * @return FxaResult<[FirefoxAccount]> representing the authentication state
+         * @return [FirefoxAccount] representing the authentication state
          */
-        fun fromJSONString(json: String): FxaResult<FirefoxAccount> {
-            return RustObject.safeAsync { e ->
-                val p = FxaClient.INSTANCE.fxa_from_json(json, e)
-                FirefoxAccount(p)
-            }
+        fun fromJSONString(json: String): FirefoxAccount {
+            return FirefoxAccount(InternalFxAcct.fromJSONString(json))
         }
     }
 }

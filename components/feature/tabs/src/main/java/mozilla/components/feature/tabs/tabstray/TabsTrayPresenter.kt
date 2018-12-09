@@ -18,9 +18,9 @@ class TabsTrayPresenter(
     private val tabsTray: TabsTray,
     private val sessionManager: SessionManager,
     private val closeTabsTray: () -> Unit,
-    private val onTabsTrayEmpty: (() -> Unit)? = null
+    internal var sessionsFilter: (Session) -> Boolean = { true }
 ) : SessionManager.Observer {
-    private var sessions = sessionManager.sessions
+    private var sessions = sessionManager.sessions.filter { sessionsFilter(it) }
     private var selectedIndex = sessions.indexOf(sessionManager.selectedSession)
 
     fun start() {
@@ -37,7 +37,6 @@ class TabsTrayPresenter(
         calculateDiffAndUpdateTabsTray()
 
         if (sessions.isEmpty()) {
-            onTabsTrayEmpty?.invoke()
             closeTabsTray.invoke()
         }
     }
@@ -53,7 +52,6 @@ class TabsTrayPresenter(
     override fun onAllSessionsRemoved() {
         calculateDiffAndUpdateTabsTray()
 
-        onTabsTrayEmpty?.invoke()
         closeTabsTray.invoke()
     }
 
@@ -62,8 +60,8 @@ class TabsTrayPresenter(
      * tab tray with the new data and notifies it about what changes happened so that it can animate
      * those changes.
      */
-    private fun calculateDiffAndUpdateTabsTray() {
-        val updatedSessions = sessionManager.sessions
+    internal fun calculateDiffAndUpdateTabsTray() {
+        val updatedSessions = sessionManager.sessions.filter { sessionsFilter(it) }
         val updatedIndex = if (updatedSessions.isNotEmpty()) {
             updatedSessions.indexOf(sessionManager.selectedSession)
         } else {
@@ -77,7 +75,10 @@ class TabsTrayPresenter(
         sessions = updatedSessions
         selectedIndex = updatedIndex
 
-        tabsTray.updateSessions(updatedSessions, updatedIndex)
+        tabsTray.apply {
+            displaySessions(updatedSessions, updatedIndex)
+            updateSessions(updatedSessions, updatedIndex)
+        }
 
         result.dispatchUpdatesTo(object : ListUpdateCallback {
             override fun onChanged(position: Int, count: Int, payload: Any?) {

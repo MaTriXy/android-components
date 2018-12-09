@@ -13,7 +13,7 @@ import org.robolectric.RobolectricTestRunner
 import java.nio.charset.StandardCharsets
 import java.security.Key
 import java.security.KeyStore
-import java.security.InvalidKeyException
+import java.security.GeneralSecurityException
 import java.security.SecureRandom
 import java.security.Security
 import javax.crypto.Cipher
@@ -47,20 +47,14 @@ class KeystoreTest {
     private var wrapper = MockStoreWrapper()
     private var rng = SecureRandom()
 
-    private fun createKeystore(label: String): Keystore {
-        val ks = Keystore(label)
-        ks.wrapper = wrapper
-        return ks
-    }
-
     @Before
     fun setUp() {
         Security.setProperty("crypto.policy", "unlimited")
     }
 
     @Test
-    fun testWorkingWithLabel() {
-        val keystore = createKeystore("test-labels")
+    fun workingWithLabel() {
+        val keystore = Keystore("test-labels", true, wrapper)
 
         Assert.assertFalse(keystore.available())
         keystore.generateKey()
@@ -70,15 +64,15 @@ class KeystoreTest {
     }
 
     @Test
-    fun testCreateEncryptCipher() {
-        val keystore = createKeystore("test-encrypt-ciphers")
+    fun createEncryptCipher() {
+        val keystore = Keystore("test-encrypt-ciphers", true, wrapper)
 
         Assert.assertFalse(keystore.available())
         var caught = false
         var cipher: Cipher? = null
         try {
             cipher = keystore.createEncryptCipher()
-        } catch (ex: InvalidKeyException) {
+        } catch (ex: GeneralSecurityException) {
             caught = true
         } finally {
             Assert.assertTrue("unexpected success", caught)
@@ -93,8 +87,8 @@ class KeystoreTest {
     }
 
     @Test
-    fun testCreateDecryptCipher() {
-        val keystore = createKeystore("test-decrypt-ciphers")
+    fun createDecryptCipher() {
+        val keystore = Keystore("test-decrypt-ciphers", true, wrapper)
         val iv = ByteArray(12)
         rng.nextBytes(iv)
 
@@ -103,7 +97,7 @@ class KeystoreTest {
         var cipher: Cipher? = null
         try {
             cipher = keystore.createDecryptCipher(iv)
-        } catch (ex: InvalidKeyException) {
+        } catch (ex: GeneralSecurityException) {
             caught = true
         } finally {
             Assert.assertTrue("unexpected success", caught)
@@ -117,11 +111,24 @@ class KeystoreTest {
         Assert.assertArrayEquals(iv, cipher.iv)
     }
 
+    @Test
+    fun testAutoInit() {
+        val keystore = Keystore("test-auto-init", false, wrapper)
+
+        Assert.assertTrue(keystore.available())
+        Assert.assertFalse(keystore.generateKey())
+
+        var cipher: Cipher?
+        cipher = keystore.createEncryptCipher()
+        Assert.assertNotNull(cipher)
+        cipher = keystore.createDecryptCipher(ByteArray(12))
+        Assert.assertNotNull(cipher)
+    }
+
     @Ignore("troubleshooting test-env crypto errors")
     @Test
-    fun testCryptoRoundTrip() {
-        val keystore = createKeystore("test-roundtrip")
-        keystore.generateKey()
+    fun cryptoRoundTrip() {
+        val keystore = Keystore("test-roundtrip", wrapper = wrapper)
 
         var input = "classic plaintext 'hello, world'".toByteArray(StandardCharsets.UTF_8)
         var encrypted = keystore.encryptBytes(input)

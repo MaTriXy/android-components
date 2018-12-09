@@ -10,15 +10,15 @@ import android.util.Base64
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.EditText
 import android.widget.TextView
 import mozilla.components.lib.dataprotect.Keystore
+import org.mozilla.samples.dataprotect.Constants.B64_FLAGS
 import java.nio.charset.StandardCharsets
 
 class ProtectedDataAdapter(
-        private val prefs: SharedPreferences,
-        private val keystore: Keystore,
-        private val itemKeys: List<String>
+    private val prefs: SharedPreferences,
+    private val keystore: Keystore,
+    private val itemKeys: List<String>
 ) : RecyclerView.Adapter<ProtectedDataAdapter.Holder>() {
     var unlocked: Boolean = false
     fun toggleUnlock(): Boolean {
@@ -49,7 +49,7 @@ class ProtectedDataAdapter(
         holder.valView.text = value
     }
 
-    class Holder(val view: View): RecyclerView.ViewHolder(view) {
+    class Holder(val view: View) : RecyclerView.ViewHolder(view) {
         var keyView: TextView
         var valView: TextView
 
