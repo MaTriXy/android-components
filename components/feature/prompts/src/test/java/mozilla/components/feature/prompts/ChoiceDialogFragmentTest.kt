@@ -1,19 +1,23 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package mozilla.components.feature.prompts
 
-import android.content.Context
 import android.content.DialogInterface.BUTTON_NEGATIVE
 import android.content.DialogInterface.BUTTON_POSITIVE
-import android.support.v7.app.AlertDialog
-import android.support.v7.widget.RecyclerView
-import android.view.ContextThemeWrapper
+import android.os.Parcelable
 import android.view.LayoutInflater
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
+import androidx.recyclerview.widget.RecyclerView
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import mozilla.components.concept.engine.prompt.Choice
 import mozilla.components.feature.prompts.ChoiceAdapter.Companion.TYPE_GROUP
 import mozilla.components.feature.prompts.ChoiceAdapter.Companion.TYPE_MENU
-import mozilla.components.feature.prompts.ChoiceAdapter.Companion.TYPE_MULTIPLE
 import mozilla.components.feature.prompts.ChoiceAdapter.Companion.TYPE_MENU_SEPARATOR
+import mozilla.components.feature.prompts.ChoiceAdapter.Companion.TYPE_MULTIPLE
 import mozilla.components.feature.prompts.ChoiceAdapter.Companion.TYPE_SINGLE
 import mozilla.components.feature.prompts.ChoiceAdapter.GroupViewHolder
 import mozilla.components.feature.prompts.ChoiceAdapter.MenuViewHolder
@@ -24,31 +28,29 @@ import mozilla.components.feature.prompts.ChoiceDialogFragment.Companion.MULTIPL
 import mozilla.components.feature.prompts.ChoiceDialogFragment.Companion.SINGLE_CHOICE_DIALOG_TYPE
 import mozilla.components.feature.prompts.ChoiceDialogFragment.Companion.newInstance
 import mozilla.components.support.test.mock
+import mozilla.components.support.test.robolectric.testContext
+import mozilla.ext.appCompatContext
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.Mockito.spy
-import org.mockito.Mockito.doReturn
-import org.mockito.Mockito.verify
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment.application
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Assert.assertNotNull
 import org.mockito.Mockito.doNothing
+import org.mockito.Mockito.doReturn
+import org.mockito.Mockito.spy
 import org.mockito.Mockito.times
+import org.mockito.Mockito.verify
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(AndroidJUnit4::class)
 class ChoiceDialogFragmentTest {
-
-    private val context: Context
-        get() = ContextThemeWrapper(application, android.support.v7.appcompat.R.style.Theme_AppCompat)
 
     @Test
     fun `Build single choice dialog`() {
 
         val fragment = spy(newInstance(arrayOf(), "sessionId", SINGLE_CHOICE_DIALOG_TYPE))
 
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         val dialog = fragment.onCreateDialog(null)
 
@@ -60,7 +62,7 @@ class ChoiceDialogFragmentTest {
 
         val fragment = spy(newInstance(arrayOf(), "sessionId", MENU_CHOICE_DIALOG_TYPE))
 
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         val dialog = fragment.onCreateDialog(null)
 
@@ -72,7 +74,7 @@ class ChoiceDialogFragmentTest {
 
         val fragment = spy(newInstance(arrayOf(), "sessionId", MULTIPLE_CHOICE_DIALOG_TYPE))
 
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         val dialog = fragment.onCreateDialog(null)
 
@@ -84,7 +86,7 @@ class ChoiceDialogFragmentTest {
 
         val fragment = spy(newInstance(arrayOf(), "sessionId", -1))
 
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         fragment.onCreateDialog(null)
     }
@@ -96,10 +98,10 @@ class ChoiceDialogFragmentTest {
 
         val fragment = spy(newInstance(choices, "sessionId", SINGLE_CHOICE_DIALOG_TYPE))
 
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         val adapter = getAdapterFrom(fragment)
-        val holder = adapter.onCreateViewHolder(LinearLayout(context), TYPE_SINGLE) as SingleViewHolder
+        val holder = adapter.onCreateViewHolder(LinearLayout(testContext), TYPE_SINGLE) as SingleViewHolder
         val labelView = holder.labelView
         adapter.bindViewHolder(holder, 0)
 
@@ -114,10 +116,10 @@ class ChoiceDialogFragmentTest {
 
         val fragment = spy(newInstance(choices, "sessionId", MENU_CHOICE_DIALOG_TYPE))
 
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         val adapter = getAdapterFrom(fragment)
-        val holder = adapter.onCreateViewHolder(LinearLayout(context), ChoiceAdapter.TYPE_MENU) as MenuViewHolder
+        val holder = adapter.onCreateViewHolder(LinearLayout(testContext), TYPE_MENU) as MenuViewHolder
         val labelView = holder.labelView
         adapter.bindViewHolder(holder, 0)
 
@@ -132,10 +134,10 @@ class ChoiceDialogFragmentTest {
 
         val fragment = spy(newInstance(choices, "sessionId", MENU_CHOICE_DIALOG_TYPE))
 
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         val adapter = getAdapterFrom(fragment)
-        val holder = adapter.onCreateViewHolder(LinearLayout(context), ChoiceAdapter.TYPE_MENU_SEPARATOR)
+        val holder = adapter.onCreateViewHolder(LinearLayout(testContext), TYPE_MENU_SEPARATOR)
         adapter.bindViewHolder(holder, 0)
 
         assertEquals(1, adapter.itemCount)
@@ -149,26 +151,26 @@ class ChoiceDialogFragmentTest {
 
         val fragment = spy(newInstance(choices, "sessionId", MENU_CHOICE_DIALOG_TYPE))
 
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         val adapter = getAdapterFrom(fragment)
-        adapter.onCreateViewHolder(LinearLayout(context), -1)
+        adapter.onCreateViewHolder(LinearLayout(testContext), -1)
     }
 
     @Test
     fun `Will adapter will return correct view type `() {
 
         val choices = arrayOf(
-            Choice(id = "", label = "item1"),
-            Choice(id = "", label = "item1", children = arrayOf()),
-            Choice(id = "", label = "menu", children = arrayOf()),
-            Choice(id = "", label = "separator", children = arrayOf(), isASeparator = true),
-            Choice(id = "", label = "multiple choice")
+                Choice(id = "", label = "item1"),
+                Choice(id = "", label = "item1", children = arrayOf()),
+                Choice(id = "", label = "menu", children = arrayOf()),
+                Choice(id = "", label = "separator", children = arrayOf(), isASeparator = true),
+                Choice(id = "", label = "multiple choice")
         )
 
         var fragment = spy(newInstance(choices, "sessionId", SINGLE_CHOICE_DIALOG_TYPE))
 
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         var adapter = getAdapterFrom(fragment)
         var type = adapter.getItemViewType(0)
@@ -176,7 +178,7 @@ class ChoiceDialogFragmentTest {
         assertEquals(type, TYPE_SINGLE)
 
         fragment = spy(newInstance(choices, "sessionId", MULTIPLE_CHOICE_DIALOG_TYPE))
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         adapter = getAdapterFrom(fragment)
 
@@ -184,7 +186,7 @@ class ChoiceDialogFragmentTest {
         assertEquals(type, TYPE_GROUP)
 
         fragment = spy(newInstance(choices, "sessionId", MENU_CHOICE_DIALOG_TYPE))
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         adapter = getAdapterFrom(fragment)
 
@@ -195,7 +197,7 @@ class ChoiceDialogFragmentTest {
         assertEquals(type, TYPE_MENU_SEPARATOR)
 
         fragment = spy(newInstance(choices, "sessionId", MULTIPLE_CHOICE_DIALOG_TYPE))
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         adapter = getAdapterFrom(fragment)
 
@@ -207,17 +209,17 @@ class ChoiceDialogFragmentTest {
     fun `Will show a multiple choice item`() {
 
         val choices =
-            arrayOf(Choice(id = "", label = "item1", children = arrayOf(Choice(id = "", label = "sub-item1"))))
+                arrayOf(Choice(id = "", label = "item1", children = arrayOf(Choice(id = "", label = "sub-item1"))))
 
         val fragment = spy(newInstance(choices, "sessionId", MULTIPLE_CHOICE_DIALOG_TYPE))
 
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         val adapter = getAdapterFrom(fragment)
 
         val holder =
-            adapter.onCreateViewHolder(LinearLayout(context), ChoiceAdapter.TYPE_MULTIPLE) as MultipleViewHolder
-        val groupHolder = adapter.onCreateViewHolder(LinearLayout(context), ChoiceAdapter.TYPE_GROUP) as GroupViewHolder
+            adapter.onCreateViewHolder(LinearLayout(testContext), TYPE_MULTIPLE) as MultipleViewHolder
+        val groupHolder = adapter.onCreateViewHolder(LinearLayout(testContext), TYPE_GROUP) as GroupViewHolder
 
         adapter.bindViewHolder(holder, 0)
         adapter.bindViewHolder(groupHolder, 1)
@@ -231,23 +233,23 @@ class ChoiceDialogFragmentTest {
     fun `Will show a multiple choice item with selected element`() {
 
         val choices = arrayOf(
-            Choice(
-                id = "", label = "item1",
-                children = arrayOf(Choice(id = "", label = "sub-item1", selected = true))
-            )
+                Choice(
+                        id = "", label = "item1",
+                        children = arrayOf(Choice(id = "", label = "sub-item1", selected = true))
+                )
         )
 
         val fragment = spy(newInstance(choices, "sessionId", MULTIPLE_CHOICE_DIALOG_TYPE))
 
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
 
         val adapter = getAdapterFrom(fragment)
 
         assertEquals(2, adapter.itemCount)
 
-        val groupHolder = adapter.onCreateViewHolder(LinearLayout(context), ChoiceAdapter.TYPE_GROUP) as GroupViewHolder
+        val groupHolder = adapter.onCreateViewHolder(LinearLayout(testContext), TYPE_GROUP) as GroupViewHolder
         val holder =
-            adapter.onCreateViewHolder(LinearLayout(context), ChoiceAdapter.TYPE_MULTIPLE) as MultipleViewHolder
+            adapter.onCreateViewHolder(LinearLayout(testContext), TYPE_MULTIPLE) as MultipleViewHolder
 
         adapter.bindViewHolder(groupHolder, 0)
         adapter.bindViewHolder(holder, 1)
@@ -268,7 +270,7 @@ class ChoiceDialogFragmentTest {
 
         fragment.feature = mockFeature
 
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
         doNothing().`when`(fragment).dismiss()
 
         val dialog = fragment.onCreateDialog(null)
@@ -276,13 +278,13 @@ class ChoiceDialogFragmentTest {
 
         val adapter = getAdapterFrom(fragment)
 
-        val holder = adapter.onCreateViewHolder(LinearLayout(context), TYPE_SINGLE) as SingleViewHolder
+        val holder = adapter.onCreateViewHolder(LinearLayout(testContext), TYPE_SINGLE) as SingleViewHolder
 
         adapter.bindViewHolder(holder, 0)
 
         holder.itemView.performClick()
 
-        verify(mockFeature).onSingleChoiceSelect("sessionId", choices.first())
+        verify(mockFeature).onConfirm("sessionId", choices.first())
         dialog.dismiss()
         verify(mockFeature).onCancel("sessionId")
     }
@@ -298,7 +300,7 @@ class ChoiceDialogFragmentTest {
 
         fragment.feature = mockFeature
 
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
         doNothing().`when`(fragment).dismiss()
 
         val dialog = fragment.onCreateDialog(null)
@@ -306,13 +308,13 @@ class ChoiceDialogFragmentTest {
 
         val adapter = getAdapterFrom(fragment)
 
-        val holder = adapter.onCreateViewHolder(LinearLayout(context), TYPE_MENU)
+        val holder = adapter.onCreateViewHolder(LinearLayout(testContext), TYPE_MENU)
 
         adapter.bindViewHolder(holder, 0)
 
         holder.itemView.performClick()
 
-        verify(mockFeature).onSingleChoiceSelect("sessionId", choices.first())
+        verify(mockFeature).onConfirm("sessionId", choices.first())
         dialog.dismiss()
         verify(mockFeature).onCancel("sessionId")
     }
@@ -322,11 +324,11 @@ class ChoiceDialogFragmentTest {
 
         val mockFeature: PromptFeature = mock()
         val choices =
-            arrayOf(Choice(id = "", label = "item1", children = arrayOf(Choice(id = "", label = "sub-item1"))))
+                arrayOf(Choice(id = "", label = "item1", children = arrayOf(Choice(id = "", label = "sub-item1"))))
         val fragment = spy(newInstance(choices, "sessionId", MULTIPLE_CHOICE_DIALOG_TYPE))
 
         fragment.feature = mockFeature
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
         doNothing().`when`(fragment).dismiss()
 
         val dialog = fragment.onCreateDialog(null)
@@ -334,7 +336,7 @@ class ChoiceDialogFragmentTest {
 
         val adapter = dialog.findViewById<RecyclerView>(R.id.recyclerView).adapter as ChoiceAdapter
 
-        val holder = adapter.onCreateViewHolder(LinearLayout(context), ChoiceAdapter.TYPE_MULTIPLE)
+        val holder = adapter.onCreateViewHolder(LinearLayout(testContext), TYPE_MULTIPLE)
 
         adapter.bindViewHolder(holder, 1)
 
@@ -345,7 +347,7 @@ class ChoiceDialogFragmentTest {
         val positiveButton = (dialog as AlertDialog).getButton(BUTTON_POSITIVE)
         positiveButton.performClick()
 
-        verify(mockFeature).onMultipleChoiceSelect("sessionId", fragment.mapSelectChoice.keys.toTypedArray())
+        verify(mockFeature).onConfirm("sessionId", fragment.mapSelectChoice.keys.toTypedArray())
 
         val negativeButton = dialog.getButton(BUTTON_NEGATIVE)
         negativeButton.performClick()
@@ -358,11 +360,11 @@ class ChoiceDialogFragmentTest {
 
         val mockFeature: PromptFeature = mock()
         val choices =
-            arrayOf(Choice(id = "", label = "item1", selected = true))
+                arrayOf(Choice(id = "", label = "item1", selected = true))
         val fragment = spy(newInstance(choices, "sessionId", MULTIPLE_CHOICE_DIALOG_TYPE))
 
         fragment.feature = mockFeature
-        doReturn(context).`when`(fragment).requireContext()
+        doReturn(appCompatContext).`when`(fragment).requireContext()
         doNothing().`when`(fragment).dismiss()
 
         val dialog = fragment.onCreateDialog(null)
@@ -371,7 +373,7 @@ class ChoiceDialogFragmentTest {
         val adapter = dialog.findViewById<RecyclerView>(R.id.recyclerView).adapter as ChoiceAdapter
 
         val holder =
-            adapter.onCreateViewHolder(LinearLayout(context), ChoiceAdapter.TYPE_MULTIPLE) as MultipleViewHolder
+            adapter.onCreateViewHolder(LinearLayout(testContext), TYPE_MULTIPLE) as MultipleViewHolder
 
         adapter.bindViewHolder(holder, 0)
 
@@ -384,11 +386,69 @@ class ChoiceDialogFragmentTest {
         val positiveButton = (dialog as AlertDialog).getButton(BUTTON_POSITIVE)
         positiveButton.performClick()
 
-        verify(mockFeature).onMultipleChoiceSelect("sessionId", fragment.mapSelectChoice.keys.toTypedArray())
+        verify(mockFeature).onConfirm("sessionId", fragment.mapSelectChoice.keys.toTypedArray())
+    }
+
+    @Test
+    fun `single choice item with multiple sub-menu groups`() {
+
+        val mockFeature: PromptFeature = mock()
+        val choices = arrayOf(
+            Choice(
+                id = "group1",
+                label = "group1",
+                children = arrayOf(Choice(id = "item_group_1", label = "item group 1"))
+            ),
+            Choice(
+                id = "group2",
+                label = "group2",
+                children = arrayOf(Choice(id = "item_group_2", label = "item group 2"))
+            )
+        )
+
+        val fragment = spy(newInstance(choices, "sessionId", SINGLE_CHOICE_DIALOG_TYPE))
+        fragment.feature = mockFeature
+        doReturn(appCompatContext).`when`(fragment).requireContext()
+        doNothing().`when`(fragment).dismiss()
+
+        val dialog = fragment.onCreateDialog(null)
+        dialog.show()
+
+        val adapter = dialog.findViewById<RecyclerView>(R.id.recyclerView).adapter as ChoiceAdapter
+
+        val groupViewHolder = adapter.onCreateViewHolder(LinearLayout(testContext), adapter.getItemViewType(0))
+            as GroupViewHolder
+
+        adapter.bindViewHolder(groupViewHolder, 0)
+
+        assertFalse(groupViewHolder.labelView.isEnabled)
+        assertEquals(groupViewHolder.labelView.text, "group1")
+
+        val singleViewHolder =
+            adapter.onCreateViewHolder(LinearLayout(testContext), adapter.getItemViewType(1)) as SingleViewHolder
+
+        adapter.bindViewHolder(singleViewHolder, 1)
+
+        with(singleViewHolder) {
+            assertTrue(labelView.isEnabled)
+
+            val choiceGroup1 = choices[0].children!![0]
+            assertEquals(labelView.text, choiceGroup1.label)
+
+            itemView.performClick()
+            verify(mockFeature).onConfirm("sessionId", choiceGroup1)
+        }
+    }
+
+    @Test
+    fun `test toArrayOfChoices`() {
+        val parcelables = Array<Parcelable>(1) { Choice(id = "id", label = "label") }
+        val choice = parcelables.toArrayOfChoices()
+        assertNotNull(choice)
     }
 
     private fun getAdapterFrom(fragment: ChoiceDialogFragment): ChoiceAdapter {
-        val inflater = LayoutInflater.from(context)
+        val inflater = LayoutInflater.from(testContext)
         val view = fragment.createDialogContentView(inflater)
         val recyclerViewId = R.id.recyclerView
 

@@ -6,11 +6,11 @@ apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
 android {
-    compileSdkVersion Config.compileSdkVersion
+    compileSdkVersion config.compileSdkVersion
 
     defaultConfig {
-        minSdkVersion Config.minSdkVersion
-        targetSdkVersion Config.targetSdkVersion
+        minSdkVersion config.minSdkVersion
+        targetSdkVersion config.targetSdkVersion
     }
 
     lintOptions {
@@ -28,15 +28,29 @@ android {
 }
 
 dependencies {
+    // Types defined in concept-sync are part of the public API of this module.
+    api project(':concept-sync')
+
+    // Parts of this dependency are typealiase'd or are otherwise part of this module's public API.
     api Dependencies.mozilla_fxa
+
+    // Observable is part of public API of the FxaAccountManager.
+    api project(':support-base')
+    implementation project(':support-ktx')
 
     implementation Dependencies.kotlin_stdlib
     implementation Dependencies.kotlin_coroutines
 
-    testImplementation Dependencies.testing_junit
+    implementation Dependencies.androidx_work_runtime
+
+    testImplementation project(':support-test')
+    testImplementation Dependencies.androidx_test_core
+    testImplementation Dependencies.androidx_test_junit
+    testImplementation Dependencies.androidx_work_testing
     testImplementation Dependencies.testing_robolectric
     testImplementation Dependencies.testing_mockito
+    testImplementation Dependencies.testing_coroutines
 }
 
 apply from: '../../../publish.gradle'
-ext.configurePublish(Config.componentsGroupId, archivesBaseName, gradle.componentDescriptions[archivesBaseName])
+ext.configurePublish(config.componentsGroupId, archivesBaseName, project.ext.description)

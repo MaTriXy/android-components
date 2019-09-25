@@ -5,7 +5,6 @@ A feature that will subscribe to the selected session and will handle all the co
 ## Usage
 
 ### Setting up the dependency
-
 Use Gradle to download the library from [maven.mozilla.org](https://maven.mozilla.org/) ([Setup repository](../../../README.md#maven-repository)):
 
 ```Groovy
@@ -15,14 +14,46 @@ implementation "org.mozilla.components:feature-prompts:{latest-version}"
 ### PromptFeature
 
   ```kotlin
-  val promptFeature = PromptFeature(sessionManager, fragmentManager)
+  val onNeedToRequestPermissions : (Array<String>) -> Unit = { permissions ->
+    /* You are in charge of triggering the request for the permissions needed,
+     * this way you can control, when you request the permissions,
+     * in case that you want to show an informative dialog,
+     * to clarify the use of these permissions.
+     */
+    this.requestPermissions(permissions, MY_PROMPT_PERMISSION_REQUEST_CODE)
+  }
 
-  //It will start listing for new prompt requests for web content.
+  val promptFeature = PromptFeature(fragment = this,
+    sessionManager = sessionManager,
+    fragmentManager= fragmentManager,
+    onNeedToRequestPermissions = onNeedToRequestPermissions
+  )
+
+  // It will start listing for new prompt requests from web content.
   promptFeature.start()
 
-  //It will stop listing for future prompt requests for web content.
+  // It will stop listing for prompt requests from web content.
   promptFeature.stop()
 
+  /* There are some requests that are not handled with dialogs, instead they are delegated to other apps
+   * to perform the request e.g a file picker request, which delegates to the OS file picker.
+   * For this reason, you have to forward the results of these requests to the prompt feature by overriding,
+   * onActivityResult in your Activity or Fragment and forward its calls to promptFeature.onActivityResult.
+   */
+  override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    promptFeature.onActivityResult(requestCode, resultCode, data)
+  }
+
+  /* Additionally, there are requests that need to have some runtime permission before they can be performed,
+   * like file pickers request that need access to read the selected files. You need to override
+   * onRequestPermissionsResult in your Activity or Fragment and forward the results to
+   * promptFeature.PermissionsResult.
+   */
+  override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+    when (requestCode) {        
+        MY_PROMPT_PERMISSION_REQUEST_CODE -> promptFeature.onPermissionsResult(permissions, grantResults)
+    }
+  }
   ```
 
 ## License

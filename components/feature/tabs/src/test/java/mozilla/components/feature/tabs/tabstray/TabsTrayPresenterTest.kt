@@ -4,8 +4,9 @@
 
 package mozilla.components.feature.tabs.tabstray
 
-import android.arch.lifecycle.LifecycleOwner
 import android.view.View
+import androidx.lifecycle.LifecycleOwner
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import mozilla.components.browser.session.Session
 import mozilla.components.browser.session.SessionManager
 import mozilla.components.concept.tabstray.TabsTray
@@ -23,10 +24,10 @@ import org.mockito.Mockito.spy
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoMoreInteractions
-import org.robolectric.RobolectricTestRunner
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(AndroidJUnit4::class)
 class TabsTrayPresenterTest {
+
     @Test
     fun `start and stop will register and unregister`() {
         val sessionManager: SessionManager = mock()
@@ -232,9 +233,9 @@ class TabsTrayPresenterTest {
         val tabsTray: MockedTabsTray = spy(MockedTabsTray())
         val presenter = TabsTrayPresenter(tabsTray, sessionManager, mock())
 
+        presenter.start()
         presenter.calculateDiffAndUpdateTabsTray()
 
-        verify(tabsTray).displaySessions(anyList(), anyInt())
         verify(tabsTray).updateSessions(anyList(), anyInt())
     }
 
@@ -248,6 +249,7 @@ class TabsTrayPresenterTest {
         val tabsTray: MockedTabsTray = spy(MockedTabsTray())
         val presenter = TabsTrayPresenter(tabsTray, sessionManager, mock(), { it.private })
 
+        presenter.start()
         presenter.calculateDiffAndUpdateTabsTray()
 
         assertTrue(tabsTray.displaySessionsList?.size == 1)
@@ -291,6 +293,8 @@ private class MockedTabsTray : TabsTray {
     override fun notifyObservers(block: TabsTray.Observer.() -> Unit) {}
 
     override fun <R> wrapConsumers(block: TabsTray.Observer.(R) -> Boolean): List<(R) -> Boolean> = emptyList()
+
+    override fun isObserved(): Boolean = false
 
     override fun pauseObserver(observer: TabsTray.Observer) {}
 

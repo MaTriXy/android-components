@@ -4,9 +4,10 @@
 
 package org.mozilla.telemetry;
 
-import android.support.annotation.NonNull;
-import android.support.annotation.RestrictTo;
-import android.support.annotation.VisibleForTesting;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.RestrictTo;
+import androidx.annotation.VisibleForTesting;
 
 import org.mozilla.telemetry.config.TelemetryConfiguration;
 import org.mozilla.telemetry.event.TelemetryEvent;
@@ -20,6 +21,7 @@ import org.mozilla.telemetry.ping.TelemetryEventPingBuilder;
 import org.mozilla.telemetry.ping.TelemetryMobileEventPingBuilder;
 import org.mozilla.telemetry.ping.TelemetryPing;
 import org.mozilla.telemetry.ping.TelemetryPingBuilder;
+import org.mozilla.telemetry.ping.TelemetryPocketEventPingBuilder;
 import org.mozilla.telemetry.schedule.TelemetryScheduler;
 import org.mozilla.telemetry.storage.TelemetryStorage;
 
@@ -33,6 +35,11 @@ import java.util.concurrent.Executors;
 import kotlin.Unit;
 import kotlin.jvm.functions.Function0;
 
+/**
+ * @deprecated The whole service-telemetry library is deprecated. Please use the
+ *              <a href="https://mozilla.github.io/glean/book/index.html">Glean SDK</a> instead.
+ */
+@Deprecated
 public class Telemetry {
     private final TelemetryConfiguration configuration;
     private final TelemetryStorage storage;
@@ -55,6 +62,14 @@ public class Telemetry {
     public Telemetry addPingBuilder(TelemetryPingBuilder builder) {
         pingBuilders.put(builder.getType(), builder);
         return this;
+    }
+
+    /**
+     * Returns a previously added ping builder or null if no ping builder of the given type has been added.
+     */
+    @Nullable
+    public TelemetryPingBuilder getPingBuilder(final String pingType) {
+        return pingBuilders.get(pingType);
     }
 
     public Telemetry queuePing(final String pingType) {
@@ -107,7 +122,6 @@ public class Telemetry {
                     throw new IllegalStateException("Expect either TelemetryEventPingBuilder or " +
                             "TelemetryMobileEventPingBuilder to be added to queue events");
                 }
-
                 measurement.add(event);
                 if (measurement.getEventCount() >= configuration.getMaximumNumberOfEventsPerPing()) {
                     queuePing(addedPingType);

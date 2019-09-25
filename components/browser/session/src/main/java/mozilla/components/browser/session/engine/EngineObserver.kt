@@ -6,27 +6,77 @@ package mozilla.components.browser.session.engine
 
 import android.graphics.Bitmap
 import android.os.Environment
-import mozilla.components.browser.session.Download
+import androidx.core.net.toUri
 import mozilla.components.browser.session.Session
+import mozilla.components.browser.session.engine.request.LoadRequestMetadata
+import mozilla.components.browser.session.engine.request.LoadRequestOption
+import mozilla.components.browser.state.action.ContentAction
+import mozilla.components.browser.state.state.content.DownloadState
+import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.HitResult
+import mozilla.components.concept.engine.content.blocking.Tracker
+import mozilla.components.concept.engine.manifest.WebAppManifest
+import mozilla.components.concept.engine.media.Media
+import mozilla.components.concept.engine.media.RecordingDevice
 import mozilla.components.concept.engine.permission.PermissionRequest
 import mozilla.components.concept.engine.prompt.PromptRequest
 import mozilla.components.concept.engine.window.WindowRequest
 import mozilla.components.support.base.observer.Consumable
 
+/**
+ * [EngineSession.Observer] implementation responsible to update the state of a [Session] from the events coming out of
+ * an [EngineSession].
+ */
 @Suppress("TooManyFunctions")
-internal class EngineObserver(val session: Session) : EngineSession.Observer {
+internal class EngineObserver(
+    private val session: Session,
+    private val store: BrowserStore? = null
+) : EngineSession.Observer {
 
     override fun onLocationChange(url: String) {
+        if (session.url != url) {
+            session.title = ""
+        }
+
+        if (!isHostEquals(session.url, url)) {
+            session.icon = null
+        }
+
         session.url = url
-        session.searchTerms = ""
-        session.title = ""
+
+        // Meh, GeckoView doesn't notify us about recording devices no longer used when navigating away. As a
+        // workaround we clear them here. But that's not perfect...
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=1554778
+        session.recordingDevices = listOf()
 
         session.contentPermissionRequest.consume {
             it.reject()
             true
         }
+
+        session.webAppManifest = null
+    }
+
+    private fun isHostEquals(sessionUrl: String, newUrl: String): Boolean {
+        val sessionUri = sessionUrl.toUri()
+        val newUri = newUrl.toUri()
+
+        return sessionUri.scheme == newUri.scheme && sessionUri.host == newUri.host
+    }
+
+    override fun onLoadRequest(url: String, triggeredByRedirect: Boolean, triggeredByWebContent: Boolean) {
+        if (triggeredByRedirect || triggeredByWebContent) {
+            session.searchTerms = ""
+        }
+
+        session.loadRequestMetadata = LoadRequestMetadata(
+            url,
+            arrayOf(
+                if (triggeredByRedirect) LoadRequestOption.REDIRECT else LoadRequestOption.NONE,
+                if (triggeredByWebContent) LoadRequestOption.WEB_CONTENT else LoadRequestOption.NONE
+            )
+        )
     }
 
     override fun onTitleChange(title: String) {
@@ -42,6 +92,7 @@ internal class EngineObserver(val session: Session) : EngineSession.Observer {
         if (loading) {
             session.findResults = emptyList()
             session.trackersBlocked = emptyList()
+            session.trackersLoaded = emptyList()
         }
     }
 
@@ -55,8 +106,12 @@ internal class EngineObserver(val session: Session) : EngineSession.Observer {
                 ?: "", issuer ?: "")
     }
 
-    override fun onTrackerBlocked(url: String) {
-        session.trackersBlocked += url
+    override fun onTrackerBlocked(tracker: Tracker) {
+        session.trackersBlocked += tracker
+    }
+
+    override fun onTrackerLoaded(tracker: Tracker) {
+        session.trackersLoaded += tracker
     }
 
     override fun onTrackerBlockingEnabledChange(enabled: Boolean) {
@@ -77,14 +132,25 @@ internal class EngineObserver(val session: Session) : EngineSession.Observer {
 
     override fun onExternalResource(
         url: String,
-        fileName: String,
+        fileName: String?,
         contentLength: Long?,
         contentType: String?,
         cookie: String?,
         userAgent: String?
     ) {
-        val download = Download(url, fileName, contentType, contentLength, userAgent, Environment.DIRECTORY_DOWNLOADS)
-        session.download = Consumable.from(download)
+        val download = DownloadState(
+            url,
+            fileName,
+            contentType,
+            contentLength,
+            userAgent,
+            Environment.DIRECTORY_DOWNLOADS
+        )
+
+        store?.dispatch(ContentAction.UpdateDownloadAction(
+            session.id,
+            download
+        ))
     }
 
     override fun onDesktopModeChange(enabled: Boolean) {
@@ -121,5 +187,30 @@ internal class EngineObserver(val session: Session) : EngineSession.Observer {
 
     override fun onCloseWindowRequest(windowRequest: WindowRequest) {
         session.closeWindowRequest = Consumable.from(windowRequest)
+    }
+
+    override fun onMediaAdded(media: Media) {
+        session.media = session.media.toMutableList().also {
+            it.add(media)
+        }
+    }
+
+    override fun onMediaRemoved(media: Media) {
+        session.media = session.media.toMutableList().also {
+            it.remove(media)
+        }
+        media.unregisterObservers()
+    }
+
+    override fun onWebAppManifestLoaded(manifest: WebAppManifest) {
+        session.webAppManifest = manifest
+    }
+
+    override fun onCrash() {
+        session.crashed = true
+    }
+
+    override fun onRecordingStateChanged(devices: List<RecordingDevice>) {
+        session.recordingDevices = devices
     }
 }

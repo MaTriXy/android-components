@@ -1,15 +1,20 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package mozilla.components.support.ktx.android.org.json
 
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(AndroidJUnit4::class)
 class JSONObjectTest {
+
     @Test
     fun sortKeys() {
         val jsonObject = JSONObject()
@@ -36,6 +41,19 @@ class JSONObjectTest {
         jsonObject.putIfNotNull("key", "value")
         assertEquals(1, jsonObject.length())
         assertEquals("value", jsonObject["key"])
+    }
+
+    @Test
+    fun tryGetNull() {
+        val jsonObject = JSONObject("""{"key":null}""")
+        assertNull(jsonObject.tryGet("key"))
+        assertNull(jsonObject.tryGet("another-key"))
+    }
+
+    @Test
+    fun tryGetNotNull() {
+        val jsonObject = JSONObject("""{"key":"value"}""")
+        assertEquals("value", jsonObject.tryGet("key"))
     }
 
     @Test

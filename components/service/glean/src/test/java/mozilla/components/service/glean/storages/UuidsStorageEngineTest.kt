@@ -6,8 +6,8 @@ package mozilla.components.service.glean.storages
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.test.core.app.ApplicationProvider
-import mozilla.components.service.glean.Lifetime
-import mozilla.components.service.glean.UuidMetricType
+import mozilla.components.service.glean.private.Lifetime
+import mozilla.components.service.glean.private.UuidMetricType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -26,12 +26,6 @@ class UuidsStorageEngineTest {
     @Before
     fun setUp() {
         UuidsStorageEngine.applicationContext = ApplicationProvider.getApplicationContext()
-        // Clear the stored "user" preferences between tests.
-        ApplicationProvider.getApplicationContext<Context>()
-            .getSharedPreferences(UuidsStorageEngine.javaClass.simpleName, Context.MODE_PRIVATE)
-            .edit()
-            .clear()
-            .apply()
         UuidsStorageEngine.clearAllStores()
     }
 
@@ -51,14 +45,63 @@ class UuidsStorageEngineTest {
         val sharedPreferences = mock(SharedPreferences::class.java)
         `when`(sharedPreferences.all).thenAnswer { persistedSample }
         `when`(context.getSharedPreferences(
-            eq(storageEngine::class.java.simpleName),
+            eq(storageEngine::class.java.canonicalName),
             eq(Context.MODE_PRIVATE)
         )).thenReturn(sharedPreferences)
+        `when`(context.getSharedPreferences(
+            eq("${storageEngine::class.java.canonicalName}.PingLifetime"),
+            eq(Context.MODE_PRIVATE)
+        )).thenReturn(ApplicationProvider.getApplicationContext<Context>()
+            .getSharedPreferences("${storageEngine::class.java.canonicalName}.PingLifetime",
+                Context.MODE_PRIVATE))
 
         storageEngine.applicationContext = context
         val snapshot = storageEngine.getSnapshot(storeName = "store1", clearStore = true)
         assertEquals(1, snapshot!!.size)
         assertEquals("ce2adeb8-843a-4232-87a5-a099ed1e7bb3", snapshot["telemetry.valid"].toString())
+    }
+
+    @Test
+    fun `UUID serializer correctly serializes UUID's`() {
+        run {
+            val storageEngine = UuidsStorageEngineImplementation()
+            storageEngine.applicationContext = ApplicationProvider.getApplicationContext()
+
+            val testUUID = "ce2adeb8-843a-4232-87a5-a099ed1e7bb3"
+
+            val metric = UuidMetricType(
+                disabled = false,
+                category = "telemetry",
+                lifetime = Lifetime.User,
+                name = "uuid_metric",
+                sendInPings = listOf("store1")
+            )
+
+            // Record the string in the store, without providing optional arguments.
+            storageEngine.record(
+                metric,
+                value = UUID.fromString(testUUID)
+            )
+
+            // Get the snapshot from "store1"
+            val snapshot = storageEngine.getSnapshotAsJSON(storeName = "store1", clearStore = true)
+            assertEquals("{\"telemetry.uuid_metric\":\"$testUUID\"}",
+                snapshot.toString())
+        }
+
+        // Create a new instance of storage engine to verify serialization to storage rather than
+        // to the cache
+        run {
+            val storageEngine = UuidsStorageEngineImplementation()
+            storageEngine.applicationContext = ApplicationProvider.getApplicationContext()
+
+            val testUUID = "ce2adeb8-843a-4232-87a5-a099ed1e7bb3"
+
+            // Get the snapshot from "store1"
+            val snapshot = storageEngine.getSnapshotAsJSON(storeName = "store1", clearStore = true)
+            assertEquals("{\"telemetry.uuid_metric\":\"$testUUID\"}",
+                snapshot.toString())
+        }
     }
 
     @Test
@@ -91,7 +134,7 @@ class UuidsStorageEngineTest {
     @Test
     fun `getSnapshot() returns null if nothing is recorded in the store`() {
         assertNull("The engine must report 'null' on empty or unknown stores",
-                UuidsStorageEngine.getSnapshot(storeName = "unknownStore", clearStore = false))
+            UuidsStorageEngine.getSnapshot(storeName = "unknownStore", clearStore = false))
     }
 
     @Test
@@ -118,7 +161,7 @@ class UuidsStorageEngineTest {
         val snapshot = UuidsStorageEngine.getSnapshot(storeName = "store1", clearStore = true)
         // Check that getting a new snapshot for "store1" returns an empty store.
         assertNull("The engine must report 'null' on empty stores",
-                UuidsStorageEngine.getSnapshot(storeName = "store1", clearStore = false))
+            UuidsStorageEngine.getSnapshot(storeName = "store1", clearStore = false))
 
         // Check that we get the right data from both the stores. Clearing "store1" must
         // not clear "store2" as well.
@@ -178,7 +221,7 @@ class UuidsStorageEngineTest {
 
         // Check that the persisted shared prefs contains the expected data.
         val storedData = ApplicationProvider.getApplicationContext<Context>()
-            .getSharedPreferences(storageEngine.javaClass.simpleName, Context.MODE_PRIVATE)
+            .getSharedPreferences(storageEngine.javaClass.canonicalName, Context.MODE_PRIVATE)
             .all
 
         assertEquals(2, storedData.size)

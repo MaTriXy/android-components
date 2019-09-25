@@ -26,6 +26,21 @@ internal interface StorageEngine {
     fun getSnapshotAsJSON(storeName: String, clearStore: Boolean): Any?
 
     /**
+     * Return all of the metric identifiers currently holding data for the given
+     * stores.
+     *
+     * @param stores The stores to look in.
+     * @return a sequence of identifiers (including labels, if any) found in
+     *     those stores.
+     */
+    fun getIdentifiersInStores(stores: List<String>): Sequence<String> = sequence {}
+
+    /**
+     * Clear all stored data in the storage engine
+     */
+    fun clearAllStores()
+
+    /**
      * Indicate whether this storage engine is sent at the top level of the ping
      * (rather than in the metrics section).
      */

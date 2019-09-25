@@ -6,58 +6,64 @@ package mozilla.components.browser.engine.system.window
 
 import android.os.Message
 import android.webkit.WebView
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import mozilla.components.browser.engine.system.SystemEngineSession
+import mozilla.components.support.test.mock
+import mozilla.components.support.test.robolectric.testContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
+import org.junit.runner.RunWith
 import org.mockito.Mockito.never
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 
+@RunWith(AndroidJUnit4::class)
 class SystemWindowRequestTest {
 
     @Test
     fun `init request`() {
-        val curWebView = mock(WebView::class.java)
-        val newWebView = mock(WebView::class.java)
-        val request = SystemWindowRequest(curWebView, newWebView, true, true)
+        val curWebView = mock<WebView>()
+        val newWebView = mock<WebView>()
+        val newEngineSession = mock<SystemEngineSession>()
+        val request = SystemWindowRequest(curWebView, newEngineSession, newWebView, true, true)
 
         assertTrue(request.openAsDialog)
         assertTrue(request.triggeredByUser)
-        assertEquals("about:blank", request.url)
+        assertEquals("", request.url)
     }
 
     @Test
     fun `prepare sets webview on engine session`() {
-        val curWebView = mock(WebView::class.java)
-        val newWebView = mock(WebView::class.java)
-        val request = SystemWindowRequest(curWebView, newWebView)
+        val curWebView = mock<WebView>()
+        val newWebView = mock<WebView>()
+        val newEngineSession = SystemEngineSession(testContext)
+        val request = SystemWindowRequest(curWebView, newEngineSession, newWebView)
 
-        val engineSession = SystemEngineSession()
-        request.prepare(engineSession)
+        val engineSession = request.prepare() as SystemEngineSession
         assertSame(newWebView, engineSession.webView)
     }
 
     @Test
     fun `start sends message to target`() {
-        val curWebView = mock(WebView::class.java)
-        val newWebView = mock(WebView::class.java)
-        val resultMsg = mock(Message::class.java)
+        val curWebView = mock<WebView>()
+        val newWebView = mock<WebView>()
+        val resultMsg = mock<Message>()
+        val newEngineSession = mock<SystemEngineSession>()
 
-        SystemWindowRequest(curWebView, newWebView, false, false).start()
+        SystemWindowRequest(curWebView, newEngineSession, newWebView, false, false).start()
         verify(resultMsg, never()).sendToTarget()
 
-        SystemWindowRequest(curWebView, newWebView, false, false, resultMsg).start()
+        SystemWindowRequest(curWebView, newEngineSession, newWebView, false, false, resultMsg).start()
         verify(resultMsg, never()).sendToTarget()
 
         resultMsg.obj = ""
-        SystemWindowRequest(curWebView, newWebView, false, false, resultMsg).start()
+        SystemWindowRequest(curWebView, newEngineSession, newWebView, false, false, resultMsg).start()
         verify(resultMsg, never()).sendToTarget()
 
-        resultMsg.obj = mock(WebView.WebViewTransport::class.java)
-        SystemWindowRequest(curWebView, newWebView, false, false, resultMsg).start()
+        resultMsg.obj = mock<WebView.WebViewTransport>()
+        SystemWindowRequest(curWebView, newEngineSession, newWebView, false, false, resultMsg).start()
         verify(resultMsg, times(1)).sendToTarget()
     }
 }

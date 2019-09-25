@@ -4,12 +4,25 @@
 
 package mozilla.components.support.base.observer
 
+typealias ConsumableListener = () -> Unit
+
 /**
  * A generic wrapper for values that can get consumed.
+ *
+ * @param value The value to be wrapped.
+ * @param onConsume A callback that gets invoked if the wrapped value gets consumed.
  */
 class Consumable<T> private constructor(
-    internal var value: T?
+    internal var value: T?,
+    onConsume: ConsumableListener? = null
 ) {
+
+    private val listeners = mutableSetOf<ConsumableListener>().also { listeners ->
+        if (onConsume != null) {
+            listeners.add(onConsume)
+        }
+    }
+
     /**
      * Invokes the given lambda and marks the value as consumed if the lambda returns true.
      */
@@ -17,6 +30,7 @@ class Consumable<T> private constructor(
     fun consume(consumer: (value: T) -> Boolean): Boolean {
         return if (value?.let(consumer) == true) {
             value = null
+            listeners.forEach { it() }
             true
         } else {
             false
@@ -34,6 +48,7 @@ class Consumable<T> private constructor(
 
         return if (results.contains(true)) {
             this.value = null
+            listeners.forEach { it() }
             true
         } else {
             false
@@ -46,11 +61,27 @@ class Consumable<T> private constructor(
     @Synchronized
     fun isConsumed() = value == null
 
+    /**
+     * Returns the value of this [Consumable] without consuming it.
+     */
+    @Synchronized
+    fun peek(): T? = value
+
+    /**
+     * Adds a listener to be invoked when this [Consumable] is consumed.
+     *
+     * @param listener the listener to add.
+     */
+    @Synchronized
+    fun onConsume(listener: ConsumableListener) {
+        listeners.add(listener)
+    }
+
     companion object {
         /**
          * Creates a new Consumable wrapping the given value.
          */
-        fun <T> from(value: T): Consumable<T> = Consumable(value)
+        fun <T> from(value: T, onConsume: (() -> Unit)? = null): Consumable<T> = Consumable(value, onConsume)
 
         /**
          * Creates a new Consumable stream for the provided values.

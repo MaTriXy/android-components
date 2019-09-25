@@ -5,8 +5,10 @@
 package mozilla.components.browser.engine.system.matcher
 
 import android.content.Context
+import android.content.res.Resources
 import android.net.Uri
 import android.util.JsonReader
+import androidx.annotation.RawRes
 import java.io.InputStreamReader
 import java.io.Reader
 import java.nio.charset.StandardCharsets.UTF_8
@@ -89,8 +91,10 @@ class UrlMatcher {
      *
      * @param resourceURI URI of a resource to be loaded by the page
      * @param pageURI URI of the page
+     * @return a [Pair] of <Boolean, String?> the first indicates, if the URI matches and the second
+     * indicates the category of the match if available otherwise null.
      */
-    fun matches(resourceURI: String, pageURI: String): Boolean {
+    fun matches(resourceURI: String, pageURI: String): Pair<Boolean, String?> {
         return matches(Uri.parse(resourceURI), Uri.parse(pageURI))
     }
 
@@ -101,38 +105,45 @@ class UrlMatcher {
      *
      * @param resourceURI URI of a resource to be loaded by the page
      * @param pageURI URI of the page
+     * @return a [Pair] of <Boolean, String?> the first indicates, if the URI matches and the second
+     * indicates the category of the match if available otherwise null.
      */
     @Suppress("ReturnCount", "ComplexMethod")
-    fun matches(resourceURI: Uri, pageURI: Uri): Boolean {
+    fun matches(resourceURI: Uri, pageURI: Uri): Pair<Boolean, String?> {
         val resourceURLString = resourceURI.toString()
         val resourceHost = resourceURI.host
         val pageHost = pageURI.host
+        val notMatchesFound = false to null
 
         if (previouslyUnmatched.contains(resourceURLString)) {
-            return false
+            return notMatchesFound
         }
 
         if (whiteList?.contains(pageURI, resourceURI) == true) {
-            return false
+            return notMatchesFound
         }
 
         if (pageHost != null && pageHost == resourceHost) {
-            return false
+            return notMatchesFound
         }
 
         if (previouslyMatched.contains(resourceURLString)) {
-            return true
+            return true to null
+        }
+
+        if (resourceHost == null) {
+            return notMatchesFound
         }
 
         for ((key, value) in categories) {
             if (enabledCategories.contains(key) && value.findNode(resourceHost.reverse()) != null) {
                 previouslyMatched.add(resourceURLString)
-                return true
+                return true to key
             }
         }
 
         previouslyUnmatched.add(resourceURLString)
-        return false
+        return notMatchesFound
     }
 
     companion object {
@@ -142,11 +153,37 @@ class UrlMatcher {
         const val DISCONNECT = "Disconnect"
         const val SOCIAL = "Social"
         const val DEFAULT = "default"
+        const val CRYPTOMINING = "Cryptomining"
+        const val FINGERPRINTING = "Fingerprinting"
 
         private val ignoredCategories = setOf("Legacy Disconnect", "Legacy Content")
         private val disconnectMoved = setOf("Facebook", "Twitter")
         private val webfontExtensions = arrayOf(".woff2", ".woff", ".eot", ".ttf", ".otf")
-        private val supportedCategories = setOf(ADVERTISING, ANALYTICS, SOCIAL, CONTENT)
+        private val supportedCategories = setOf(
+                ADVERTISING,
+                ANALYTICS,
+                SOCIAL,
+                CONTENT,
+                CRYPTOMINING,
+                FINGERPRINTING
+        )
+
+        /**
+         * Creates a new matcher instance for the provided URL lists.
+         *
+         * @deprecated Pass resources directly
+         * @param blackListFile resource ID to a JSON file containing the black list
+         * @param overrides array of resource ID to JSON files containing black list overrides
+         * @param whiteListFile resource ID to a JSON file containing the white list
+         */
+        fun createMatcher(
+            context: Context,
+            @RawRes blackListFile: Int,
+            overrides: IntArray?,
+            @RawRes whiteListFile: Int,
+            enabledCategories: Set<String> = supportedCategories
+        ): UrlMatcher =
+            createMatcher(context.resources, blackListFile, overrides, whiteListFile, enabledCategories)
 
         /**
          * Creates a new matcher instance for the provided URL lists.
@@ -156,15 +193,15 @@ class UrlMatcher {
          * @param whiteListFile resource ID to a JSON file containing the white list
          */
         fun createMatcher(
-            context: Context,
-            blackListFile: Int,
+            resources: Resources,
+            @RawRes blackListFile: Int,
             overrides: IntArray?,
-            whiteListFile: Int,
+            @RawRes whiteListFile: Int,
             enabledCategories: Set<String> = supportedCategories
         ): UrlMatcher {
-            val blackListReader = InputStreamReader(context.resources.openRawResource(blackListFile), UTF_8)
-            val whiteListReader = InputStreamReader(context.resources.openRawResource(whiteListFile), UTF_8)
-            val overrideReaders = overrides?.map { InputStreamReader(context.resources.openRawResource(it), UTF_8) }
+            val blackListReader = InputStreamReader(resources.openRawResource(blackListFile), UTF_8)
+            val whiteListReader = InputStreamReader(resources.openRawResource(whiteListFile), UTF_8)
+            val overrideReaders = overrides?.map { InputStreamReader(resources.openRawResource(it), UTF_8) }
             return createMatcher(blackListReader, overrideReaders, whiteListReader, enabledCategories)
         }
 

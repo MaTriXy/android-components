@@ -9,13 +9,13 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
-import android.support.v4.app.Fragment
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.fragment.app.Fragment
 
 class LoginFragment : Fragment() {
 
@@ -47,8 +47,9 @@ class LoginFragment : Fragment() {
                     val uri = Uri.parse(url)
                     val code = uri.getQueryParameter("code")
                     val state = uri.getQueryParameter("state")
-                    if (code != null && state != null) {
-                        listener?.onLoginComplete(code, state, this@LoginFragment)
+                    val action = uri.getQueryParameter("action")
+                    if (code != null && state != null && action != null) {
+                        listener?.onLoginComplete(code, state, action, this@LoginFragment)
                     }
                 }
 
@@ -69,7 +70,7 @@ class LoginFragment : Fragment() {
         if (context is OnLoginCompleteListener) {
             listener = context
         } else {
-            throw IllegalStateException(context.toString() + " must implement OnLoginCompleteListener")
+            throw IllegalStateException("$context must implement OnLoginCompleteListener")
         }
     }
 
@@ -89,7 +90,7 @@ class LoginFragment : Fragment() {
     }
 
     interface OnLoginCompleteListener {
-        fun onLoginComplete(code: String, state: String, fragment: LoginFragment)
+        fun onLoginComplete(code: String, state: String, action: String, fragment: LoginFragment)
     }
 
     companion object {

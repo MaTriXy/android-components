@@ -17,7 +17,7 @@ Before contributing, please review our [Community Participation Guidelines](http
 
 ### Project
 
-* [Hosting Android code in the Android Components repository]({{ site.baseurl }}//contributing/hosting-android-code-in-repository)
+* [Hosting Android code in the Android Components repository]({{ site.baseurl }}{% link contribute/hosting_code_in_repository.md %})
 
 ### Development
 
@@ -28,6 +28,8 @@ Before contributing, please review our [Community Participation Guidelines](http
 ### Process
 
 * [Release checklist]({{ site.baseurl }}/contributing/release-checklist)
+* [Versioning and release process]({{ site.baseurl }}/contributing/versioning)
+* [Deprecating components and code]({{ site.baseurl }}/contributing/deprecating)
 
 ### Presentations
 

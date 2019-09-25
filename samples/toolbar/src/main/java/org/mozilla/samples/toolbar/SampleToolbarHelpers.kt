@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.samples.toolbar
 
 import android.app.Activity
@@ -5,12 +9,12 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.drawable.ClipDrawable
-import android.support.v7.widget.RecyclerView
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -22,11 +26,14 @@ enum class ToolbarConfiguration(val label: String) {
     DEFAULT("Default"),
     FOCUS_TABLET("Firefox Focus (Tablet)"),
     FOCUS_PHONE("Firefox Focus (Phone)"),
-    SEEDLING("Seedling")
+    SEEDLING("Seedling"),
+    CUSTOM_MENU("Custom Menu"),
+    PRIVATE_MODE("Private Mode")
 }
 
-@Suppress("MagicNumber")
-class ConfigurationAdapter(val configuration: ToolbarConfiguration) : RecyclerView.Adapter<ConfigurationViewHolder>() {
+class ConfigurationAdapter(
+    private val configuration: ToolbarConfiguration
+) : RecyclerView.Adapter<ConfigurationViewHolder>() {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ConfigurationViewHolder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_toolbar_configuration, parent, false)
         return ConfigurationViewHolder(view as TextView)
@@ -47,7 +54,7 @@ class ConfigurationAdapter(val configuration: ToolbarConfiguration) : RecyclerVi
         }
 
         if (item == configuration) {
-            holder.labelView.setBackgroundColor(0xFF222222.toInt())
+            holder.labelView.setBackgroundResource(R.color.selected_configuration)
         }
     }
 }
@@ -73,7 +80,6 @@ object Extra {
 /**
  * A custom view to be drawn behind the URL and page actions. Acts as a custom progress view.
  */
-@Suppress("MagicNumber")
 class UrlBoxProgressView(
     context: Context
 ) : View(context) {
@@ -89,17 +95,17 @@ class UrlBoxProgressView(
             //
             // The drawable is clipped completely and not visible when the level is 0 and fully
             // revealed when the level is 10,000.
-            backgroundDrawable.level = 100 * (100 - value)
-            progressDrawable.level = 10000 - backgroundDrawable.level
+            backgroundDrawable.level = LEVEL_STEP_SIZE * (MAX_PROGRESS - value)
+            progressDrawable.level = MAX_LEVEL - backgroundDrawable.level
             field = value
             invalidate() // Force redraw
 
             // If the progress is 100% then we want to go back to 0 to hide the progress drawable
             // again. However we want to show the full progress bar briefly so we wait 250ms before
             // going back to 0.
-            if (value == 100) {
+            if (value == MAX_PROGRESS) {
                 CoroutineScope(Dispatchers.Main).launch {
-                    delay(250)
+                    delay(PROGRESS_VISIBLE_DELAY_MS)
                     progress = 0
                 }
             }
@@ -109,7 +115,7 @@ class UrlBoxProgressView(
         resources.getDrawable(R.drawable.sample_url_background, context.theme),
         Gravity.END,
         ClipDrawable.HORIZONTAL).apply {
-        level = 10000
+        level = MAX_LEVEL
     }
 
     private var progressDrawable = ClipDrawable(
@@ -124,8 +130,15 @@ class UrlBoxProgressView(
         progressDrawable.setBounds(0, 0, w, h)
     }
 
-    override fun onDraw(canvas: Canvas?) {
+    override fun onDraw(canvas: Canvas) {
         backgroundDrawable.draw(canvas)
         progressDrawable.draw(canvas)
+    }
+
+    companion object {
+        private const val MAX_PROGRESS = 100
+        private const val PROGRESS_VISIBLE_DELAY_MS = 250L
+        private const val LEVEL_STEP_SIZE = 100
+        private const val MAX_LEVEL = 10000
     }
 }

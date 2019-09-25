@@ -6,209 +6,350 @@ package mozilla.components.feature.downloads
 
 import android.Manifest.permission.INTERNET
 import android.Manifest.permission.WRITE_EXTERNAL_STORAGE
-import android.support.v4.app.FragmentManager
-import org.junit.Assert.assertTrue
-import mozilla.components.browser.session.Download
-import mozilla.components.browser.session.Session
-import mozilla.components.browser.session.SessionManager
-import mozilla.components.concept.engine.Engine
-import mozilla.components.feature.downloads.DownloadDialogFragment.Companion.FRAGMENT_TAG
-import mozilla.components.support.base.observer.Consumable
+import android.content.pm.PackageManager
+import androidx.fragment.app.FragmentManager
+import androidx.fragment.app.FragmentTransaction
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.TestCoroutineDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.setMain
+import mozilla.components.browser.state.action.ContentAction
+import mozilla.components.browser.state.action.SystemAction
+import mozilla.components.browser.state.selector.findTab
+import mozilla.components.browser.state.state.BrowserState
+import mozilla.components.browser.state.state.content.DownloadState
+import mozilla.components.browser.state.state.createTab
+import mozilla.components.browser.state.store.BrowserStore
+import mozilla.components.feature.downloads.manager.DownloadManager
 import mozilla.components.support.test.any
-import mozilla.components.support.test.robolectric.grantPermission
+import mozilla.components.support.test.eq
+import mozilla.components.support.test.ext.joinBlocking
 import mozilla.components.support.test.mock
+import mozilla.components.support.test.robolectric.grantPermission
+import mozilla.components.support.test.robolectric.testContext
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.Mockito.`when`
-import org.mockito.Mockito.mock
+import org.mockito.ArgumentMatchers.anyString
+import org.mockito.Mockito.doNothing
+import org.mockito.Mockito.doReturn
+import org.mockito.Mockito.never
 import org.mockito.Mockito.spy
 import org.mockito.Mockito.verify
-import org.mockito.Mockito.verifyNoMoreInteractions
-import org.mockito.Mockito.times
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
+import org.robolectric.shadows.ShadowToast
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(AndroidJUnit4::class)
 class DownloadsFeatureTest {
+    private val testDispatcher = TestCoroutineDispatcher()
 
-    private lateinit var feature: DownloadsFeature
-    private lateinit var mockDownloadManager: DownloadManager
-    private lateinit var mockSessionManager: SessionManager
+    private lateinit var store: BrowserStore
 
     @Before
-    fun setup() {
-        val engine = mock(Engine::class.java)
-        val context = RuntimeEnvironment.application
-        mockSessionManager = spy(SessionManager(engine))
-        mockDownloadManager = mock()
-        feature = DownloadsFeature(context, downloadManager = mockDownloadManager, sessionManager = mockSessionManager)
+    @ExperimentalCoroutinesApi
+    fun setUp() {
+        Dispatchers.setMain(testDispatcher)
+
+        store = BrowserStore(BrowserState(
+            tabs = listOf(createTab("https://www.mozilla.org", id = "test-tab")),
+            selectedTabId = "test-tab"
+        ))
+    }
+
+    @After
+    @ExperimentalCoroutinesApi
+    fun tearDown() {
+        Dispatchers.resetMain()
+        testDispatcher.cleanupTestCoroutines()
     }
 
     @Test
-    fun `when start is called must register SessionManager observers `() {
+    fun `Adding a download object will request permissions if needed`() {
+        val fragmentManager: FragmentManager = mock()
+
+        var requestedPermissions = false
+
+        val feature = DownloadsFeature(
+            testContext,
+            store,
+            useCases = mock(),
+            onNeedToRequestPermissions = { requestedPermissions = true },
+            fragmentManager = mockFragmentManager()
+        )
+
         feature.start()
-        verify(mockSessionManager).register(feature)
+
+        assertFalse(requestedPermissions)
+
+        store.dispatch(ContentAction.UpdateDownloadAction("test-tab", download = mock()))
+            .joinBlocking()
+
+        testDispatcher.advanceUntilIdle()
+
+        assertTrue(requestedPermissions)
+        verify(fragmentManager, never()).beginTransaction()
     }
 
     @Test
-    fun `when stop is called must unregister SessionManager observers `() {
+    fun `Adding a download when permissions are granted will show dialog`() {
+        val fragmentManager: FragmentManager = mockFragmentManager()
+
+        grantPermissions()
+
+        val feature = DownloadsFeature(
+            testContext,
+            store,
+            useCases = mock(),
+            fragmentManager = fragmentManager
+        )
+
+        feature.start()
+
+        verify(fragmentManager, never()).beginTransaction()
+
+        store.dispatch(ContentAction.UpdateDownloadAction("test-tab", download = mock()))
+            .joinBlocking()
+
+        testDispatcher.advanceUntilIdle()
+
+        verify(fragmentManager).beginTransaction()
+    }
+
+    @Test
+    fun `Adding a download without a fragment manager will start download immediately`() {
+        grantPermissions()
+
+        val downloadManager: DownloadManager = mock()
+        doReturn(
+            arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE)
+        ).`when`(downloadManager).permissions
+
+        val feature = DownloadsFeature(
+            testContext,
+            store,
+            useCases = mock(),
+            downloadManager = downloadManager
+        )
+
+        feature.start()
+
+        verify(downloadManager, never()).download(any(), anyString())
+
+        val download: DownloadState = mock()
+        store.dispatch(ContentAction.UpdateDownloadAction("test-tab", download))
+            .joinBlocking()
+
+        testDispatcher.advanceUntilIdle()
+
+        verify(downloadManager).download(eq(download), anyString())
+    }
+
+    @Test
+    fun `When starting the feature will reattach to already existing dialog`() {
+        grantPermissions()
+
+        store.dispatch(ContentAction.UpdateDownloadAction("test-tab", download = mock()))
+            .joinBlocking()
+
+        val dialogFragment: DownloadDialogFragment = mock()
+        val fragmentManager: FragmentManager = mock()
+        doReturn(dialogFragment).`when`(fragmentManager).findFragmentByTag(DownloadDialogFragment.FRAGMENT_TAG)
+
+        val downloadManager: DownloadManager = mock()
+        doReturn(
+            arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE)
+        ).`when`(downloadManager).permissions
+
+        val feature = DownloadsFeature(
+            testContext,
+            store,
+            useCases = mock(),
+            downloadManager = downloadManager,
+            fragmentManager = fragmentManager
+        )
+
+        assertNotEquals(dialogFragment, feature.dialog)
+
+        feature.start()
+
+        assertEquals(dialogFragment, feature.dialog)
+        verify(dialogFragment).onStartDownload = any()
+        verify(dialogFragment).onCancelDownload = any()
+    }
+
+    @Test
+    fun `onPermissionsResult will start download if permissions were granted`() {
+        val download: DownloadState = mock()
+        store.dispatch(ContentAction.UpdateDownloadAction("test-tab", download = download))
+            .joinBlocking()
+
+        val downloadManager: DownloadManager = mock()
+        doReturn(
+            arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE)
+        ).`when`(downloadManager).permissions
+
+        val feature = DownloadsFeature(
+            testContext,
+            store,
+            useCases = mock(),
+            downloadManager = downloadManager
+        )
+
+        feature.start()
+
+        verify(downloadManager, never()).download(download)
+
+        grantPermissions()
+
+        feature.onPermissionsResult(
+            arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE),
+            arrayOf(PackageManager.PERMISSION_GRANTED, PackageManager.PERMISSION_GRANTED).toIntArray())
+
+        verify(downloadManager).download(download)
+    }
+
+    @Test
+    fun `onPermissionsResult will consume download if permissions were not granted`() {
+        val store = BrowserStore(BrowserState(
+            tabs = listOf(
+                createTab("https://www.mozilla.org", id = "test-tab")
+            ),
+            selectedTabId = "test-tab"
+        ))
+
+        store.dispatch(ContentAction.UpdateDownloadAction(
+            "test-tab", DownloadState("https://www.mozilla.org")
+        ))
+
+        val downloadManager: DownloadManager = mock()
+        doReturn(
+            arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE)
+        ).`when`(downloadManager).permissions
+
+        val feature = DownloadsFeature(
+            testContext,
+            store,
+            useCases = DownloadsUseCases(store),
+            downloadManager = downloadManager
+        )
+
+        feature.start()
+
+        println(store.state.findTab("test-tab"))
+        assertNotNull(store.state.findTab("test-tab")!!.content.download)
+
+        feature.onPermissionsResult(
+            arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE),
+            arrayOf(PackageManager.PERMISSION_GRANTED, PackageManager.PERMISSION_DENIED).toIntArray())
+
+        // Dispatching a random unrelated action to block on it in order to wait for all other
+        // dispatched actions to have completed.
+        store.dispatch(SystemAction.LowMemoryAction).joinBlocking()
+
+        assertNull(store.state.findTab("test-tab")!!.content.download)
+
+        verify(downloadManager, never()).download(any(), anyString())
+    }
+
+    @Test
+    fun `Calling stop() will unregister listeners from download manager`() {
+        val downloadManager: DownloadManager = mock()
+
+        val feature = DownloadsFeature(
+            testContext,
+            store,
+            useCases = mock(),
+            downloadManager = downloadManager
+        )
+
+        feature.start()
+
+        verify(downloadManager, never()).unregisterListeners()
+
         feature.stop()
-        verify(mockSessionManager).unregister(feature)
+
+        verify(downloadManager).unregisterListeners()
     }
 
     @Test
-    fun `when a download is notify must pass it to the download manager`() {
-        val session = Session("https://mozilla.com")
-        val download = mock<Download>()
+    fun `DownloadManager failing to start download will cause error toast to be displayed`() {
         grantPermissions()
 
-        mockSessionManager.add(session)
-        mockSessionManager.select(session)
-        feature.start()
+        val downloadManager: DownloadManager = mock()
+        doReturn(
+            arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE)
+        ).`when`(downloadManager).permissions
 
-        session.download = Consumable.from(download)
+        doReturn(null).`when`(downloadManager).download(any(), anyString())
 
-        verify(mockDownloadManager).download(download)
-    }
+        val feature = spy(DownloadsFeature(
+            testContext,
+            store,
+            useCases = mock(),
+            downloadManager = downloadManager
+        ))
 
-    @Test
-    fun `when new session is select must register an observer on it `() {
-        val session = mock<Session>()
-        val download = mock<Download>()
-
-        feature.start()
-        session.notifyObservers {
-            onDownload(session, download)
-        }
-        with(mockSessionManager) {
-            add(session)
-            select(session)
-        }
-
-        verify(session, times(2)).register(any())
-    }
-
-    @Test
-    fun `after stop is called and new download must not pass the download to the download manager `() {
-        val session = Session("https://mozilla.com")
-        val download = mock<Download>()
-
-        grantPermissions()
-
-        feature.start()
-        mockSessionManager.add(session)
-        mockSessionManager.select(session)
-
-        session.notifyObservers {
-            onDownload(session, download)
-        }
-
-        verify(mockDownloadManager).download(download)
-        feature.stop()
-
-        verify(mockDownloadManager).unregisterListener()
-
-        session.download = Consumable.from(download)
-
-        verifyNoMoreInteractions(mockDownloadManager)
-    }
-
-    @Test
-    fun `when a download came and permissions aren't granted needToRequestPermissions must be called `() {
-        var needToRequestPermissionCalled = false
-
-        feature.onNeedToRequestPermissions = { _, _ ->
-            needToRequestPermissionCalled = true
-        }
-
-        feature.start()
-        val download = startDownload()
-
-        verify(mockDownloadManager, times(0)).download(download)
-        assertTrue(needToRequestPermissionCalled)
-    }
-
-    @Test
-    fun `when a download came and permissions aren't granted needToRequestPermissions and after onPermissionsGranted the download must be triggered`() {
-        var needToRequestPermissionCalled = false
-
-        feature.onNeedToRequestPermissions = { _, _ ->
-            needToRequestPermissionCalled = true
-        }
+        doNothing().`when`(feature).showDownloadNotSupportedError()
 
         feature.start()
 
-        val download = startDownload()
+        verify(downloadManager, never()).download(any(), anyString())
+        verify(feature, never()).showDownloadNotSupportedError()
 
-        verify(mockDownloadManager, times(0)).download(download)
-        assertTrue(needToRequestPermissionCalled)
+        val download: DownloadState = mock()
+        store.dispatch(ContentAction.UpdateDownloadAction("test-tab", download))
+            .joinBlocking()
 
-        grantPermissions()
+        testDispatcher.advanceUntilIdle()
 
-        feature.onPermissionsGranted()
-        verify(mockDownloadManager).download(download)
+        verify(downloadManager).download(eq(download), anyString())
+        verify(feature).showDownloadNotSupportedError()
     }
 
     @Test
-    fun `when fragmentManager is not null a confirmation dialog must be show before starting a download`() {
-        val context = RuntimeEnvironment.application
-        val mockDialog = spy(DownloadDialogFragment::class.java)
-        val mockFragmentManager = mock(FragmentManager::class.java)
-
-        `when`(mockFragmentManager.beginTransaction()).thenReturn(mock())
-
-        val featureWithDialog =
-            DownloadsFeature(
-                context, downloadManager = mockDownloadManager, sessionManager = mockSessionManager,
-                fragmentManager = mockFragmentManager, dialog = mockDialog
-            )
+    fun `showDownloadNotSupportedError shows toast`() {
+        // We need to create a Toast on the actual main thread (with a Looper) and therefore reset
+        // the main dispatcher that was set to a TestDispatcher in setUp().
+        Dispatchers.resetMain()
 
         grantPermissions()
 
-        featureWithDialog.start()
+        val downloadManager: DownloadManager = mock()
+        doReturn(
+            arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE)
+        ).`when`(downloadManager).permissions
 
-        val download = startDownload()
+        doReturn(null).`when`(downloadManager).download(any(), anyString())
 
-        verify(mockDialog).show(mockFragmentManager, FRAGMENT_TAG)
-        mockDialog.onStartDownload()
-        verify(mockDownloadManager).download(download)
+        val feature = spy(DownloadsFeature(
+            testContext,
+            store,
+            useCases = mock(),
+            downloadManager = downloadManager
+        ))
+
+        feature.showDownloadNotSupportedError()
+
+        val toast = ShadowToast.getTextOfLatestToast()
+        assertNotNull(toast)
+        assertTrue(toast.contains("can’t download this file type"))
     }
+}
 
-    @Test
-    fun `shouldn't show twice a dialog if is already created`() {
-        val context = RuntimeEnvironment.application
-        val mockDialog = spy(DownloadDialogFragment::class.java)
-        val mockFragmentManager = mock(FragmentManager::class.java)
+private fun grantPermissions() {
+    grantPermission(INTERNET, WRITE_EXTERNAL_STORAGE)
+}
 
-        `when`(mockFragmentManager.findFragmentByTag(FRAGMENT_TAG)).thenReturn(mockDialog)
-
-        val featureWithDialog =
-            DownloadsFeature(
-                context, downloadManager = mockDownloadManager, sessionManager = mockSessionManager,
-                fragmentManager = mockFragmentManager
-            )
-
-        grantPermissions()
-
-        featureWithDialog.start()
-
-        startDownload()
-
-        verify(mockDialog, times(0)).show(mockFragmentManager, FRAGMENT_TAG)
-    }
-
-    private fun startDownload(): Download {
-        val session = Session("https://mozilla.com")
-        val download = mock<Download>()
-
-        mockSessionManager.add(session)
-        mockSessionManager.select(session)
-        session.download = Consumable.from(download)
-        return download
-    }
-
-    private fun grantPermissions() {
-        grantPermission(INTERNET, WRITE_EXTERNAL_STORAGE)
-    }
+private fun mockFragmentManager(): FragmentManager {
+    val fragmentManager: FragmentManager = mock()
+    doReturn(mock<FragmentTransaction>()).`when`(fragmentManager).beginTransaction()
+    return fragmentManager
 }

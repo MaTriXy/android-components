@@ -4,16 +4,17 @@
 
 package mozilla.components.feature.session
 
-import android.support.design.widget.AppBarLayout
-import android.support.design.widget.AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL
-import android.support.design.widget.AppBarLayout.LayoutParams.SCROLL_FLAG_ENTER_ALWAYS
-import android.support.design.widget.AppBarLayout.LayoutParams.SCROLL_FLAG_SNAP
-import android.support.design.widget.AppBarLayout.LayoutParams.SCROLL_FLAG_EXIT_UNTIL_COLLAPSED
 import android.view.View
+import com.google.android.material.appbar.AppBarLayout
+import com.google.android.material.appbar.AppBarLayout.LayoutParams.SCROLL_FLAG_ENTER_ALWAYS
+import com.google.android.material.appbar.AppBarLayout.LayoutParams.SCROLL_FLAG_EXIT_UNTIL_COLLAPSED
+import com.google.android.material.appbar.AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL
+import com.google.android.material.appbar.AppBarLayout.LayoutParams.SCROLL_FLAG_SNAP
 import mozilla.components.browser.session.SelectionAwareSessionObserver
 import mozilla.components.browser.session.Session
 import mozilla.components.browser.session.SessionManager
 import mozilla.components.concept.engine.EngineView
+import mozilla.components.support.base.feature.LifecycleAwareFeature
 
 /**
  * Feature implementation for connecting an [EngineView] with any View that you want to coordinate scrolling
@@ -26,12 +27,12 @@ class CoordinateScrollingFeature(
     private val engineView: EngineView,
     private val view: View,
     private val scrollFlags: Int = DEFAULT_SCROLL_FLAGS
-) : SelectionAwareSessionObserver(sessionManager) {
+) : SelectionAwareSessionObserver(sessionManager), LifecycleAwareFeature {
 
     /**
      * Start feature: Starts adding scrolling behavior for the indicated view.
      */
-    fun start() {
+    override fun start() {
         observeSelected()
     }
 

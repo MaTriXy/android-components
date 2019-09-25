@@ -6,11 +6,15 @@ package mozilla.components.service.glean.storages
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.test.core.app.ApplicationProvider
-import mozilla.components.service.glean.Lifetime
-import mozilla.components.service.glean.StringMetricType
+import mozilla.components.service.glean.error.ErrorRecording.ErrorType
+import mozilla.components.service.glean.error.ErrorRecording.testGetNumRecordedErrors
+import mozilla.components.service.glean.private.Lifetime
+import mozilla.components.service.glean.private.StringMetricType
+import mozilla.components.service.glean.testing.GleanTestRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Before
+import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.ArgumentMatchers.eq
@@ -21,17 +25,8 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class StringsStorageEngineTest {
 
-    @Before
-    fun setUp() {
-        StringsStorageEngine.applicationContext = ApplicationProvider.getApplicationContext()
-        // Clear the stored "user" preferences between tests.
-        ApplicationProvider.getApplicationContext<Context>()
-            .getSharedPreferences(StringsStorageEngine.javaClass.simpleName, Context.MODE_PRIVATE)
-            .edit()
-            .clear()
-            .apply()
-        StringsStorageEngine.clearAllStores()
-    }
+    @get:Rule
+    val gleanRule = GleanTestRule(ApplicationProvider.getApplicationContext())
 
     @Test
     fun `string deserializer should correctly parse strings`() {
@@ -49,14 +44,63 @@ class StringsStorageEngineTest {
         val sharedPreferences = mock(SharedPreferences::class.java)
         `when`(sharedPreferences.all).thenAnswer { persistedSample }
         `when`(context.getSharedPreferences(
-            eq(storageEngine::class.java.simpleName),
+            eq(storageEngine::class.java.canonicalName),
             eq(Context.MODE_PRIVATE)
         )).thenReturn(sharedPreferences)
+        `when`(context.getSharedPreferences(
+            eq("${storageEngine::class.java.canonicalName}.PingLifetime"),
+            eq(Context.MODE_PRIVATE)
+        )).thenReturn(ApplicationProvider.getApplicationContext<Context>()
+            .getSharedPreferences("${storageEngine::class.java.canonicalName}.PingLifetime",
+                Context.MODE_PRIVATE))
 
         storageEngine.applicationContext = context
         val snapshot = storageEngine.getSnapshot(storeName = "store1", clearStore = true)
         assertEquals(1, snapshot!!.size)
         assertEquals("test", snapshot["telemetry.valid"])
+    }
+
+    @Test
+    fun `string serializer should correctly serialize strings`() {
+        run {
+            val storageEngine = StringsStorageEngineImplementation()
+            storageEngine.applicationContext = ApplicationProvider.getApplicationContext()
+
+            val metric = StringMetricType(
+                disabled = false,
+                category = "telemetry",
+                lifetime = Lifetime.User,
+                name = "string_metric",
+                sendInPings = listOf("store1")
+            )
+
+            // Record the string in the store, without providing optional arguments.
+            storageEngine.record(
+                metric,
+                value = "test_string_value"
+            )
+
+            // Get the snapshot from "store1"
+            val snapshot = storageEngine.getSnapshotAsJSON(storeName = "store1",
+                clearStore = true)
+            // Check that this serializes to the expected JSON format.
+            assertEquals("{\"telemetry.string_metric\":\"test_string_value\"}",
+                snapshot.toString())
+        }
+
+        // Create a new instance of storage engine to verify serialization to storage rather than
+        // to the cache
+        run {
+            val storageEngine = StringsStorageEngineImplementation()
+            storageEngine.applicationContext = ApplicationProvider.getApplicationContext()
+
+            // Get the snapshot from "store1"
+            val snapshot = storageEngine.getSnapshotAsJSON(storeName = "store1",
+                clearStore = true)
+            // Check that this serializes to the expected JSON format.
+            assertEquals("{\"telemetry.string_metric\":\"test_string_value\"}",
+                snapshot.toString())
+        }
     }
 
     @Test
@@ -88,7 +132,7 @@ class StringsStorageEngineTest {
     @Test
     fun `getSnapshot() returns null if nothing is recorded in the store`() {
         assertNull("The engine must report 'null' on empty or unknown stores",
-                StringsStorageEngine.getSnapshot(storeName = "unknownStore", clearStore = false))
+            StringsStorageEngine.getSnapshot(storeName = "unknownStore", clearStore = false))
     }
 
     @Test
@@ -113,7 +157,7 @@ class StringsStorageEngineTest {
         val snapshot = StringsStorageEngine.getSnapshot(storeName = "store1", clearStore = true)
         // Check that getting a new snapshot for "store1" returns an empty store.
         assertNull("The engine must report 'null' on empty stores",
-                StringsStorageEngine.getSnapshot(storeName = "store1", clearStore = false))
+            StringsStorageEngine.getSnapshot(storeName = "store1", clearStore = false))
 
         // Check that we get the right data from both the stores. Clearing "store1" must
         // not clear "store2" as well.
@@ -147,5 +191,30 @@ class StringsStorageEngineTest {
         // Check that this serializes to the expected JSON format.
         assertEquals("{\"telemetry.string_metric\":\"test_string_value\"}",
             snapshot.toString())
+    }
+
+    @Test
+    fun `The API truncates long string values`() {
+        // Define a 'stringMetric' string metric, which will be stored in "store1"
+        val stringMetric = StringMetricType(
+            disabled = false,
+            category = "telemetry",
+            lifetime = Lifetime.Application,
+            name = "string_metric",
+            sendInPings = listOf("store1")
+        )
+
+        val testString = "012345678901234567890".repeat(20)
+        val expectedString = testString.take(StringsStorageEngineImplementation.MAX_LENGTH_VALUE)
+
+        stringMetric.set(testString)
+        // Check that data was truncated.
+        assertTrue(stringMetric.testHasValue())
+        assertEquals(
+            expectedString,
+            stringMetric.testGetValue()
+        )
+
+        assertEquals(1, testGetNumRecordedErrors(stringMetric, ErrorType.InvalidValue))
     }
 }

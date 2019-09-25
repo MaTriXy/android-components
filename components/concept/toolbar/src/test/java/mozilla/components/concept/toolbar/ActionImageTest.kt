@@ -1,25 +1,23 @@
-/*
- * This Source Code Form is subject to the terms of the Mozilla Public
- *  License, v. 2.0. If a copy of the MPL was not distributed with this
- *  file, You can obtain one at http://mozilla.org/MPL/2.0/.
- */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 package mozilla.components.concept.toolbar
 
 import android.graphics.drawable.Drawable
 import android.view.View
 import android.view.ViewGroup
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import mozilla.components.support.base.android.Padding
 import mozilla.components.support.test.mock
+import mozilla.components.support.test.robolectric.testContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mockito.`when`
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(AndroidJUnit4::class)
 class ActionImageTest {
 
     @Test
@@ -29,7 +27,7 @@ class ActionImageTest {
         val emptyImage = Toolbar.ActionImage(mock())
 
         val viewGroup: ViewGroup = mock()
-        `when`(viewGroup.context).thenReturn(RuntimeEnvironment.application)
+        `when`(viewGroup.context).thenReturn(testContext)
         `when`(drawable.intrinsicWidth).thenReturn(5)
 
         val emptyImageView = emptyImage.createView(viewGroup)
@@ -44,7 +42,7 @@ class ActionImageTest {
         val image = Toolbar.ActionImage(mock())
         var imageAccessible = Toolbar.ActionImage(mock(), "image")
         val viewGroup: ViewGroup = mock()
-        `when`(viewGroup.context).thenReturn(RuntimeEnvironment.application)
+        `when`(viewGroup.context).thenReturn(testContext)
 
         val imageView = image.createView(viewGroup)
         assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, imageView.importantForAccessibility)
@@ -67,7 +65,7 @@ class ActionImageTest {
     fun `padding is set`() {
         var image = Toolbar.ActionImage(mock())
         val viewGroup: ViewGroup = mock()
-        `when`(viewGroup.context).thenReturn(RuntimeEnvironment.application)
+        `when`(viewGroup.context).thenReturn(testContext)
         var view = image.createView(viewGroup)
 
         assertEquals(view.paddingLeft, 0)

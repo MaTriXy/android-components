@@ -5,8 +5,8 @@
 package mozilla.components.browser.engine.gecko.permission
 
 import android.Manifest
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import mozilla.components.concept.engine.permission.Permission
-import mozilla.components.concept.engine.permission.Permission.ContentAutoplayMedia
 import mozilla.components.support.test.mock
 import mozilla.components.test.ReflectionUtils
 import org.junit.Assert.assertEquals
@@ -15,14 +15,11 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mockito.verify
 import org.mozilla.geckoview.GeckoSession
-import org.robolectric.RobolectricTestRunner
-
 import org.mozilla.geckoview.GeckoSession.PermissionDelegate.MediaSource
-import org.mozilla.geckoview.GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_MEDIA
 import org.mozilla.geckoview.GeckoSession.PermissionDelegate.PERMISSION_DESKTOP_NOTIFICATION
 import org.mozilla.geckoview.GeckoSession.PermissionDelegate.PERMISSION_GEOLOCATION
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(AndroidJUnit4::class)
 class GeckoPermissionRequestTest {
 
     @Test
@@ -30,11 +27,7 @@ class GeckoPermissionRequestTest {
         val callback: GeckoSession.PermissionDelegate.Callback = mock()
         val uri = "https://mozilla.org"
 
-        var request = GeckoPermissionRequest.Content(uri, PERMISSION_AUTOPLAY_MEDIA, callback)
-        assertEquals(uri, request.uri)
-        assertEquals(listOf(ContentAutoplayMedia()), request.permissions)
-
-        request = GeckoPermissionRequest.Content(uri, PERMISSION_DESKTOP_NOTIFICATION, callback)
+        var request = GeckoPermissionRequest.Content(uri, PERMISSION_DESKTOP_NOTIFICATION, callback)
         assertEquals(uri, request.uri)
         assertEquals(listOf(Permission.ContentNotification()), request.permissions)
 
@@ -52,7 +45,7 @@ class GeckoPermissionRequestTest {
         val callback: GeckoSession.PermissionDelegate.Callback = mock()
         val uri = "https://mozilla.org"
 
-        var request = GeckoPermissionRequest.Content(uri, PERMISSION_AUTOPLAY_MEDIA, callback)
+        val request = GeckoPermissionRequest.Content(uri, PERMISSION_GEOLOCATION, callback)
         request.grant()
         verify(callback).grant()
     }
@@ -62,7 +55,7 @@ class GeckoPermissionRequestTest {
         val callback: GeckoSession.PermissionDelegate.Callback = mock()
         val uri = "https://mozilla.org"
 
-        var request = GeckoPermissionRequest.Content(uri, PERMISSION_AUTOPLAY_MEDIA, callback)
+        val request = GeckoPermissionRequest.Content(uri, PERMISSION_GEOLOCATION, callback)
         request.reject()
         verify(callback).reject()
     }
@@ -85,16 +78,15 @@ class GeckoPermissionRequestTest {
                 Permission.Generic("unknown app permission")
         )
 
-        var request = GeckoPermissionRequest.App(permissions, callback)
+        val request = GeckoPermissionRequest.App(permissions, callback)
         assertEquals(mappedPermissions, request.permissions)
     }
 
     @Test
     fun `grant app permission request`() {
         val callback: GeckoSession.PermissionDelegate.Callback = mock()
-        val uri = "https://mozilla.org"
 
-        var request = GeckoPermissionRequest.App(listOf(Manifest.permission.CAMERA), callback)
+        val request = GeckoPermissionRequest.App(listOf(Manifest.permission.CAMERA), callback)
         request.grant()
         verify(callback).grant()
     }
@@ -102,9 +94,8 @@ class GeckoPermissionRequestTest {
     @Test
     fun `reject app permission request`() {
         val callback: GeckoSession.PermissionDelegate.Callback = mock()
-        val uri = "https://mozilla.org"
 
-        var request = GeckoPermissionRequest.App(listOf(Manifest.permission.CAMERA), callback)
+        val request = GeckoPermissionRequest.App(listOf(Manifest.permission.CAMERA), callback)
         request.reject()
         verify(callback).reject()
     }
@@ -123,33 +114,24 @@ class GeckoPermissionRequestTest {
 
         val videoCamera = MockMediaSource("videoCamera", "videoCamera",
                 MediaSource.SOURCE_CAMERA, MediaSource.TYPE_VIDEO)
-        val videoBrowser = MockMediaSource("videoBrowser", "videoBrowser",
-                MediaSource.SOURCE_BROWSER, MediaSource.TYPE_VIDEO)
-        val videoApplication = MockMediaSource("videoApplication", "videoApplication",
-                MediaSource.SOURCE_APPLICATION, MediaSource.TYPE_VIDEO)
         val videoScreen = MockMediaSource("videoScreen", "videoScreen",
                 MediaSource.SOURCE_SCREEN, MediaSource.TYPE_VIDEO)
-        val videoWindow = MockMediaSource("videoWindow", "videoWindow",
-                MediaSource.SOURCE_WINDOW, MediaSource.TYPE_VIDEO)
         val videoOther = MockMediaSource("videoOther", "videoOther",
                 MediaSource.SOURCE_OTHER, MediaSource.TYPE_VIDEO)
 
         val audioSources = listOf(audioCapture, audioMicrophone, audioOther)
-        val videoSources = listOf(videoApplication, videoBrowser, videoCamera, videoOther, videoScreen, videoWindow)
+        val videoSources = listOf(videoCamera, videoOther, videoScreen)
 
         val mappedPermissions = listOf(
                 Permission.ContentVideoCamera("videoCamera", "videoCamera"),
-                Permission.ContentVideoBrowser("videoBrowser", "videoBrowser"),
-                Permission.ContentVideoApplication("videoApplication", "videoApplication"),
                 Permission.ContentVideoScreen("videoScreen", "videoScreen"),
-                Permission.ContentVideoWindow("videoWindow", "videoWindow"),
                 Permission.ContentVideoOther("videoOther", "videoOther"),
                 Permission.ContentAudioMicrophone("audioMicrophone", "audioMicrophone"),
                 Permission.ContentAudioCapture("audioCapture", "audioCapture"),
                 Permission.ContentAudioOther("audioOther", "audioOther")
         )
 
-        var request = GeckoPermissionRequest.Media(uri, videoSources, audioSources, callback)
+        val request = GeckoPermissionRequest.Media(uri, videoSources, audioSources, callback)
         assertEquals(uri, request.uri)
         assertEquals(mappedPermissions.size, request.permissions.size)
         assertTrue(request.permissions.containsAll(mappedPermissions))
@@ -168,7 +150,7 @@ class GeckoPermissionRequestTest {
         val audioSources = listOf(audioMicrophone)
         val videoSources = listOf(videoCamera)
 
-        var request = GeckoPermissionRequest.Media(uri, videoSources, audioSources, callback)
+        val request = GeckoPermissionRequest.Media(uri, videoSources, audioSources, callback)
         request.grant(request.permissions)
         verify(callback).grant(videoCamera, audioMicrophone)
     }
@@ -186,7 +168,7 @@ class GeckoPermissionRequestTest {
         val audioSources = listOf(audioMicrophone)
         val videoSources = listOf(videoCamera)
 
-        var request = GeckoPermissionRequest.Media(uri, videoSources, audioSources, callback)
+        val request = GeckoPermissionRequest.Media(uri, videoSources, audioSources, callback)
         request.reject()
         verify(callback).reject()
     }

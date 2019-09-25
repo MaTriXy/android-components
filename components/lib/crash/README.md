@@ -36,6 +36,18 @@ With this minimal setup the crash reporting library will capture "uncaught excep
 
 ⚠️ Note: To avoid conflicting setups do not use any other crash reporting libraries/services independently from this library.
 
+### Recording crash breadcrumbs to supported services
+
+Using the `CrashReporter` instance to record crash breadcrumbs.  These breadcrumbs will then be sent when a crash occurs to aid in debugging.  Breadcrumbs are reported only if the underlying crash reporter service supports it.
+
+⚠️ Note: Directly using Sentry's breadcrumb will not work as expected on Android 10 or above.  Using the `CrashReporter` breadcrumb is preferred. 
+
+```Kotlin
+crashReporter.recordCrashBreadcrumb(
+  CrashBreadcrumb("Settings button clicked", data, "UI", Level.INFO, Type.USER)
+)
+```
+
 ### Sending crash reports to Sentry
 
 ⚠️ Note: The crash reporter library is compiled against the Sentry SDK but it doesn't require it as a dependency. The app using the component is responsible for adding the Sentry dependency to its build files in order to use Sentry crash reporting.
@@ -82,12 +94,33 @@ Add a `MozillaSocorroService` instance to your `CrashReporter` in order to uploa
 ```Kotlin
 CrashReporter(
     services = listOf(
-		MozillaSocorroService(applicationContext, "your app name"),
+		MozillaSocorroService(applicationContext, "your app name")
     )
 ).install(applicationContext)
 ```
 
 ⚠️ Note: Currently only native code crashes get uploaded to Socorro. Socorro has limited support for "uncaught exception" crashes too, but it is recommended to use a more elaborate solution like Sentry for that.
+
+### Sending crash reports to Glean
+
+[Glean](https://docs.telemetry.mozilla.org/concepts/glean/glean.html) is a new way to collect telemetry by Mozilla. 
+This will record crash counts as a labeled counter with each label corresponding to a specific type of crash (`native_code_crash`, and `unhandled_exception`, currently).
+The list of collected metrics is available in the [metrics.yaml file](metrics.yaml), with their documentation [living here](docs/metrics.md).
+Due to the fact that Glean can only be recorded to in the main process and lib-crash runs in a separate process when it runs to handle the crash, 
+lib-crash persists the data in a file format and then reads and records the data from the main process when the application is next run since the `GleanCrashReporterService`
+constructor is loaded from the main process.
+
+Add a `GleanCrashReporterService` instance to your `CrashReporter` in order to record crashes in Glean:
+
+```Kotlin
+CrashReporter(
+    services = listOf(
+		GleanCrashReporterService()
+    )
+).install(applicationContext)
+```
+
+⚠️ Note: Applications using the `GleanCrashReporterService` are **required** to undergo [Data Collection Review](https://wiki.mozilla.org/Firefox/Data_Collection) for the crash counts that they will be collecting.
 
 ### Showing a crash reporter prompt
 

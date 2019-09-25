@@ -6,11 +6,11 @@ apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
 android {
-    compileSdkVersion Config.compileSdkVersion
+    compileSdkVersion config.compileSdkVersion
 
     defaultConfig {
-        minSdkVersion Config.minSdkVersion
-        targetSdkVersion Config.targetSdkVersion
+        minSdkVersion config.minSdkVersion
+        targetSdkVersion config.targetSdkVersion
     }
 
     lintOptions {
@@ -28,7 +28,12 @@ android {
 }
 
 dependencies {
+    // Parts of this dependency are typealiase'd or are otherwise part of this module's public API.
     api Dependencies.mozilla_sync_logins
+    api Dependencies.mozilla_sync15
+
+    // Types defined in concept-sync are part of this module's public API.
+    api project(':concept-sync')
 
     implementation project(':concept-storage')
 
@@ -43,4 +48,4 @@ dependencies {
 }
 
 apply from: '../../../publish.gradle'
-ext.configurePublish(Config.componentsGroupId, archivesBaseName, gradle.componentDescriptions[archivesBaseName])
+ext.configurePublish(config.componentsGroupId, archivesBaseName, project.ext.description)

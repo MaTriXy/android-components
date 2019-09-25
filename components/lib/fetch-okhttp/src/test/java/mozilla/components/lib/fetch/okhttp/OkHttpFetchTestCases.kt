@@ -4,18 +4,24 @@
 
 package mozilla.components.lib.fetch.okhttp
 
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import mozilla.components.concept.fetch.Client
-import org.junit.Assert
+import mozilla.components.support.test.robolectric.testContext
+import mozilla.components.tooling.fetch.tests.FetchTestCases
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
 
-class OkHttpFetchTestCases : mozilla.components.tooling.fetch.tests.FetchTestCases() {
-    override fun createNewClient(): Client = OkHttpClient(okhttp3.OkHttpClient())
+@RunWith(AndroidJUnit4::class)
+class OkHttpFetchTestCases : FetchTestCases() {
+
+    override fun createNewClient(): Client = OkHttpClient(okhttp3.OkHttpClient(), testContext)
 
     // Inherits test methods from generic test suite base class
 
     @Test
     fun `Client instance`() {
         // We need at least one test case defined here so that this is recognized as test class.
-        Assert.assertTrue(createNewClient() is OkHttpClient)
+        assertTrue(createNewClient() is OkHttpClient)
     }
 }

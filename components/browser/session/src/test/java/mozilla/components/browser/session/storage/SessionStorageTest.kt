@@ -4,10 +4,10 @@
 
 package mozilla.components.browser.session.storage
 
-import android.arch.lifecycle.Lifecycle
-import android.arch.lifecycle.LifecycleOwner
-import android.arch.lifecycle.LifecycleRegistry
-import android.util.AtomicFile
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
 import mozilla.components.browser.session.Session
@@ -15,8 +15,10 @@ import mozilla.components.browser.session.Session.Source
 import mozilla.components.browser.session.SessionManager
 import mozilla.components.concept.engine.Engine
 import mozilla.components.concept.engine.EngineSession
+import mozilla.components.concept.engine.EngineSessionState
 import mozilla.components.support.test.any
 import mozilla.components.support.test.mock
+import mozilla.components.support.test.robolectric.testContext
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -29,21 +31,16 @@ import org.junit.runner.RunWith
 import org.mockito.ArgumentMatchers
 import org.mockito.Mockito.`when`
 import org.mockito.Mockito.doReturn
-import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.spy
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoMoreInteractions
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
-import java.io.FileNotFoundException
-import java.io.IOException
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(AndroidJUnit4::class)
 class SessionStorageTest {
 
     @Test
@@ -53,7 +50,9 @@ class SessionStorageTest {
         val session3 = Session("http://getpocket.com", id = "session3")
         session3.parentId = "session1"
 
-        val engineSessionState = mutableMapOf("k0" to "v0", "k1" to 1, "k2" to true, "k3" to emptyList<Any>())
+        val engineSessionState = object : EngineSessionState {
+            override fun toJSON() = JSONObject()
+        }
 
         val engineSession = mock(EngineSession::class.java)
         `when`(engineSession.saveState()).thenReturn(engineSessionState)
@@ -61,11 +60,12 @@ class SessionStorageTest {
         val engine = mock(Engine::class.java)
         `when`(engine.name()).thenReturn("gecko")
         `when`(engine.createSession()).thenReturn(mock(EngineSession::class.java))
+        `when`(engine.createSessionState(any())).thenReturn(engineSessionState)
 
         // Engine session just for one of the sessions for simplicity.
         val sessionsSnapshot = SessionManager.Snapshot(
             sessions = listOf(
-                SessionManager.Snapshot.Item(session1, engineSession),
+                SessionManager.Snapshot.Item(session1),
                 SessionManager.Snapshot.Item(session2),
                 SessionManager.Snapshot.Item(session3)
             ),
@@ -73,7 +73,7 @@ class SessionStorageTest {
         )
 
         // Persist the snapshot
-        val storage = SessionStorage(RuntimeEnvironment.application, engine)
+        val storage = SessionStorage(testContext, engine)
         val persisted = storage.save(sessionsSnapshot)
         assertTrue(persisted)
 
@@ -98,9 +98,8 @@ class SessionStorageTest {
         assertEquals(session3.id, restoredSnapshot.sessions[2].session.id)
         assertEquals("session1", restoredSnapshot.sessions[2].session.parentId)
 
-        val restoredEngineSession = restoredSnapshot.sessions[0].engineSession
+        val restoredEngineSession = restoredSnapshot.sessions[0].engineSessionState
         assertNotNull(restoredEngineSession)
-        verify(restoredEngineSession)!!.restoreState(engineSessionState.filter { it.key != "k3" })
     }
 
     @Test
@@ -108,7 +107,7 @@ class SessionStorageTest {
         val engine = mock(Engine::class.java)
         `when`(engine.name()).thenReturn("gecko")
 
-        val storage = spy(SessionStorage(RuntimeEnvironment.application, engine))
+        val storage = spy(SessionStorage(testContext, engine))
         storage.save(SessionManager.Snapshot(emptyList(), SessionManager.NO_SELECTION))
 
         verify(storage).clear()
@@ -138,7 +137,7 @@ class SessionStorageTest {
         )
 
         // Persist the snapshot
-        val storage = SessionStorage(RuntimeEnvironment.application, engine)
+        val storage = SessionStorage(testContext, engine)
         val persisted = storage.save(sessionsSnapshot)
         assertTrue(persisted)
 
@@ -154,7 +153,7 @@ class SessionStorageTest {
         val engine = mock(Engine::class.java)
         `when`(engine.name()).thenReturn("gecko")
 
-        val storage = SessionStorage(RuntimeEnvironment.application, engine)
+        val storage = SessionStorage(testContext, engine)
 
         val session = Session("http://mozilla.org")
         val engineSession = mock(EngineSession::class.java)
@@ -260,6 +259,61 @@ class SessionStorageTest {
     }
 
     @Test
+    fun `AutoSave - when all sessions get removed`() {
+        runBlocking {
+            val sessionManager = SessionManager(mock())
+            sessionManager.add(Session("https://www.firefox.com"))
+            sessionManager.add(Session("https://www.mozilla.org"))
+
+            val sessionStorage: SessionStorage = mock()
+
+            val autoSave = AutoSave(
+                sessionManager = sessionManager,
+                sessionStorage = sessionStorage,
+                minimumIntervalMs = 0
+            ).whenSessionsChange()
+
+            assertNull(autoSave.saveJob)
+            verify(sessionStorage, never()).save(any())
+
+            sessionManager.removeAll()
+
+            autoSave.saveJob?.join()
+
+            verify(sessionStorage).save(any())
+        }
+    }
+
+    @Test
+    fun `AutoSave - when no sessions left`() {
+        runBlocking {
+            val session = Session("https://www.firefox.com")
+            val sessionManager = SessionManager(mock())
+            sessionManager.add(session)
+
+            val sessionStorage: SessionStorage = mock()
+
+            val autoSave = AutoSave(
+                    sessionManager = sessionManager,
+                    sessionStorage = sessionStorage,
+                    minimumIntervalMs = 0
+            ).whenSessionsChange()
+
+            assertNull(autoSave.saveJob)
+            verify(sessionStorage, never()).save(any())
+
+            // We didn't specify a default session lambda so this will
+            // leave us without a session
+            sessionManager.remove(session)
+            assertEquals(0, sessionManager.size)
+
+            autoSave.saveJob?.join()
+
+            verify(sessionStorage).save(any())
+        }
+    }
+
+    @Test
     fun `AutoSave - when session gets selected`() {
         runBlocking {
             val sessionManager = SessionManager(mock())
@@ -328,7 +382,7 @@ class SessionStorageTest {
 
         val lifecycle = LifecycleRegistry(mock(LifecycleOwner::class.java))
 
-        val storage = SessionStorage(RuntimeEnvironment.application, engine)
+        val storage = SessionStorage(testContext, engine)
         storage.autoSave(mock())
             .periodicallyInForeground(300, TimeUnit.SECONDS, scheduler, lifecycle)
 
@@ -385,58 +439,20 @@ class SessionStorageTest {
     }
 
     @Test
-    fun `saveSnapshotToDisk - Fails write on IOException`() {
-        val file: AtomicFile = mock()
-        doThrow(IOException::class.java).`when`(file).startWrite()
-
-        val snapshot = SessionManager.Snapshot(
-            sessions = listOf(
-                SessionManager.Snapshot.Item(Session("http://mozilla.org"))
-            ),
-            selectedSessionIndex = 0
-        )
-
-        saveSnapshotToDisk(file, snapshot)
-
-        verify(file).failWrite(any())
-    }
-
-    @Test
-    fun `readSnapshotFromDisk - Returns null on FileNotFoundException`() {
-        val file: AtomicFile = mock()
-        doThrow(FileNotFoundException::class.java).`when`(file).openRead()
-
-        val snapshot = readSnapshotFromDisk(file, engine = mock())
-        assertNull(snapshot)
-    }
-
-    @Test
-    fun `readSnapshotFromDisk - Returns null on corrupt JSON`() {
-        val file = getFileForEngine(RuntimeEnvironment.application, engine = mock())
-
-        val stream = file.startWrite()
-        stream.bufferedWriter().write("{ name: 'Foo")
-        file.finishWrite(stream)
-
-        val snapshot = readSnapshotFromDisk(file, engine = mock())
-        assertNull(snapshot)
-    }
-
-    @Test
     fun deserializeWithInvalidSource() {
         val json = JSONObject()
         json.put("uuid", "testId")
         json.put("url", "testUrl")
         json.put("source", Source.NEW_TAB.name)
         json.put("parentUuid", "")
-        assertEquals(Source.NEW_TAB, deserializeSession(json).source)
+        assertEquals(Source.NEW_TAB, deserializeSession(json, restoreId = true, restoreParentId = true).source)
 
         val jsonInvalid = JSONObject()
         jsonInvalid.put("uuid", "testId")
         jsonInvalid.put("url", "testUrl")
         jsonInvalid.put("source", "invalidSource")
         jsonInvalid.put("parentUuid", "")
-        assertEquals(Source.NONE, deserializeSession(jsonInvalid).source)
+        assertEquals(Source.NONE, deserializeSession(jsonInvalid, restoreId = true, restoreParentId = true).source)
     }
 
     @Suppress("UNCHECKED_CAST")

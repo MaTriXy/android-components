@@ -5,22 +5,29 @@
 package mozilla.components.browser.engine.system
 
 import android.annotation.TargetApi
+import android.app.Activity
 import android.content.Context
+import android.content.res.Resources
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.net.Uri
 import android.net.http.SslError
 import android.os.Build
 import android.os.Handler
 import android.os.Message
-import android.support.annotation.VisibleForTesting
 import android.util.AttributeSet
+import android.view.PixelCopy
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
+import android.webkit.HttpAuthHandler
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
 import android.webkit.PermissionRequest
 import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -33,6 +40,9 @@ import android.webkit.WebView.HitTestResult.SRC_ANCHOR_TYPE
 import android.webkit.WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import androidx.annotation.VisibleForTesting
+import androidx.annotation.VisibleForTesting.PRIVATE
+import androidx.core.net.toUri
 import kotlinx.coroutines.runBlocking
 import mozilla.components.browser.engine.system.matcher.UrlMatcher
 import mozilla.components.browser.engine.system.permission.SystemPermissionRequest
@@ -42,10 +52,12 @@ import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineSession.TrackingProtectionPolicy
 import mozilla.components.concept.engine.EngineView
 import mozilla.components.concept.engine.HitResult
+import mozilla.components.concept.engine.content.blocking.Tracker
+import mozilla.components.concept.engine.prompt.PromptRequest
 import mozilla.components.concept.engine.request.RequestInterceptor.InterceptionResponse
-import mozilla.components.support.ktx.android.content.isOSOnLowMemory
+import mozilla.components.concept.storage.VisitType
+import mozilla.components.support.ktx.android.view.getRectWithViewLocation
 import mozilla.components.support.utils.DownloadUtils
-import java.lang.ref.WeakReference
 
 /**
  * WebView-based implementation of EngineView.
@@ -56,68 +68,64 @@ class SystemEngineView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
 ) : FrameLayout(context, attrs, defStyleAttr), EngineView, View.OnLongClickListener {
-    internal var currentWebView = createWebView(context)
-    internal var currentUrl = ""
-    private var session: SystemEngineSession? = null
-    internal var fullScreenCallback: WebChromeClient.CustomViewCallback? = null
-    init {
-        // Currently this implementation supports only a single WebView. Eventually this
-        // implementation should be able to maintain at least two WebView instances to be able to
-        // animate the views when switching sessions.
-        addView(currentWebView)
-    }
+    @VisibleForTesting(otherwise = PRIVATE)
+    internal var session: SystemEngineSession? = null
 
     /**
      * Render the content of the given session.
      */
     override fun render(session: EngineSession) {
-        val internalSession = session as SystemEngineSession
-        this.session = internalSession
+        removeAllViews()
 
-        // TODO https://github.com/mozilla-mobile/android-components/issues/1195
-        val sessionWebView = internalSession.webView
-        if (sessionWebView != null && sessionWebView != currentWebView) {
-            removeView(currentWebView)
+        this.session = session as SystemEngineSession
+        (session.webView.parent as? SystemEngineView)?.removeView(session.webView)
+        addView(initWebView(session.webView))
+    }
 
-            (sessionWebView.parent as? SystemEngineView)?.removeView(sessionWebView)
-            addView(sessionWebView)
-        }
+    override fun release() {
+        this.session = null
 
-        internalSession.view = WeakReference(this)
-        internalSession.initSettings()
-
-        internalSession.scheduledLoad.data?.let {
-            currentWebView.loadData(it, internalSession.scheduledLoad.mimeType, "UTF-8")
-            internalSession.scheduledLoad = ScheduledLoad()
-        }
-
-        internalSession.scheduledLoad.url?.let {
-            currentWebView.loadUrl(it, additionalHeaders)
-            internalSession.scheduledLoad = ScheduledLoad()
-        }
+        removeAllViews()
     }
 
     override fun onLongClick(view: View?): Boolean {
-        val result = currentWebView.hitTestResult
-        return handleLongClick(result.type, result.extra)
+        val result = session?.webView?.hitTestResult
+        return result?.let { handleLongClick(result.type, result.extra ?: "") } ?: false
     }
 
     override fun onPause() {
-        currentWebView.onPause()
-        currentWebView.pauseTimers()
+        session?.apply {
+            webView.onPause()
+            webView.pauseTimers()
+        }
     }
 
     override fun onResume() {
-        currentWebView.onResume()
-        currentWebView.resumeTimers()
+        session?.apply {
+            webView.onResume()
+            webView.resumeTimers()
+        }
     }
 
     override fun onDestroy() {
-        currentWebView.destroy()
+        session?.apply {
+            // The WebView instance is long-lived, as it's referenced in the
+            // engine session. We can't destroy it here since the session
+            // might be used with a different engine view instance later.
+
+            // Further, when this engine view gets destroyed, we need to
+            // remove/detach the WebView so that engine view's activity context
+            // can properly be destroyed and gc'ed. The WebView instances are
+            // created with the context provided to the engine (application
+            // context) and reference their parent (this engine view). Since
+            // we're keeping the engine session (and their WebView) instances
+            // in the SessionManager until closed we'd otherwise prevent
+            // this engine view and its context from getting gc'ed.
+            (webView.parent as? SystemEngineView)?.removeView(webView)
+        }
     }
 
-    private fun createWebView(context: Context): WebView {
-        val webView = NestedWebView(context)
+    internal fun initWebView(webView: WebView): WebView {
         webView.tag = "mozac_system_engine_webview"
         webView.webViewClient = createWebViewClient()
         webView.webChromeClient = createWebChromeClient()
@@ -131,14 +139,26 @@ class SystemEngineView @JvmOverloads constructor(
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
             // TODO private browsing not supported for SystemEngine
             // https://github.com/mozilla-mobile/android-components/issues/649
+            // Check if the delegate wants this type of url.
+            val delegate = session?.settings?.historyTrackingDelegate ?: return
+
+            if (!delegate.shouldStoreUri(url)) {
+                return
+            }
+
+            val visitType = when (isReload) {
+                true -> VisitType.RELOAD
+                false -> VisitType.LINK
+            }
+
             runBlocking {
-                session?.settings?.historyTrackingDelegate?.onVisited(url, isReload)
+                session?.settings?.historyTrackingDelegate?.onVisited(url, visitType)
             }
         }
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             url?.let {
-                currentUrl = url
+                session?.currentUrl = url
                 session?.internalNotifyObservers {
                     onLoadingStateChange(true)
                     onLocationChange(it)
@@ -157,13 +177,6 @@ class SystemEngineView @JvmOverloads constructor(
                             secure = cert != null,
                             host = cert?.let { Uri.parse(url).host },
                             issuer = cert?.issuedBy?.oName)
-
-                    if (!isLowOnMemory()) {
-                        val thumbnail = session?.captureThumbnail()
-                        if (thumbnail != null) {
-                            onThumbnailChange(thumbnail)
-                        }
-                    }
                 }
             }
         }
@@ -195,9 +208,21 @@ class SystemEngineView @JvmOverloads constructor(
                     return WebResourceResponse(null, null, null)
                 }
 
-                if (!request.isForMainFrame &&
-                        getOrCreateUrlMatcher(view.context, it).matches(resourceUri, Uri.parse(currentUrl))) {
-                    session?.internalNotifyObservers { onTrackerBlocked(resourceUri.toString()) }
+                val (matches, stringCategory) = getOrCreateUrlMatcher(resources, it).matches(
+                    resourceUri,
+                    Uri.parse(session?.currentUrl)
+                )
+
+                if (!request.isForMainFrame && matches) {
+                    session?.internalNotifyObservers {
+                        val matchedCategories = stringCategory.toTrackingProtectionCategories()
+                        onTrackerBlocked(
+                            Tracker(
+                                resourceUri.toString(),
+                                matchedCategories
+                            )
+                        )
+                    }
                     return WebResourceResponse(null, null, null)
                 }
             }
@@ -215,6 +240,14 @@ class SystemEngineView @JvmOverloads constructor(
                                 super.shouldInterceptRequest(view, request)
                             }
                         }
+                    }
+                }
+            }
+
+            if (request.isForMainFrame) {
+                session?.let {
+                    it.notifyObservers {
+                        onLoadRequest(request.url.toString(), request.hasGesture(), true)
                     }
                 }
             }
@@ -264,12 +297,47 @@ class SystemEngineView @JvmOverloads constructor(
                 }
             }
         }
+
+        override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler, host: String, realm: String) {
+            val session = session ?: return handler.cancel()
+
+            val formattedUrl = session.currentUrl.toUri().let { uri ->
+                "${uri.scheme ?: "http"}://${uri.host ?: host}"
+            }
+
+            // Trim obnoxiously long realms.
+            val trimmedRealm = if (realm.length > MAX_REALM_LENGTH) {
+                realm.substring(0, MAX_REALM_LENGTH) + "\u2026"
+            } else {
+                realm
+            }
+
+            val message = if (trimmedRealm.isEmpty()) {
+                context.getString(R.string.mozac_browser_engine_system_auth_no_realm_message, formattedUrl)
+            } else {
+                context.getString(R.string.mozac_browser_engine_system_auth_message, trimmedRealm, formattedUrl)
+            }
+
+            val credentials = view.getAuthCredentials(host, realm)
+            val userName = credentials.first
+            val password = credentials.second
+
+            session.notifyObservers {
+                onPromptRequest(
+                    PromptRequest.Authentication(
+                        "",
+                        message,
+                        userName,
+                        password,
+                        PromptRequest.Authentication.Method.HOST,
+                        PromptRequest.Authentication.Level.NONE,
+                        onConfirm = { user, pass -> handler.proceed(user, pass) },
+                        onDismiss = { handler.cancel() }
+                    )
+                )
+            }
+        }
     }
-
-    @VisibleForTesting
-    internal var testLowMemory = false
-
-    private fun isLowOnMemory() = testLowMemory || (context?.isOSOnLowMemory() == true)
 
     @Suppress("ComplexMethod")
     private fun createWebChromeClient() = object : WebChromeClient() {
@@ -291,7 +359,7 @@ class SystemEngineView @JvmOverloads constructor(
             val titleOrEmpty = title ?: ""
             // TODO private browsing not supported for SystemEngine
             // https://github.com/mozilla-mobile/android-components/issues/649
-            currentUrl.takeIf { it.isNotEmpty() }?.let { url ->
+            session?.currentUrl?.takeIf { it.isNotEmpty() }?.let { url ->
                 session?.settings?.historyTrackingDelegate?.let { delegate ->
                     runBlocking {
                         delegate.onTitleChanged(url, titleOrEmpty)
@@ -322,6 +390,153 @@ class SystemEngineView @JvmOverloads constructor(
             session?.internalNotifyObservers { onContentPermissionRequest(SystemPermissionRequest(request)) }
         }
 
+        override fun onJsAlert(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
+            val session = session ?: return applyDefaultJsDialogBehavior(result)
+
+            // When an alert is triggered from a iframe, url is equals to about:blank, using currentUrl as a fallback.
+            val safeUrl = if (url.isNullOrBlank()) {
+                session.currentUrl
+            } else {
+                if (url.contains("about")) session.currentUrl else url
+            }
+
+            val title = context.getString(R.string.mozac_browser_engine_system_alert_title, safeUrl)
+
+            val onDismiss: () -> Unit = {
+                result.cancel()
+            }
+
+            session.notifyObservers {
+                onPromptRequest(
+                    PromptRequest.Alert(
+                        title,
+                        message ?: "",
+                        false,
+                        onDismiss
+                    ) { _ ->
+                        result.confirm()
+                    })
+            }
+            return true
+        }
+
+        override fun onJsPrompt(
+            view: WebView?,
+            url: String?,
+            message: String?,
+            defaultValue: String?,
+            result: JsPromptResult
+        ): Boolean {
+            val session = session ?: return applyDefaultJsDialogBehavior(result)
+
+            val title = context.getString(R.string.mozac_browser_engine_system_alert_title, url ?: session.currentUrl)
+
+            val onDismiss: () -> Unit = {
+                result.cancel()
+            }
+
+            val onConfirm: (Boolean, String) -> Unit = { _, valueInput ->
+                result.confirm(valueInput)
+            }
+
+            session.notifyObservers {
+                onPromptRequest(
+                    PromptRequest.TextPrompt(
+                        title,
+                        message ?: "",
+                        defaultValue ?: "",
+                        false,
+                        onDismiss,
+                        onConfirm
+                    )
+                )
+            }
+            return true
+        }
+
+        override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult): Boolean {
+            val session = session ?: return applyDefaultJsDialogBehavior(result)
+            val title = context.getString(R.string.mozac_browser_engine_system_alert_title, url ?: session.currentUrl)
+
+            val onDismiss: () -> Unit = {
+                result.cancel()
+            }
+
+            val onConfirmPositiveButton: (Boolean) -> Unit = { _ ->
+                result.confirm()
+            }
+
+            val onConfirmNegativeButton: (Boolean) -> Unit = { _ ->
+                result.cancel()
+            }
+
+            session.notifyObservers {
+                onPromptRequest(
+                    PromptRequest.Confirm(
+                        title,
+                        message ?: "",
+                        false,
+                        "",
+                        "",
+                        "",
+                        onConfirmPositiveButton,
+                        onConfirmNegativeButton,
+                        {},
+                        onDismiss
+                    )
+                )
+            }
+            return true
+        }
+
+        override fun onShowFileChooser(
+            webView: WebView?,
+            filePathCallback: ValueCallback<Array<Uri>>?,
+            fileChooserParams: FileChooserParams?
+        ): Boolean {
+
+            var mimeTypes = fileChooserParams?.acceptTypes ?: arrayOf()
+
+            if (mimeTypes.isNotEmpty() && mimeTypes.first().isNullOrEmpty()) {
+                mimeTypes = arrayOf()
+            }
+
+            val isMultipleFilesSelection = fileChooserParams?.mode == MODE_OPEN_MULTIPLE
+
+            val captureMode = if (fileChooserParams?.isCaptureEnabled == true) {
+                PromptRequest.File.FacingMode.ANY
+            } else {
+                PromptRequest.File.FacingMode.NONE
+            }
+
+            val onSelectMultiple: (Context, Array<Uri>) -> Unit = { _, uris ->
+                filePathCallback?.onReceiveValue(uris)
+            }
+
+            val onSelectSingle: (Context, Uri) -> Unit = { _, uri ->
+                filePathCallback?.onReceiveValue(arrayOf(uri))
+            }
+
+            val onDismiss: () -> Unit = {
+                filePathCallback?.onReceiveValue(null)
+            }
+
+            session?.notifyObservers {
+                onPromptRequest(
+                    PromptRequest.File(
+                        mimeTypes,
+                        isMultipleFilesSelection,
+                        captureMode,
+                        onSelectSingle,
+                        onSelectMultiple,
+                        onDismiss
+                    )
+                )
+            }
+
+            return true
+        }
+
         override fun onCreateWindow(
             view: WebView,
             isDialog: Boolean,
@@ -329,8 +544,9 @@ class SystemEngineView @JvmOverloads constructor(
             resultMsg: Message?
         ): Boolean {
             session?.internalNotifyObservers {
+                val newEngineSession = SystemEngineSession(context, session?.settings)
                 onOpenWindowRequest(SystemWindowRequest(
-                    view, createWebView(context), isDialog, isUserGesture, resultMsg
+                    view, newEngineSession, NestedWebView(context), isDialog, isUserGesture, resultMsg
                 ))
             }
             return true
@@ -382,7 +598,7 @@ class SystemEngineView @JvmOverloads constructor(
                 // make it available via requestFocusNodeHref...
                 val message = Message()
                 message.target = ImageHandler(session)
-                currentWebView.requestFocusNodeHref(message)
+                session?.webView?.requestFocusNodeHref(message)
                 null
             }
             else -> null
@@ -400,7 +616,7 @@ class SystemEngineView @JvmOverloads constructor(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         webView?.apply { this.visibility = View.INVISIBLE }
 
-        fullScreenCallback = callback
+        session?.fullScreenCallback = callback
 
         view.tag = "mozac_system_engine_fullscreen"
         addView(view, layoutParams)
@@ -428,26 +644,114 @@ class SystemEngineView @JvmOverloads constructor(
         }
     }
 
-    override fun canScrollVerticallyDown() = currentWebView.canScrollVertically(1)
+    override fun setVerticalClipping(clippingHeight: Int) {
+        // no-op
+    }
+
+    override fun canScrollVerticallyUp() = session?.webView?.canScrollVertically(-1) ?: false
+
+    override fun canScrollVerticallyDown() = session?.webView?.canScrollVertically(1) ?: false
+
+    override fun captureThumbnail(onFinish: (Bitmap?) -> Unit) {
+        val webView = session?.webView
+        if (webView == null) {
+            onFinish(null)
+            return
+        }
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            createThumbnailUsingDrawingView(webView, onFinish)
+        } else {
+            createThumbnailUsingPixelCopy(webView, onFinish)
+        }
+    }
+
+    private fun createThumbnailUsingDrawingView(view: View, onFinish: (Bitmap?) -> Unit) {
+        val outBitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(outBitmap)
+        view.draw(canvas)
+        onFinish(outBitmap)
+    }
+
+    @TargetApi(Build.VERSION_CODES.O)
+    private fun createThumbnailUsingPixelCopy(view: View, onFinish: (Bitmap?) -> Unit) {
+        val out = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+        val viewRect = view.getRectWithViewLocation()
+        val window = (context as Activity).window
+
+        PixelCopy.request(window, viewRect, out, { copyResult ->
+            val result = if (copyResult == PixelCopy.SUCCESS) out else null
+            onFinish(result)
+        }, handler)
+    }
+
+    private fun applyDefaultJsDialogBehavior(result: JsResult?): Boolean {
+        result?.cancel()
+        return true
+    }
+
+    @Suppress("Deprecation")
+    private fun WebView.getAuthCredentials(host: String, realm: String): Pair<String, String> {
+        val credentials = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            session?.webViewDatabase(context)?.getHttpAuthUsernamePassword(host, realm)
+        } else {
+            this.getHttpAuthUsernamePassword(host, realm)
+        }
+
+        var credentialsPair = "" to ""
+
+        if (!credentials.isNullOrEmpty() && credentials.size == 2) {
+
+            val user = credentials[0] ?: ""
+            val pass = credentials[1] ?: ""
+
+            credentialsPair = user to pass
+        }
+        return credentialsPair
+    }
 
     companion object {
+
+        // Maximum number of successive dialogs before we prompt users to disable dialogs.
+        internal const val MAX_SUCCESSIVE_DIALOG_COUNT: Int = 2
+
+        // Minimum time required between dialogs in seconds before enabling the stop dialog.
+        internal const val MAX_SUCCESSIVE_DIALOG_SECONDS_LIMIT: Int = 3
+
+        // Maximum realm length to be shown in authentication dialog.
+        internal const val MAX_REALM_LENGTH: Int = 50
+
+        // Number of milliseconds in 1 second.
+        internal const val SECOND_MS: Int = 1000
+
         @Volatile
         internal var URL_MATCHER: UrlMatcher? = null
 
         private val urlMatcherCategoryMap = mapOf(
-                UrlMatcher.ADVERTISING to TrackingProtectionPolicy.AD,
-                UrlMatcher.ANALYTICS to TrackingProtectionPolicy.ANALYTICS,
-                UrlMatcher.CONTENT to TrackingProtectionPolicy.CONTENT,
-                UrlMatcher.SOCIAL to TrackingProtectionPolicy.SOCIAL
+                UrlMatcher.ADVERTISING to TrackingProtectionPolicy.TrackingCategory.AD,
+                UrlMatcher.ANALYTICS to TrackingProtectionPolicy.TrackingCategory.ANALYTICS,
+                UrlMatcher.CONTENT to TrackingProtectionPolicy.TrackingCategory.CONTENT,
+                UrlMatcher.SOCIAL to TrackingProtectionPolicy.TrackingCategory.SOCIAL,
+                UrlMatcher.CRYPTOMINING to TrackingProtectionPolicy.TrackingCategory.CRYPTOMINING,
+                UrlMatcher.FINGERPRINTING to TrackingProtectionPolicy.TrackingCategory.FINGERPRINTING
         )
 
+        private fun String?.toTrackingProtectionCategories(): List<TrackingProtectionPolicy.TrackingCategory> {
+            val category = urlMatcherCategoryMap[this]
+            return if (category != null) {
+                listOf(category)
+            } else {
+                emptyList()
+            }
+        }
+
         @Synchronized
-        internal fun getOrCreateUrlMatcher(context: Context, policy: TrackingProtectionPolicy): UrlMatcher {
+        internal fun getOrCreateUrlMatcher(resources: Resources, policy: TrackingProtectionPolicy): UrlMatcher {
             val categories = urlMatcherCategoryMap.filterValues { policy.contains(it) }.keys
 
             URL_MATCHER?.setCategoriesEnabled(categories) ?: run {
                 URL_MATCHER = UrlMatcher.createMatcher(
-                        context,
+                        resources,
                         R.raw.domain_blacklist,
                         intArrayOf(R.raw.domain_overrides),
                         R.raw.domain_whitelist,

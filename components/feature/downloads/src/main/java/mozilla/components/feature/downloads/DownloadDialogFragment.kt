@@ -1,11 +1,13 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package mozilla.components.feature.downloads
 
 import android.os.Bundle
-import android.support.v4.app.DialogFragment
-import mozilla.components.browser.session.Download
+import androidx.fragment.app.DialogFragment
+import mozilla.components.browser.state.state.content.DownloadState
+import mozilla.components.support.utils.DownloadUtils
 
 /**
  * This is a general representation of a dialog meant to be used in collaboration with [DownloadsFeature]
@@ -22,12 +24,15 @@ abstract class DownloadDialogFragment : DialogFragment() {
      */
     var onStartDownload: () -> Unit = {}
 
+    var onCancelDownload: () -> Unit = {}
+
     /**
      * add the metadata of this download object to the arguments of this fragment.
      */
-    fun setDownload(download: Download) {
+    fun setDownload(download: DownloadState) {
         val args = arguments ?: Bundle()
-        args.putString(KEY_FILE_NAME, download.fileName)
+        args.putString(KEY_FILE_NAME, download.fileName
+            ?: DownloadUtils.guessFileName(null, download.url, download.contentType))
         args.putString(KEY_URL, download.url)
         args.putLong(KEY_CONTENT_LENGTH, download.contentLength ?: 0)
         arguments = args

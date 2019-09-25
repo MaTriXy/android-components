@@ -6,30 +6,30 @@ package mozilla.components.feature.downloads
 
 import android.app.Application
 import android.content.DialogInterface.BUTTON_POSITIVE
-import android.support.v4.app.FragmentManager
-import android.support.v7.app.AlertDialog
-import mozilla.components.browser.session.Download
+import androidx.appcompat.app.AlertDialog
+import androidx.fragment.app.FragmentManager
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import mozilla.components.browser.state.state.content.DownloadState
+import mozilla.components.support.test.mock
+import mozilla.components.support.test.robolectric.testContext
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.Mockito.mock
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(AndroidJUnit4::class)
 @Config(application = TestApplication::class)
 class SimpleDownloadDialogFragmentTest {
 
     private lateinit var dialog: SimpleDownloadDialogFragment
-    private lateinit var download: Download
+    private lateinit var download: DownloadState
     private lateinit var mockFragmentManager: FragmentManager
 
     @Before
     fun setup() {
-        mockFragmentManager = mock(FragmentManager::class.java)
-        download = Download(
+        mockFragmentManager = mock()
+        download = DownloadState(
             "http://ipv4.download.thinkbroadband.com/5MB.zip",
             "5MB.zip", "application/zip", 5242880,
             "Mozilla/5.0 (Linux; Android 7.1.1) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Focus/8.0 Chrome/69.0.3497.100 Mobile Safari/537.36"
@@ -46,7 +46,7 @@ class SimpleDownloadDialogFragmentTest {
         }
 
         dialog.onStartDownload = onStartDownload
-        dialog.testingContext = RuntimeEnvironment.application
+        dialog.testingContext = testContext
 
         performClick(BUTTON_POSITIVE)
 

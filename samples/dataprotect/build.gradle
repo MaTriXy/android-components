@@ -2,17 +2,17 @@ apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 apply plugin: 'kotlin-android-extensions'
 android {
-    compileSdkVersion Config.compileSdkVersion
+    compileSdkVersion config.compileSdkVersion
 
     defaultConfig {
         applicationId "org.mozilla.samples.dataprotect"
 
-        minSdkVersion Config.minSdkVersion_dataprotect
-        targetSdkVersion Config.targetSdkVersion
+        minSdkVersion config.minSdkVersion_dataprotect
+        targetSdkVersion config.targetSdkVersion
         versionCode 1
         versionName "1.0"
 
-        testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -31,6 +31,6 @@ dependencies {
     implementation Dependencies.kotlin_stdlib
     implementation Dependencies.kotlin_coroutines
 
-    implementation Dependencies.support_appcompat
-    implementation Dependencies.support_recyclerview
+    implementation Dependencies.androidx_appcompat
+    implementation Dependencies.androidx_recyclerview
 }

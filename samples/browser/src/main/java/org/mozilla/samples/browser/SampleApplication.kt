@@ -5,8 +5,11 @@
 package org.mozilla.samples.browser
 
 import android.app.Application
+import mozilla.components.support.base.facts.Facts
+import mozilla.components.support.base.facts.processor.LogFactProcessor
 import mozilla.components.support.base.log.Log
 import mozilla.components.support.base.log.sink.AndroidLogSink
+import mozilla.components.support.ktx.android.content.isMainProcess
 
 class SampleApplication : Application() {
     val components by lazy { Components(this) }
@@ -15,5 +18,13 @@ class SampleApplication : Application() {
         super.onCreate()
 
         Log.addSink(AndroidLogSink())
+
+        if (!isMainProcess()) {
+            return
+        }
+
+        Facts.registerProcessor(LogFactProcessor())
+
+        components.engine.warmUp()
     }
 }
