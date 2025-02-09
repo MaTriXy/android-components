@@ -5,44 +5,65 @@
 package mozilla.components.browser.engine.system
 
 import android.os.Bundle
+import android.util.JsonReader
+import android.util.JsonToken
+import android.util.JsonWriter
 import mozilla.components.concept.engine.EngineSessionState
 import org.json.JSONObject
 
 class SystemEngineSessionState(
-    internal val bundle: Bundle?
+    internal val bundle: Bundle?,
 ) : EngineSessionState {
-    override fun toJSON(): JSONObject {
-        if (bundle == null) {
-            return JSONObject()
-        }
+    override fun writeTo(writer: JsonWriter) {
+        writer.beginObject()
 
-        return JSONObject().apply {
-            bundle.keySet().forEach { key ->
-                val value = bundle[key]
-
-                if (shouldSerialize(value)) {
-                    put(key, value)
-                }
+        bundle?.keySet()?.forEach { key ->
+            when (val value = bundle[key]) {
+                is Number -> writer.name(key).value(value)
+                is String -> writer.name(key).value(value)
+                is Boolean -> writer.name(key).value(value)
             }
         }
+
+        writer.endObject()
+        writer.flush()
     }
 
     companion object {
         fun fromJSON(json: JSONObject): SystemEngineSessionState {
             return SystemEngineSessionState(json.toBundle())
         }
+
+        /**
+         * Creates a [SystemEngineSessionState] from the given [JsonReader].
+         */
+        fun from(reader: JsonReader): SystemEngineSessionState {
+            return SystemEngineSessionState(reader.toBundle())
+        }
     }
 }
 
-private fun shouldSerialize(value: Any?): Boolean {
-    // For now we only persist primitive types
-    // https://github.com/mozilla-mobile/android-components/issues/279
-    return when (value) {
-        is Number -> true
-        is Boolean -> true
-        is String -> true
-        else -> false
+private fun JsonReader.toBundle(): Bundle {
+    beginObject()
+
+    val bundle = Bundle()
+
+    while (peek() != JsonToken.END_OBJECT) {
+        val name = nextName()
+
+        when (peek()) {
+            JsonToken.NULL -> nextNull()
+            JsonToken.BOOLEAN -> bundle.putBoolean(name, nextBoolean())
+            JsonToken.STRING -> bundle.putString(name, nextString())
+            JsonToken.NUMBER -> bundle.putDouble(name, nextDouble())
+            JsonToken.BEGIN_OBJECT -> bundle.putBundle(name, toBundle())
+            else -> skipValue()
+        }
     }
+
+    endObject()
+
+    return bundle
 }
 
 private fun JSONObject.toBundle(): Bundle {

@@ -4,7 +4,12 @@
 
 "use strict";
 
-/* globals module */
+/* globals module, require */
+
+// This is a hack for the tests.
+if (typeof InterventionHelpers === "undefined") {
+  var InterventionHelpers = require("../lib/intervention_helpers");
+}
 
 /**
  * For detailed information on our policies, and a documention on this format
@@ -77,53 +82,6 @@ const AVAILABLE_INJECTIONS = [
     },
   },
   {
-    id: "bug1472081",
-    platform: "desktop",
-    domain: "election.gov.np",
-    bug: "1472081",
-    contentScripts: {
-      matches: ["http://202.166.205.141/bbvrs/*"],
-      allFrames: true,
-      js: [
-        {
-          file:
-            "injections/js/bug1472081-election.gov.np-window.sidebar-shim.js",
-        },
-      ],
-    },
-  },
-  {
-    id: "bug1482066",
-    platform: "desktop",
-    domain: "portalminasnet.com",
-    bug: "1482066",
-    contentScripts: {
-      matches: ["*://portalminasnet.com/*"],
-      allFrames: true,
-      js: [
-        {
-          file:
-            "injections/js/bug1482066-portalminasnet.com-window.sidebar-shim.js",
-        },
-      ],
-    },
-  },
-  {
-    id: "bug1570856",
-    platform: "android",
-    domain: "medium.com",
-    bug: "1570856",
-    contentScripts: {
-      matches: ["*://medium.com/*"],
-      js: [
-        {
-          file: "injections/js/bug1570856-medium.com-menu-isTier1.js",
-        },
-      ],
-      allFrames: true,
-    },
-  },
-  {
     id: "bug1579159",
     platform: "android",
     domain: "m.tailieu.vn",
@@ -139,193 +97,30 @@ const AVAILABLE_INJECTIONS = [
     },
   },
   {
-    id: "bug1577245",
-    platform: "android",
-    domain: "help.pandora.com",
-    bug: "1577245",
-    contentScripts: {
-      matches: [
-        "https://faq.usps.com/*",
-        "https://help.duo.com/*",
-        "https://help.hulu.com/*",
-        "https://help.pandora.com/*",
-        "https://my211.force.com/*",
-        "https://support.paypay.ne.jp/*",
-        "https://usps.force.com/*",
-      ],
-      js: [
-        {
-          file:
-            "injections/js/bug1577245-salesforce-communities-hide-unsupported.js",
-        },
-      ],
-    },
-  },
-  {
-    id: "bug1526977",
+    id: "bug1583366",
     platform: "desktop",
-    domain: "sreedharscce.in",
-    bug: "1526977",
-    contentScripts: {
-      matches: ["*://*.sreedharscce.in/authenticate"],
-      css: [
-        {
-          file: "injections/css/bug1526977-sreedharscce.in-login-fix.css",
-        },
-      ],
-    },
-  },
-  {
-    id: "bug1518781",
-    platform: "desktop",
-    domain: "twitch.tv",
-    bug: "1518781",
-    contentScripts: {
-      matches: ["*://*.twitch.tv/*"],
-      css: [
-        {
-          file: "injections/css/bug1518781-twitch.tv-webkit-scrollbar.css",
-        },
-      ],
-    },
-  },
-  {
-    id: "bug1551672",
-    platform: "android",
-    domain: "Sites using PDK 5 video",
-    bug: "1551672",
+    domain: "Download prompt for files with no content-type",
+    bug: "1583366",
     data: {
-      urls: ["https://*/*/tpPdk.js", "https://*/*/pdk/js/*/*.js"],
-      types: ["script"],
-    },
-    customFunc: "pdk5fix",
-  },
-  {
-    id: "bug1577870",
-    platform: "desktop",
-    domain: "slideshare.net",
-    bug: "1577870",
-    data: {
-      urls: ["https://*.linkedin.com/tscp-serving/dtag*"],
+      urls: ["https://ads-us.rd.linksynergy.com/as.php*"],
       contentType: {
         name: "content-type",
         value: "text/html; charset=utf-8",
       },
     },
-    customFunc: "dtagFix",
+    customFunc: "noSniffFix",
   },
   {
-    id: "bug1305028",
+    id: "bug1768243",
     platform: "desktop",
-    domain: "gaming.youtube.com",
-    bug: "1305028",
+    domain: "cloud.google.com",
+    bug: "1768243",
     contentScripts: {
-      matches: ["*://gaming.youtube.com/*"],
+      matches: ["*://cloud.google.com/terms/*"],
       css: [
         {
           file:
-            "injections/css/bug1305028-gaming.youtube.com-webkit-scrollbar.css",
-        },
-      ],
-    },
-  },
-  {
-    id: "bug1432935-discord",
-    platform: "desktop",
-    domain: "discordapp.com",
-    bug: "1432935",
-    contentScripts: {
-      matches: ["*://discordapp.com/*"],
-      css: [
-        {
-          file:
-            "injections/css/bug1432935-discordapp.com-webkit-scorllbar-white-line.css",
-        },
-      ],
-    },
-  },
-  {
-    id: "bug1432935-breitbart",
-    platform: "desktop",
-    domain: "breitbart.com",
-    bug: "1432935",
-    contentScripts: {
-      matches: ["*://*.breitbart.com/*"],
-      css: [
-        {
-          file: "injections/css/bug1432935-breitbart.com-webkit-scrollbar.css",
-        },
-      ],
-    },
-  },
-  {
-    id: "bug1561371",
-    platform: "android",
-    domain: "mail.google.com",
-    bug: "1561371",
-    contentScripts: {
-      matches: ["*://mail.google.com/*"],
-      css: [
-        {
-          file:
-            "injections/css/bug1561371-mail.google.com-allow-horizontal-scrolling.css",
-        },
-      ],
-    },
-  },
-  {
-    id: "bug1567610",
-    platform: "all",
-    domain: "dns.google.com",
-    bug: "1567610",
-    contentScripts: {
-      matches: ["*://dns.google.com/*", "*://dns.google/*"],
-      css: [
-        {
-          file: "injections/css/bug1567610-dns.google.com-moz-fit-content.css",
-        },
-      ],
-    },
-  },
-  {
-    id: "bug1568256",
-    platform: "android",
-    domain: "zertifikate.commerzbank.de",
-    bug: "1568256",
-    contentScripts: {
-      matches: ["*://*.zertifikate.commerzbank.de/webforms/mobile/*"],
-      css: [
-        {
-          file: "injections/css/bug1568256-zertifikate.commerzbank.de-flex.css",
-        },
-      ],
-    },
-  },
-  {
-    id: "bug1568908",
-    platform: "desktop",
-    domain: "console.cloud.google.com",
-    bug: "1568908",
-    contentScripts: {
-      matches: ["*://*.console.cloud.google.com/*"],
-      css: [
-        {
-          file:
-            "injections/css/bug1568908-console.cloud.google.com-scrollbar-fix.css",
-        },
-      ],
-    },
-  },
-  {
-    id: "bug1570119",
-    platform: "desktop",
-    domain: "teamcoco.com",
-    bug: "1570119",
-    contentScripts: {
-      matches: ["*://teamcoco.com/*"],
-      css: [
-        {
-          file: "injections/css/bug1570119-teamcoco.com-scrollbar-width.css",
+            "injections/css/bug1768243-cloud.google.com-allow-table-scrolling.css",
         },
       ],
     },
@@ -346,34 +141,6 @@ const AVAILABLE_INJECTIONS = [
     },
   },
   {
-    id: "bug1571036",
-    platform: "all",
-    domain: "mobile.aireuropa.com",
-    bug: "1571036",
-    contentScripts: {
-      matches: ["*://mobile.aireuropa.com/*"],
-      css: [
-        {
-          file: "injections/css/bug1571036-mobile.aireuropa.com-menu-fix.css",
-        },
-      ],
-    },
-  },
-  {
-    id: "bug1574973",
-    platform: "android",
-    domain: "patch.com",
-    bug: "1574973",
-    contentScripts: {
-      matches: ["*://patch.com/*"],
-      css: [
-        {
-          file: "injections/css/bug1574973-patch.com-dropdown-menu-fix.css",
-        },
-      ],
-    },
-  },
-  {
     id: "bug1575000",
     platform: "all",
     domain: "apply.lloydsbank.co.uk",
@@ -389,58 +156,618 @@ const AVAILABLE_INJECTIONS = [
     },
   },
   {
-    id: "bug1575011",
+    id: "bug1605611",
     platform: "android",
-    domain: "holiday-weather.com",
-    bug: "1575011",
+    domain: "maps.google.com",
+    bug: "1605611",
     contentScripts: {
-      matches: ["*://*.holiday-weather.com/*"],
+      matches: InterventionHelpers.matchPatternsForGoogle(
+        "*://www.google.",
+        "/maps*"
+      ),
+      css: [
+        {
+          file: "injections/css/bug1605611-maps.google.com-directions-time.css",
+        },
+      ],
+      js: [
+        {
+          file: "injections/js/bug1605611-maps.google.com-directions-time.js",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1610344",
+    platform: "all",
+    domain: "directv.com.co",
+    bug: "1610344",
+    contentScripts: {
+      matches: ["https://*.directv.com.co/*"],
       css: [
         {
           file:
-            "injections/css/bug1575011-holiday-weather.com-scrolling-fix.css",
+            "injections/css/bug1610344-directv.com.co-hide-unsupported-message.css",
         },
       ],
     },
   },
   {
-    id: "bug1575017",
+    id: "bug1644830",
     platform: "desktop",
-    domain: "dunkindonuts.com",
-    bug: "1575017",
+    domain: "usps.com",
+    bug: "1644830",
     contentScripts: {
-      matches: ["*://*.dunkindonuts.com/en/sign-in*"],
+      matches: ["https://*.usps.com/*"],
       css: [
         {
-          file: "injections/css/bug1575017-dunkindonuts.com-flex-basis.css",
+          file:
+            "injections/css/bug1644830-missingmail.usps.com-checkboxes-not-visible.css",
         },
       ],
     },
   },
   {
-    id: "bug1577270",
+    id: "bug1651917",
     platform: "android",
-    domain: "binance.com",
-    bug: "1577270",
+    domain: "teletrader.com",
+    bug: "1651917",
     contentScripts: {
-      matches: ["*://*.binance.com/*"],
+      matches: ["*://*.teletrader.com/*"],
       css: [
         {
-          file: "injections/css/bug1577270-binance.com-calc-height-fix.css",
+          file:
+            "injections/css/bug1651917-teletrader.com.body-transform-origin.css",
         },
       ],
     },
   },
   {
-    id: "bug1577297",
-    platform: "android",
-    domain: "kitkat.com.au",
-    bug: "1577297",
+    id: "bug1653075",
+    platform: "desktop",
+    domain: "livescience.com",
+    bug: "1653075",
     contentScripts: {
-      matches: ["*://*.kitkat.com.au/*"],
+      matches: ["*://*.livescience.com/*"],
       css: [
         {
-          file: "injections/css/bug1577297-kitkat.com.au-slider-width-fix.css",
+          file: "injections/css/bug1653075-livescience.com-scrollbar-width.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1654877",
+    platform: "android",
+    domain: "preev.com",
+    bug: "1654877",
+    contentScripts: {
+      matches: ["*://preev.com/*"],
+      css: [
+        {
+          file: "injections/css/bug1654877-preev.com-moz-appearance-fix.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1654907",
+    platform: "android",
+    domain: "reactine.ca",
+    bug: "1654907",
+    contentScripts: {
+      matches: ["*://*.reactine.ca/*"],
+      css: [
+        {
+          file: "injections/css/bug1654907-reactine.ca-hide-unsupported.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1631811",
+    platform: "all",
+    domain: "datastudio.google.com",
+    bug: "1631811",
+    contentScripts: {
+      matches: ["https://datastudio.google.com/embed/reporting/*"],
+      js: [
+        {
+          file: "injections/js/bug1631811-datastudio.google.com-indexedDB.js",
+        },
+      ],
+      allFrames: true,
+    },
+  },
+  {
+    id: "bug1694470",
+    platform: "android",
+    domain: "m.myvidster.com",
+    bug: "1694470",
+    contentScripts: {
+      matches: ["https://m.myvidster.com/*"],
+      css: [
+        {
+          file: "injections/css/bug1694470-myvidster.com-content-not-shown.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1731825",
+    platform: "desktop",
+    domain: "Office 365 email handling prompt",
+    bug: "1731825",
+    contentScripts: {
+      matches: [
+        "*://*.live.com/*",
+        "*://*.office.com/*",
+        "*://*.sharepoint.com/*",
+        "*://*.office365.com/*",
+      ],
+      js: [
+        {
+          file:
+            "injections/js/bug1731825-office365-email-handling-prompt-autohide.js",
+        },
+      ],
+      allFrames: true,
+    },
+  },
+  {
+    id: "bug1707795",
+    platform: "desktop",
+    domain: "Office Excel spreadsheets",
+    bug: "1707795",
+    contentScripts: {
+      matches: [
+        "*://*.live.com/*",
+        "*://*.office.com/*",
+        "*://*.sharepoint.com/*",
+      ],
+      css: [
+        {
+          file:
+            "injections/css/bug1707795-office365-sheets-overscroll-disable.css",
+        },
+      ],
+      allFrames: true,
+    },
+  },
+  {
+    id: "bug1712833",
+    platform: "all",
+    domain: "buskocchi.desuca.co.jp",
+    bug: "1712833",
+    contentScripts: {
+      matches: ["*://buskocchi.desuca.co.jp/*"],
+      css: [
+        {
+          file:
+            "injections/css/bug1712833-buskocchi.desuca.co.jp-fix-map-height.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1722955",
+    platform: "android",
+    domain: "frontgate.com",
+    bug: "1722955",
+    contentScripts: {
+      matches: ["*://*.frontgate.com/*"],
+      js: [
+        {
+          file: "lib/ua_helpers.js",
+        },
+        {
+          file: "injections/js/bug1722955-frontgate.com-ua-override.js",
+        },
+      ],
+      allFrames: true,
+    },
+  },
+  {
+    id: "bug1724764",
+    platform: "android",
+    domain: "amextravel.com",
+    bug: "1724764",
+    contentScripts: {
+      matches: ["*://*.amextravel.com/*"],
+      js: [
+        {
+          file: "injections/js/bug1724764-amextravel.com-window-print.js",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1724868",
+    platform: "android",
+    domain: "news.yahoo.co.jp",
+    bug: "1724868",
+    contentScripts: {
+      matches: ["*://news.yahoo.co.jp/articles/*", "*://s.yimg.jp/*"],
+      js: [
+        {
+          file: "injections/js/bug1724868-news.yahoo.co.jp-ua-override.js",
+        },
+      ],
+      allFrames: true,
+    },
+  },
+  {
+    id: "bug1741234",
+    platform: "all",
+    domain: "patient.alphalabs.ca",
+    bug: "1741234",
+    contentScripts: {
+      matches: ["*://patient.alphalabs.ca/*"],
+      css: [
+        {
+          file: "injections/css/bug1741234-patient.alphalabs.ca-height-fix.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1743614",
+    platform: "android",
+    domain: "storytel.com",
+    bug: "1743614",
+    contentScripts: {
+      matches: ["*://*.storytel.com/*"],
+      css: [
+        {
+          file: "injections/css/bug1743614-storytel.com-flex-min-width.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1751022",
+    platform: "android",
+    domain: "chotot.com",
+    bug: "1751022",
+    contentScripts: {
+      matches: ["*://*.chotot.com/*"],
+      css: [
+        {
+          file: "injections/css/bug1751022-chotot.com-image-width-fix.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1754473",
+    platform: "android",
+    domain: "m.intl.taobao.com",
+    bug: "1754473",
+    contentScripts: {
+      matches: ["*://m.intl.taobao.com/*"],
+      css: [
+        {
+          file:
+            "injections/css/bug1754473-m.intl.taobao.com-number-arrow-buttons-overlapping-fix.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1748455",
+    platform: "android",
+    domain: "reddit.com",
+    bug: "1748455",
+    contentScripts: {
+      matches: ["*://*.reddit.com/*"],
+      css: [
+        {
+          file:
+            "injections/css/bug1748455-reddit.com-gallery-image-width-fix.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1739489",
+    platform: "desktop",
+    domain: "Sites using draft.js",
+    bug: "1739489",
+    contentScripts: {
+      matches: [
+        "*://draftjs.org/*", // Bug 1739489
+        "*://www.facebook.com/*", // Bug 1739489
+        "*://twitter.com/*", // Bug 1776229
+        "*://mobile.twitter.com/*", // Bug 1776229
+      ],
+      js: [
+        {
+          file: "injections/js/bug1739489-draftjs-beforeinput.js",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1765947",
+    platform: "android",
+    domain: "veniceincoming.com",
+    bug: "1765947",
+    contentScripts: {
+      matches: ["*://veniceincoming.com/*"],
+      css: [
+        {
+          file: "injections/css/bug1765947-veniceincoming.com-left-fix.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug11769762",
+    platform: "all",
+    domain: "tiktok.com",
+    bug: "1769762",
+    contentScripts: {
+      matches: ["https://www.tiktok.com/*"],
+      js: [
+        {
+          file: "injections/js/bug1769762-tiktok.com-plugins-shim.js",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1770962",
+    platform: "all",
+    domain: "coldwellbankerhomes.com",
+    bug: "1770962",
+    contentScripts: {
+      matches: ["*://*.coldwellbankerhomes.com/*"],
+      css: [
+        {
+          file:
+            "injections/css/bug1770962-coldwellbankerhomes.com-image-height.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1774490",
+    platform: "all",
+    domain: "rainews.it",
+    bug: "1774490",
+    contentScripts: {
+      matches: ["*://www.rainews.it/*"],
+      css: [
+        {
+          file: "injections/css/bug1774490-rainews.it-gallery-fix.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1772949",
+    platform: "all",
+    domain: "YouTube embeds",
+    bug: "1772949",
+    customFunc: "runScriptBeforeRequest",
+    script: "injections/js/bug1772949-youtube-webshare-shim.js",
+    request: ["*://www.youtube.com/*/www-embed-player.js*"],
+    message: "The WebShare API is being disabled on a YouTube frame.",
+  },
+  {
+    id: "bug1778239",
+    platform: "all",
+    domain: "m.pji.co.kr",
+    bug: "1778239",
+    contentScripts: {
+      matches: ["*://m.pji.co.kr/*"],
+      js: [
+        {
+          file: "injections/js/bug1778239-m.pji.co.kr-banner-hide.js",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1774005",
+    platform: "all",
+    domain: "Sites relying on window.InstallTrigger",
+    bug: "1774005",
+    contentScripts: {
+      matches: [
+        "*://*.crunchyroll.com/*", // Bug 1777597
+        "*://*.pixiv.net/*", // Bug 1774006
+        "*://*.webex.com/*", // Bug 1788934
+        "*://business.help.royalmail.com/app/webforms/*", // Bug 1786404
+        "*://www.northcountrypublicradio.org/contact/subscribe.html*", // Bug 1778382,
+        "*://www.schoolnutritionandfitness.com/*", // Bug 1793761
+      ],
+      js: [
+        {
+          file: "injections/js/bug1774005-installtrigger-shim.js",
+        },
+      ],
+      allFrames: true,
+    },
+  },
+  {
+    id: "bug1784302",
+    platform: "android",
+    domain: "open.toutiao.com",
+    bug: "1784302",
+    contentScripts: {
+      matches: ["*://open.toutiao.com/*"],
+      js: [
+        {
+          file: "injections/js/bug1784302-effectiveType-shim.js",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1784309",
+    platform: "all",
+    domain: "bet365.com",
+    bug: "1784309",
+    contentScripts: {
+      matches: [
+        "*://*.bet365.com/*",
+        "*://*.bet365.gr/*",
+        "*://*.bet365.com.au/*",
+        "*://*.bet365.de/*",
+        "*://*.bet365.es/*",
+        "*://*.bet365.ca/*",
+        "*://*.bet365.dk/*",
+        "*://*.bet365.mx/*",
+        "*://*.bet365.bet.ar/*",
+      ],
+      js: [
+        {
+          file: "injections/js/bug1784309-bet365.com-math-pow.js",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1784141",
+    platform: "android",
+    domain: "aveeno.com",
+    bug: "1784141",
+    contentScripts: {
+      matches: [
+        "*://*.aveeno.com/*",
+        "*://*.aveeno.ca/*",
+        "*://*.aveeno.com.au/*",
+        "*://*.aveeno.co.kr/*",
+        "*://*.aveeno.co.uk/*",
+        "*://*.aveeno.ie/*",
+      ],
+      css: [
+        {
+          file: "injections/css/bug1784141-aveeno.com-unsupported.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1784195",
+    platform: "android",
+    domain: "nutmeg.morrisons.com",
+    bug: "1784195",
+    contentScripts: {
+      matches: ["*://nutmeg.morrisons.com/*"],
+      css: [
+        {
+          file: "injections/css/bug1784195-nutmeg.morrisons.com-overflow.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1784351",
+    platform: "desktop",
+    domain: "movistar.com.ar",
+    bug: "1784351",
+    contentScripts: {
+      matches: ["*://*.movistar.com.ar/*"],
+      css: [
+        {
+          file:
+            "injections/css/bug1784351-movistar.com.ar-overflow-overlay-fix.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1784199",
+    platform: "all",
+    domain: "Sites based on Entrata Platform",
+    bug: "1784199",
+    contentScripts: {
+      matches: [
+        "*://*.aptsovation.com/*",
+        "*://*.nhcalaska.com/*",
+        "*://*.securityproperties.com/*",
+        "*://*.theloftsorlando.com/*",
+      ],
+      css: [
+        {
+          file: "injections/css/bug1784199-entrata-platform-unsupported.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1787267",
+    platform: "all",
+    domain: "All international Nintendo domains",
+    bug: "1787267",
+    contentScripts: {
+      matches: [
+        "*://*.mojenintendo.cz/*",
+        "*://*.nintendo-europe.com/*",
+        "*://*.nintendo.at/*",
+        "*://*.nintendo.be/*",
+        "*://*.nintendo.ch/*",
+        "*://*.nintendo.co.il/*",
+        "*://*.nintendo.co.jp/*",
+        "*://*.nintendo.co.kr/*",
+        "*://*.nintendo.co.nz/*",
+        "*://*.nintendo.co.uk/*",
+        "*://*.nintendo.co.za/*",
+        "*://*.nintendo.com.au/*",
+        "*://*.nintendo.com.hk/*",
+        "*://*.nintendo.com/*",
+        "*://*.nintendo.de/*",
+        "*://*.nintendo.dk/*",
+        "*://*.nintendo.es/*",
+        "*://*.nintendo.fi/*",
+        "*://*.nintendo.fr/*",
+        "*://*.nintendo.gr/*",
+        "*://*.nintendo.hu/*",
+        "*://*.nintendo.it/*",
+        "*://*.nintendo.nl/*",
+        "*://*.nintendo.no/*",
+        "*://*.nintendo.pt/*",
+        "*://*.nintendo.ru/*",
+        "*://*.nintendo.se/*",
+        "*://*.nintendo.sk/*",
+        "*://*.nintendo.tw/*",
+        "*://*.nintendoswitch.com.cn/*",
+      ],
+      js: [
+        {
+          file:
+            "injections/js/bug1787267-nintendo-window-OnetrustActiveGroups.js",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1788685",
+    platform: "all",
+    domain: "microsoftedgetips.microsoft.com",
+    bug: "1788685",
+    contentScripts: {
+      matches: ["*://microsoftedgetips.microsoft.com/*"],
+      css: [
+        {
+          file:
+            "injections/css/bug1788685-microsoftedgetips.microsoft.com-gallery-fix.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug1789164",
+    platform: "all",
+    domain: "zdnet.com",
+    bug: "1789164",
+    contentScripts: {
+      matches: ["*://www.zdnet.com/*"],
+      css: [
+        {
+          file: "injections/css/bug1789164-zdnet.com-cropped-section.css",
         },
       ],
     },

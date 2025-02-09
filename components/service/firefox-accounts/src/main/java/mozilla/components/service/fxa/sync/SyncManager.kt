@@ -4,15 +4,47 @@
 
 package mozilla.components.service.fxa.sync
 
+import mozilla.components.concept.storage.KeyProvider
 import mozilla.components.concept.sync.SyncableStore
 import mozilla.components.service.fxa.SyncConfig
 import mozilla.components.service.fxa.SyncEngine
+import mozilla.components.service.fxa.manager.SyncEnginesStorage
 import mozilla.components.support.base.log.logger.Logger
 import mozilla.components.support.base.observer.Observable
 import mozilla.components.support.base.observer.ObserverRegistry
 import java.io.Closeable
 import java.lang.Exception
 import java.util.concurrent.TimeUnit
+
+/**
+ * A collection of objects describing a reason for running a sync.
+ */
+sealed class SyncReason {
+    /**
+     * Application is starting up, and wants to sync data.
+     */
+    object Startup : SyncReason()
+
+    /**
+     * User is requesting a sync (e.g. pressed a "sync now" button).
+     */
+    object User : SyncReason()
+
+    /**
+     * User changed enabled/disabled state of one or more [SyncEngine]s.
+     */
+    object EngineChange : SyncReason()
+
+    /**
+     * Internal use only: first time running a sync.
+     */
+    internal object FirstSync : SyncReason()
+
+    /**
+     * Internal use only: running a periodic sync.
+     */
+    internal object Scheduled : SyncReason()
+}
 
 /**
  * An interface for consumers that wish to observer "sync lifecycle" events.
@@ -25,6 +57,8 @@ interface SyncStatusObserver {
 
     /**
      * Gets called at the end of a sync, after every configured syncable has been synchronized.
+     * A set of enabled [SyncEngine]s could have changed, so observers are expected to query
+     * [SyncEnginesStorage.getStatus].
      */
     fun onIdle()
 
@@ -36,6 +70,19 @@ interface SyncStatusObserver {
 }
 
 /**
+ * A lazy instance of a [SyncableStore] with an optional [KeyProvider] instance, used if this store
+ * has encrypted contents. Lazy wrapping is in place to ensure we don't eagerly instantiate the storage.
+ *
+ * @property lazyStore A [SyncableStore] wrapped in [Lazy].
+ * @property keyProvider An optional [KeyProvider] wrapped in [Lazy]. If present, it'll be used for
+ * crypto operations on the storage.
+ */
+data class LazyStoreWithKey(
+    val lazyStore: Lazy<SyncableStore>,
+    val keyProvider: Lazy<KeyProvider>? = null,
+)
+
+/**
  * A singleton registry of [SyncableStore] objects. [WorkManagerSyncDispatcher] will use this to
  * access configured [SyncableStore] instances.
  *
@@ -43,24 +90,32 @@ interface SyncStatusObserver {
  * available instances of stores within an application.
  */
 object GlobalSyncableStoreProvider {
-    private val stores: MutableMap<String, SyncableStore> = mutableMapOf()
+    private val stores: MutableMap<SyncEngine, LazyStoreWithKey> = mutableMapOf()
 
-    fun configureStore(storePair: Pair<SyncEngine, SyncableStore>) {
-        stores[storePair.first.nativeName] = storePair.second
+    /**
+     * Configure an instance of [SyncableStore] for a [SyncEngine] enum.
+     * @param storePair A pair associating [SyncableStore] with a [SyncEngine].
+     */
+    fun configureStore(storePair: Pair<SyncEngine, Lazy<SyncableStore>>, keyProvider: Lazy<KeyProvider>? = null) {
+        stores[storePair.first] = LazyStoreWithKey(lazyStore = storePair.second, keyProvider = keyProvider)
     }
 
-    internal fun getStore(name: String): SyncableStore? {
-        return stores[name]
+    internal fun getLazyStoreWithKey(syncEngine: SyncEngine): LazyStoreWithKey? {
+        return stores[syncEngine]
     }
 }
 
 /**
  * Internal interface to enable testing SyncManager implementations independently from SyncDispatcher.
  */
-interface SyncDispatcher : Closeable, Observable<SyncStatusObserver> {
+internal interface SyncDispatcher : Closeable, Observable<SyncStatusObserver> {
     fun isSyncActive(): Boolean
-    fun syncNow(startup: Boolean = false, debounce: Boolean = false)
-    fun startPeriodicSync(unit: TimeUnit, period: Long)
+    fun syncNow(
+        reason: SyncReason,
+        debounce: Boolean = false,
+        customEngineSubset: List<SyncEngine> = listOf(),
+    )
+    fun startPeriodicSync(unit: TimeUnit, period: Long, initialDelay: Long)
     fun stopPeriodicSync()
     fun workersStateChanged(isRunning: Boolean)
 }
@@ -69,32 +124,9 @@ interface SyncDispatcher : Closeable, Observable<SyncStatusObserver> {
  * A base sync manager implementation.
  * @param syncConfig A [SyncConfig] object describing how sync should behave.
  */
-@SuppressWarnings("TooManyFunctions")
-abstract class SyncManager(
-    private val syncConfig: SyncConfig
+internal abstract class SyncManager(
+    private val syncConfig: SyncConfig,
 ) {
-    companion object {
-        // Periodically sync in the background, to make our syncs a little more incremental.
-        // This isn't strictly necessary, and could be considered an optimization.
-        //
-        // Assuming that we synchronize during app startup, our trade-offs are:
-        // - not syncing in the background at all might mean longer syncs, more arduous startup syncs
-        // - on a slow mobile network, these delays could be significant
-        // - a delay during startup sync may affect user experience, since our data will be stale
-        // for longer
-        // - however, background syncing eats up some of the device resources
-        // - ... so we only do so a few times per day
-        // - we also rely on the OS and the WorkManager APIs to minimize those costs. It promises to
-        // bundle together tasks from different applications that have similar resource-consumption
-        // profiles. Specifically, we need device radio to be ON to talk to our servers; OS will run
-        // our periodic syncs bundled with another tasks that also need radio to be ON, thus "spreading"
-        // the overall cost.
-        //
-        // If we wanted to be very fancy, this period could be driven by how much new activity an
-        // account is actually expected to generate. For now, it's just a hard-coded constant.
-        val SYNC_PERIOD_UNIT = TimeUnit.MINUTES
-    }
-
     open val logger = Logger("SyncManager")
 
     // A SyncDispatcher instance bound to an account and a set of syncable stores.
@@ -120,16 +152,19 @@ abstract class SyncManager(
     /**
      * Request an immediate synchronization of all configured stores.
      *
-     * @param startup Boolean flag indicating if sync is being requested in a startup situation.
+     * @param reason A [SyncReason] indicating why this sync is being requested.
+     * @param debounce Whether or not this sync should debounced.
+     * @param customEngineSubset A subset of supported engines to sync. Defaults to all supported engines.
      */
-    internal fun now(startup: Boolean = false, debounce: Boolean = false) = synchronized(this) {
+    internal fun now(
+        reason: SyncReason,
+        debounce: Boolean = false,
+        customEngineSubset: List<SyncEngine> = listOf(),
+    ) = synchronized(this) {
         if (syncDispatcher == null) {
             logger.info("Sync is not enabled. Ignoring 'sync now' request.")
         }
-        syncDispatcher?.let {
-            logger.debug("Requesting immediate sync")
-            it.syncNow(startup, debounce)
-        }
+        syncDispatcher?.syncNow(reason, debounce, customEngineSubset)
     }
 
     /**
@@ -146,8 +181,6 @@ abstract class SyncManager(
      */
     internal fun stop() = synchronized(this) {
         logger.debug("Disabling...")
-        syncDispatcher?.unregister(dispatcherStatusObserver)
-        syncDispatcher?.stopPeriodicSync()
         syncDispatcher?.close()
         syncDispatcher = null
     }
@@ -158,7 +191,7 @@ abstract class SyncManager(
 
     private fun newDispatcher(
         currentDispatcher: SyncDispatcher?,
-        supportedEngines: Set<SyncEngine>
+        supportedEngines: Set<SyncEngine>,
     ): SyncDispatcher {
         // Let the existing dispatcher, if present, cleanup.
         currentDispatcher?.close()
@@ -172,16 +205,19 @@ abstract class SyncManager(
 
     private fun initDispatcher(dispatcher: SyncDispatcher): SyncDispatcher {
         dispatcher.register(dispatcherStatusObserver)
-        dispatcher.syncNow()
-        if (syncConfig.syncPeriodInMinutes != null) {
-            dispatcher.startPeriodicSync(SYNC_PERIOD_UNIT, syncConfig.syncPeriodInMinutes)
+        syncConfig.periodicSyncConfig?.let {
+            dispatcher.startPeriodicSync(
+                TimeUnit.MINUTES,
+                period = it.periodMinutes.toLong(),
+                initialDelay = it.initialDelayMinutes.toLong(),
+            )
         }
         dispatcherUpdated(dispatcher)
         return dispatcher
     }
 
     private class PassThroughSyncStatusObserver(
-        private val passThroughRegistry: ObserverRegistry<SyncStatusObserver>
+        private val passThroughRegistry: ObserverRegistry<SyncStatusObserver>,
     ) : SyncStatusObserver {
         override fun onStarted() {
             passThroughRegistry.notifyObservers { onStarted() }

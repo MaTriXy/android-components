@@ -15,6 +15,7 @@ import android.widget.TextView
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.widget.AppCompatImageButton
 import androidx.constraintlayout.widget.ConstraintLayout
+import androidx.core.view.inputmethod.EditorInfoCompat
 import mozilla.components.browser.state.state.content.FindResultState
 import mozilla.components.feature.findinpage.R
 import mozilla.components.support.ktx.android.view.hideKeyboard
@@ -25,14 +26,15 @@ private const val DEFAULT_VALUE = 0
 /**
  * A customizable "Find in page" bar implementing [FindInPageView].
  */
-@Suppress("TooManyFunctions")
 class FindInPageBar @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
-    defStyleAttr: Int = 0
+    defStyleAttr: Int = 0,
 ) : ConstraintLayout(context, attrs, defStyleAttr), FindInPageView {
     private val styling: FindInPageBarStyling = createStyling(context, attrs, defStyleAttr)
-    private val queryEditText: EditText
+
+    @VisibleForTesting
+    internal val queryEditText: EditText
 
     @VisibleForTesting
     internal val resultsCountTextView: TextView
@@ -46,6 +48,22 @@ class FindInPageBar @JvmOverloads constructor(
         context.getString(R.string.mozac_feature_findindpage_accessibility_result)
 
     override var listener: FindInPageView.Listener? = null
+
+    /**
+     * Sets/gets private mode.
+     *
+     * In private mode the IME should not update any personalized data such as typing history and personalized language
+     * model based on what the user typed.
+     */
+    override var private: Boolean
+        get() = (queryEditText.imeOptions and EditorInfoCompat.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
+        set(value) {
+            queryEditText.imeOptions = if (value) {
+                queryEditText.imeOptions or EditorInfoCompat.IME_FLAG_NO_PERSONALIZED_LEARNING
+            } else {
+                queryEditText.imeOptions and (EditorInfoCompat.IME_FLAG_NO_PERSONALIZED_LEARNING.inv())
+            }
+        }
 
     init {
         inflate(getContext(), R.layout.mozac_feature_findinpage_view, this)
@@ -74,8 +92,6 @@ class FindInPageBar @JvmOverloads constructor(
     }
 
     override fun clear() {
-        queryEditText.hideKeyboard()
-
         queryEditText.text = null
         queryEditText.clearFocus()
         resultsCountTextView.text = null
@@ -87,7 +103,7 @@ class FindInPageBar @JvmOverloads constructor(
             val ordinal = if (numberOfMatches > 0) activeMatchOrdinal + 1 else activeMatchOrdinal
             resultsCountTextView.text = String.format(resultFormat, ordinal, numberOfMatches)
             resultsCountTextView.setTextColorIfNotDefaultValue(
-                if (numberOfMatches > 0) styling.resultCountTextColor else styling.resultNoMatchesTextColor
+                if (numberOfMatches > 0) styling.resultCountTextColor else styling.resultNoMatchesTextColor,
             )
             val accessibilityLabel = String.format(accessibilityFormat, ordinal, numberOfMatches)
             resultsCountTextView.contentDescription = accessibilityLabel
@@ -98,7 +114,7 @@ class FindInPageBar @JvmOverloads constructor(
     private fun createStyling(
         context: Context,
         attrs: AttributeSet?,
-        defStyleAttr: Int
+        defStyleAttr: Int,
     ): FindInPageBarStyling {
         val attr = context.obtainStyledAttributes(attrs, R.styleable.FindInPageBar, defStyleAttr, 0)
 
@@ -106,29 +122,29 @@ class FindInPageBar @JvmOverloads constructor(
             return FindInPageBarStyling(
                 getColor(
                     R.styleable.FindInPageBar_findInPageQueryTextColor,
-                    DEFAULT_VALUE
+                    DEFAULT_VALUE,
                 ),
                 getColor(
                     R.styleable.FindInPageBar_findInPageQueryHintTextColor,
-                    DEFAULT_VALUE
+                    DEFAULT_VALUE,
                 ),
                 getDimensionPixelSize(
                     R.styleable.FindInPageBar_findInPageQueryTextSize,
-                    DEFAULT_VALUE
+                    DEFAULT_VALUE,
                 ),
                 getColor(
                     R.styleable.FindInPageBar_findInPageResultCountTextColor,
-                    DEFAULT_VALUE
+                    DEFAULT_VALUE,
                 ),
                 getColor(
                     R.styleable.FindInPageBar_findInPageNoMatchesTextColor,
-                    DEFAULT_VALUE
+                    DEFAULT_VALUE,
                 ),
                 getDimensionPixelSize(
                     R.styleable.FindInPageBar_findInPageResultCountTextSize,
-                    DEFAULT_VALUE
+                    DEFAULT_VALUE,
                 ),
-                getColorStateList(R.styleable.FindInPageBar_findInPageButtonsTint)
+                getColorStateList(R.styleable.FindInPageBar_findInPageButtonsTint),
             ).also { recycle() }
         }
     }
@@ -136,13 +152,21 @@ class FindInPageBar @JvmOverloads constructor(
     private fun bindNextButton() {
         val nextButton = findViewById<AppCompatImageButton>(R.id.find_in_page_next_btn)
         nextButton.setIconTintIfNotDefaultValue(styling.buttonsTint)
-        nextButton.setOnClickListener { listener?.onNextResult() }
+        nextButton.setOnClickListener {
+            if (queryEditText.text.isNotEmpty()) {
+                listener?.onNextResult()
+            }
+        }
     }
 
     private fun bindPreviousButton() {
         val previousButton = findViewById<AppCompatImageButton>(R.id.find_in_page_prev_btn)
         previousButton.setIconTintIfNotDefaultValue(styling.buttonsTint)
-        previousButton.setOnClickListener { listener?.onPreviousResult() }
+        previousButton.setOnClickListener {
+            if (queryEditText.text.isNotEmpty()) {
+                listener?.onPreviousResult()
+            }
+        }
     }
 
     private fun bindCloseButton() {
@@ -159,32 +183,46 @@ class FindInPageBar @JvmOverloads constructor(
         resultsCountTextView.setTextColorIfNotDefaultValue(styling.resultCountTextColor)
     }
 
-    private fun bindQueryEditText() {
+    @VisibleForTesting
+    internal fun bindQueryEditText() {
         with(queryEditText) {
             setTextSizeIfNotDefaultValue(styling.queryTextSize)
             setTextColorIfNotDefaultValue(styling.queryTextColor)
             setHintTextColorIfNotDefaultValue(styling.queryHintTextColor)
 
-            addTextChangedListener(object : TextWatcher {
-                override fun afterTextChanged(s: Editable?) = Unit
-                override fun beforeTextChanged(
-                    s: CharSequence?,
-                    start: Int,
-                    count: Int,
-                    after: Int
-                ) = Unit
+            addTextChangedListener(
+                object : TextWatcher {
+                    override fun afterTextChanged(s: Editable?) = Unit
+                    override fun beforeTextChanged(
+                        s: CharSequence?,
+                        start: Int,
+                        count: Int,
+                        after: Int,
+                    ) = Unit
 
-                override fun onTextChanged(
-                    newCharacter: CharSequence?,
-                    start: Int,
-                    before: Int,
-                    count: Int
-                ) {
-                    val newQuery = newCharacter?.toString() ?: return
-                    onQueryChange(newQuery)
+                    override fun onTextChanged(
+                        newCharacter: CharSequence?,
+                        start: Int,
+                        before: Int,
+                        count: Int,
+                    ) {
+                        val newQuery = newCharacter?.toString() ?: return
+                        onQueryChange(newQuery)
+                    }
+                },
+            )
+
+            onFocusChangeListener = OnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus) {
+                    this@FindInPageBar.hideKeyboard()
                 }
-            })
+            }
         }
+    }
+
+    @VisibleForTesting
+    internal fun hideKeyboard() {
+        queryEditText.hideKeyboard()
     }
 }
 
@@ -195,7 +233,7 @@ internal data class FindInPageBarStyling(
     val resultCountTextColor: Int,
     val resultNoMatchesTextColor: Int,
     val resultCountTextSize: Int,
-    val buttonsTint: ColorStateList?
+    val buttonsTint: ColorStateList?,
 )
 
 private fun TextView.setTextSizeIfNotDefaultValue(newValue: Int) {

@@ -49,7 +49,7 @@ object Log {
         priority: Priority = Priority.DEBUG,
         tag: String? = null,
         throwable: Throwable? = null,
-        message: String? = null
+        message: String? = null,
     ) {
         if (priority.value >= logLevel.value) {
             synchronized(sinks) {
@@ -78,7 +78,7 @@ object Log {
         priority: Priority,
         tag: String?,
         throwable: Throwable?,
-        message: String?
+        message: String?,
     ) {
         val printMessage = StringBuilder()
         printMessage.append(priority.name[0])
@@ -100,10 +100,13 @@ object Log {
     enum class Priority(val value: Int) {
         // For simplicity the values mirror the Android log constants values:
         // https://android.googlesource.com/platform/frameworks/base/+/refs/heads/master/core/java/android/util/Log.java
+        //
+        // We intentionally omit ASSERT and VERBOSE. If you change this,
+        // be aware of the impact on consumers.
 
         DEBUG(android.util.Log.DEBUG),
         INFO(android.util.Log.INFO),
         WARN(android.util.Log.WARN),
-        ERROR(android.util.Log.ERROR)
+        ERROR(android.util.Log.ERROR),
     }
 }

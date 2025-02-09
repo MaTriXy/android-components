@@ -4,12 +4,19 @@
 
 package mozilla.components.browser.menu.item
 
+import android.content.Context
 import android.view.View
 import android.widget.TextView
 import androidx.annotation.ColorRes
+import androidx.core.content.ContextCompat.getColor
 import mozilla.components.browser.menu.BrowserMenu
 import mozilla.components.browser.menu.BrowserMenuItem
 import mozilla.components.browser.menu.R
+import mozilla.components.concept.menu.candidate.ContainerStyle
+import mozilla.components.concept.menu.candidate.DecorativeTextMenuCandidate
+import mozilla.components.concept.menu.candidate.MenuCandidate
+import mozilla.components.concept.menu.candidate.TextMenuCandidate
+import mozilla.components.concept.menu.candidate.TextStyle
 
 /**
  * A simple browser menu item displaying text.
@@ -17,6 +24,7 @@ import mozilla.components.browser.menu.R
  * @param label The visible label of this menu item.
  * @param textSize: The size of the label.
  * @param textColorResource: The color resource to apply to the text.
+ * @param isCollapsingMenuLimit Whether this menu item can serve as the limit of a collapsing menu.
  * @param listener Callback to be invoked when this menu item is clicked.
  */
 class SimpleBrowserMenuItem(
@@ -24,7 +32,8 @@ class SimpleBrowserMenuItem(
     private val textSize: Float = NO_ID.toFloat(),
     @ColorRes
     private val textColorResource: Int = NO_ID,
-    private val listener: (() -> Unit)? = null
+    override val isCollapsingMenuLimit: Boolean = false,
+    private val listener: (() -> Unit)? = null,
 ) : BrowserMenuItem {
     override var visible: () -> Boolean = { true }
 
@@ -48,6 +57,28 @@ class SimpleBrowserMenuItem(
         } else {
             // Remove the ripple effect
             textView.background = null
+        }
+    }
+
+    override fun asCandidate(context: Context): MenuCandidate {
+        val textStyle = TextStyle(
+            size = if (textSize == NO_ID.toFloat()) null else textSize,
+            color = if (textColorResource == NO_ID) null else getColor(context, textColorResource),
+        )
+        val containerStyle = ContainerStyle(isVisible = visible())
+        return if (listener != null) {
+            TextMenuCandidate(
+                label,
+                textStyle = textStyle,
+                containerStyle = containerStyle,
+                onClick = listener,
+            )
+        } else {
+            DecorativeTextMenuCandidate(
+                label,
+                textStyle = textStyle,
+                containerStyle = containerStyle,
+            )
         }
     }
 }

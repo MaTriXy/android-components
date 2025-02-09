@@ -10,7 +10,6 @@ import android.os.Bundle
 import androidx.annotation.ColorInt
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.browser.customtabs.CustomTabsSessionToken
-import java.util.UUID
 
 /**
  * Holds configuration data for a Custom Tab.
@@ -20,31 +19,48 @@ import java.util.UUID
  * @property closeButtonIcon Custom icon of the back button on the toolbar.
  * @property enableUrlbarHiding Enables the toolbar to hide as the user scrolls down on the page.
  * @property actionButtonConfig Custom action button on the toolbar.
+ * @property showCloseButton Specifies whether the close button will be shown on the toolbar.
  * @property showShareMenuItem Specifies whether a default share button will be shown in the menu.
  * @property menuItems Custom overflow menu items.
  * @property exitAnimations Bundle containing custom exit animations for the tab.
  * @property navigationBarColor Background color for the navigation bar.
  * @property titleVisible Whether the title should be shown in the custom tab.
  * @property sessionToken The token associated with the custom tab.
+ * @property externalAppType How this custom tab is being displayed.
  */
 data class CustomTabConfig(
-    val id: String = UUID.randomUUID().toString(),
     @ColorInt val toolbarColor: Int? = null,
     val closeButtonIcon: Bitmap? = null,
     val enableUrlbarHiding: Boolean = false,
     val actionButtonConfig: CustomTabActionButtonConfig? = null,
+    val showCloseButton: Boolean = true,
     val showShareMenuItem: Boolean = false,
     val menuItems: List<CustomTabMenuItem> = emptyList(),
     val exitAnimations: Bundle? = null,
     @ColorInt val navigationBarColor: Int? = null,
     val titleVisible: Boolean = false,
-    val sessionToken: CustomTabsSessionToken? = null
-) {
+    val sessionToken: CustomTabsSessionToken? = null,
+    val externalAppType: ExternalAppType = ExternalAppType.CUSTOM_TAB,
+)
 
-    companion object {
-        const val EXTRA_NAVIGATION_BAR_COLOR = "androidx.browser.customtabs.extra.NAVIGATION_BAR_COLOR"
-        const val EXTRA_ADDITIONAL_TRUSTED_ORIGINS = "android.support.customtabs.extra.ADDITIONAL_TRUSTED_ORIGINS"
-    }
+/**
+ * Represents different contexts that a custom tab session can be displayed in.
+ */
+enum class ExternalAppType {
+    /**
+     * Custom tab is displayed as a normal custom tab with toolbar.
+     */
+    CUSTOM_TAB,
+
+    /**
+     * Custom tab toolbar is hidden inside a Progressive Web App created by the browser.
+     */
+    PROGRESSIVE_WEB_APP,
+
+    /**
+     * Custom tab is displayed fullscreen inside a Trusted Web Activity from an external app.
+     */
+    TRUSTED_WEB_ACTIVITY,
 }
 
 data class CustomTabActionButtonConfig(
@@ -52,10 +68,10 @@ data class CustomTabActionButtonConfig(
     val icon: Bitmap,
     val pendingIntent: PendingIntent,
     val id: Int = CustomTabsIntent.TOOLBAR_ACTION_BUTTON_ID,
-    val tint: Boolean = false
+    val tint: Boolean = false,
 )
 
 data class CustomTabMenuItem(
     val name: String,
-    val pendingIntent: PendingIntent
+    val pendingIntent: PendingIntent,
 )

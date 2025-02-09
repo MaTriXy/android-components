@@ -9,47 +9,153 @@ import android.net.Uri
 import mozilla.components.concept.engine.prompt.PromptRequest.Authentication.Level
 import mozilla.components.concept.engine.prompt.PromptRequest.Authentication.Method
 import mozilla.components.concept.engine.prompt.PromptRequest.TimeSelection.Type
+import mozilla.components.concept.storage.Address
+import mozilla.components.concept.storage.CreditCardEntry
+import mozilla.components.concept.storage.Login
+import mozilla.components.concept.storage.LoginEntry
+import java.util.UUID
 
 /**
  * Value type that represents a request for showing a native dialog for prompt web content.
  *
+ * @param shouldDismissOnLoad Whether or not the dialog should automatically be dismissed when a new page is loaded.
+ * Defaults to `true`.
+ * @param uid [PromptRequest] unique identifier. Defaults to a random UUID.
+ * (This two parameters, though present in all subclasses are not evaluated in subclasses equals() calls)
  */
-sealed class PromptRequest {
+sealed class PromptRequest(
+    val shouldDismissOnLoad: Boolean = true,
+    val uid: String = UUID.randomUUID().toString(),
+) {
     /**
      * Value type that represents a request for a single choice prompt.
      * @property choices All the possible options.
      * @property onConfirm A callback indicating which option was selected.
+     * @property onDismiss A callback executed when dismissed.
      */
-    data class SingleChoice(val choices: Array<Choice>, val onConfirm: (Choice) -> Unit) : PromptRequest()
+    data class SingleChoice(
+        val choices: Array<Choice>,
+        val onConfirm: (Choice) -> Unit,
+        override val onDismiss: () -> Unit,
+    ) : PromptRequest(), Dismissible
 
     /**
      * Value type that represents a request for a multiple choice prompt.
      * @property choices All the possible options.
      * @property onConfirm A callback indicating witch options has been selected.
+     * @property onDismiss A callback executed when dismissed.
      */
-    data class MultipleChoice(val choices: Array<Choice>, val onConfirm: (Array<Choice>) -> Unit) : PromptRequest()
+    data class MultipleChoice(
+        val choices: Array<Choice>,
+        val onConfirm: (Array<Choice>) -> Unit,
+        override val onDismiss: () -> Unit,
+    ) : PromptRequest(), Dismissible
 
     /**
      * Value type that represents a request for a menu choice prompt.
      * @property choices All the possible options.
      * @property onConfirm A callback indicating which option was selected.
+     * @property onDismiss A callback executed when dismissed.
      */
-    data class MenuChoice(val choices: Array<Choice>, val onConfirm: (Choice) -> Unit) : PromptRequest()
+    data class MenuChoice(
+        val choices: Array<Choice>,
+        val onConfirm: (Choice) -> Unit,
+        override val onDismiss: () -> Unit,
+    ) : PromptRequest(), Dismissible
 
     /**
      * Value type that represents a request for an alert prompt.
      * @property title of the dialog.
      * @property message the body of the dialog.
      * @property hasShownManyDialogs tells if this page has shown multiple prompts within a short period of time.
-     * @property onDismiss callback to let the page know the user dismissed the dialog.
      * @property onConfirm tells the web page if it should continue showing alerts or not.
+     * @property onDismiss callback to let the page know the user dismissed the dialog.
      */
     data class Alert(
         val title: String,
         val message: String,
         val hasShownManyDialogs: Boolean = false,
+        val onConfirm: (Boolean) -> Unit,
         override val onDismiss: () -> Unit,
-        val onConfirm: (Boolean) -> Unit
+    ) : PromptRequest(), Dismissible
+
+    /**
+     * BeforeUnloadPrompt represents the onbeforeunload prompt.
+     * This prompt is shown when a user is leaving a website and there is formation pending to be saved.
+     * For more information see https://developer.mozilla.org/en-US/docs/Web/API/WindowEventHandlers/onbeforeunload.
+     * @property title of the dialog.
+     * @property onLeave callback to notify that the user wants leave the site.
+     * @property onStay callback to notify that the user wants stay in the site.
+     */
+    data class BeforeUnload(
+        val title: String,
+        val onLeave: () -> Unit,
+        val onStay: () -> Unit,
+    ) : PromptRequest()
+
+    /**
+     * Value type that represents a request for a save credit card prompt.
+     * @property creditCard the [CreditCardEntry] to save or update.
+     * @property onConfirm callback that is called when the user confirms the save credit card request.
+     * @property onDismiss callback to let the page know the user dismissed the dialog.
+     */
+    data class SaveCreditCard(
+        val creditCard: CreditCardEntry,
+        val onConfirm: (CreditCardEntry) -> Unit,
+        override val onDismiss: () -> Unit,
+    ) : PromptRequest(shouldDismissOnLoad = false), Dismissible
+
+    /**
+     * Value type that represents a request for a select credit card prompt.
+     * @property creditCards a list of [CreditCardEntry]s to select from.
+     * @property onConfirm callback that is called when the user confirms the credit card selection.
+     * @property onDismiss callback to let the page know the user dismissed the dialog.
+     */
+    data class SelectCreditCard(
+        val creditCards: List<CreditCardEntry>,
+        val onConfirm: (CreditCardEntry) -> Unit,
+        override val onDismiss: () -> Unit,
+    ) : PromptRequest(), Dismissible
+
+    /**
+     * Value type that represents a request for a save login prompt.
+     * @property hint a value that helps to determine the appropriate prompting behavior.
+     * @property logins a list of logins that are associated with the current domain.
+     * @property onConfirm callback that is called when the user wants to save the login.
+     * @property onDismiss callback to let the page know the user dismissed the dialog.
+     */
+    data class SaveLoginPrompt(
+        val hint: Int,
+        val logins: List<LoginEntry>,
+        val onConfirm: (LoginEntry) -> Unit,
+        override val onDismiss: () -> Unit,
+    ) : PromptRequest(shouldDismissOnLoad = false), Dismissible
+
+    /**
+     * Value type that represents a request for a select login prompt.
+     * @property logins a list of logins that are associated with the current domain.
+     * @property onConfirm callback that is called when the user wants to save the login.
+     * @property onDismiss callback to let the page know the user dismissed the dialog.
+     */
+    data class SelectLoginPrompt(
+        val logins: List<Login>,
+        val onConfirm: (Login) -> Unit,
+        override val onDismiss: () -> Unit,
+    ) : PromptRequest(), Dismissible
+
+    /**
+     * Value type that represents a request for a select address prompt.
+     *
+     * This prompt is triggered by the user focusing on an address field.
+     *
+     * @property addresses List of addresses for the user to choose from.
+     * @property onConfirm Callback used to confirm the selected address.
+     * @property onDismiss Callback used to dismiss the address prompt.
+     */
+    data class SelectAddress(
+        val addresses: List<Address>,
+        val onConfirm: (Address) -> Unit,
+        override val onDismiss: () -> Unit,
     ) : PromptRequest(), Dismissible
 
     /**
@@ -58,16 +164,16 @@ sealed class PromptRequest {
      * @property inputLabel the label of the field the user should fill.
      * @property inputValue the default value of the field.
      * @property hasShownManyDialogs tells if this page has shown multiple prompts within a short period of time.
-     * @property onDismiss callback to let the page know the user dismissed the dialog.
      * @property onConfirm tells the web page if it should continue showing alerts or not.
+     * @property onDismiss callback to let the page know the user dismissed the dialog.
      */
     data class TextPrompt(
         val title: String,
         val inputLabel: String,
         val inputValue: String,
         val hasShownManyDialogs: Boolean = false,
+        val onConfirm: (Boolean, String) -> Unit,
         override val onDismiss: () -> Unit,
-        val onConfirm: (Boolean, String) -> Unit
     ) : PromptRequest(), Dismissible
 
     /**
@@ -79,16 +185,20 @@ sealed class PromptRequest {
      * @property type indicate which [Type] of selection de user wants.
      * @property onConfirm callback that is called when the date is selected.
      * @property onClear callback that is called when the user requests the picker to be clear up.
+     * @property onDismiss A callback executed when dismissed.
      */
+    @Suppress("LongParameterList")
     class TimeSelection(
         val title: String,
         val initialDate: java.util.Date,
         val minimumDate: java.util.Date?,
         val maximumDate: java.util.Date?,
+        val stepValue: String? = null,
         val type: Type = Type.DATE,
         val onConfirm: (java.util.Date) -> Unit,
-        val onClear: () -> Unit
-    ) : PromptRequest() {
+        val onClear: () -> Unit,
+        override val onDismiss: () -> Unit,
+    ) : PromptRequest(), Dismissible {
         enum class Type {
             DATE, DATE_AND_TIME, TIME, MONTH
         }
@@ -110,8 +220,8 @@ sealed class PromptRequest {
         val captureMode: FacingMode = FacingMode.NONE,
         val onSingleFileSelected: (Context, Uri) -> Unit,
         val onMultipleFilesSelected: (Context, Array<Uri>) -> Unit,
-        val onDismiss: () -> Unit
-    ) : PromptRequest() {
+        override val onDismiss: () -> Unit,
+    ) : PromptRequest(), Dismissible {
 
         /**
          * @deprecated Use the new primary constructor.
@@ -121,14 +231,14 @@ sealed class PromptRequest {
             isMultipleFilesSelection: Boolean,
             onSingleFileSelected: (Context, Uri) -> Unit,
             onMultipleFilesSelected: (Context, Array<Uri>) -> Unit,
-            onDismiss: () -> Unit
+            onDismiss: () -> Unit,
         ) : this(
             mimeTypes,
             isMultipleFilesSelection,
             FacingMode.NONE,
             onSingleFileSelected,
             onMultipleFilesSelected,
-            onDismiss
+            onDismiss,
         )
 
         enum class FacingMode {
@@ -140,6 +250,7 @@ sealed class PromptRequest {
      * Value type that represents a request for an authentication prompt.
      * For more related info take a look at
      * <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication>MDN docs</a>
+     * @property uri The URI for the auth request or null if unknown.
      * @property title of the dialog.
      * @property message the body of the dialog.
      * @property userName default value provide for this session.
@@ -154,6 +265,7 @@ sealed class PromptRequest {
      * @property onDismiss callback to indicate the user dismissed this request.
      */
     data class Authentication(
+        val uri: String?,
         val title: String,
         val message: String,
         val userName: String,
@@ -164,7 +276,7 @@ sealed class PromptRequest {
         val previousFailed: Boolean = false,
         val isCrossOrigin: Boolean = false,
         val onConfirm: (String, String) -> Unit,
-        override val onDismiss: () -> Unit
+        override val onDismiss: () -> Unit,
     ) : PromptRequest(), Dismissible {
 
         enum class Level {
@@ -185,7 +297,7 @@ sealed class PromptRequest {
     data class Color(
         val defaultColor: String,
         val onConfirm: (String) -> Unit,
-        override val onDismiss: () -> Unit
+        override val onDismiss: () -> Unit,
     ) : PromptRequest(), Dismissible
 
     /**
@@ -200,8 +312,9 @@ sealed class PromptRequest {
     data class Popup(
         val targetUri: String,
         val onAllow: () -> Unit,
-        val onDeny: () -> Unit
-    ) : PromptRequest()
+        val onDeny: () -> Unit,
+        override val onDismiss: () -> Unit = { onDeny() },
+    ) : PromptRequest(), Dismissible
 
     /**
      * Value type that represents a request for showing a
@@ -230,7 +343,36 @@ sealed class PromptRequest {
         val onConfirmPositiveButton: (Boolean) -> Unit,
         val onConfirmNegativeButton: (Boolean) -> Unit,
         val onConfirmNeutralButton: (Boolean) -> Unit,
-        override val onDismiss: () -> Unit
+        override val onDismiss: () -> Unit,
+    ) : PromptRequest(), Dismissible
+
+    /**
+     * Value type that represents a request to share data.
+     * https://w3c.github.io/web-share/
+     * @property data Share data containing title, text, and url of the request.
+     * @property onSuccess Callback to notify that the user hared with another app successfully.
+     * @property onFailure Callback to notify that the user attempted to share with another app, but it failed.
+     * @property onDismiss Callback to notify that the user aborted the share.
+     */
+    data class Share(
+        val data: ShareData,
+        val onSuccess: () -> Unit,
+        val onFailure: () -> Unit,
+        override val onDismiss: () -> Unit,
+    ) : PromptRequest(), Dismissible
+
+    /**
+     * Value type that represents a request for a repost prompt.
+     *
+     * This prompt is shown whenever refreshing or navigating to a page needs resubmitting
+     * POST data that has been submitted already.
+     *
+     * @property onConfirm callback to notify that the user wants to refresh the webpage.
+     * @property onDismiss callback to notify that the user wants stay in the current webpage and not refresh it.
+     */
+    data class Repost(
+        val onConfirm: () -> Unit,
+        override val onDismiss: () -> Unit,
     ) : PromptRequest(), Dismissible
 
     interface Dismissible {

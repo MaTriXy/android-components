@@ -5,34 +5,38 @@
 package mozilla.components.service.fxa
 
 import android.content.Context
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import mozilla.components.concept.base.crash.CrashReporting
 import mozilla.components.concept.sync.AccessTokenInfo
+import mozilla.components.concept.sync.AccountEventsObserver
 import mozilla.components.concept.sync.AccountObserver
-import mozilla.components.concept.sync.AuthException
-import mozilla.components.concept.sync.AuthExceptionType
 import mozilla.components.concept.sync.AuthFlowUrl
 import mozilla.components.concept.sync.AuthType
 import mozilla.components.concept.sync.DeviceCapability
+import mozilla.components.concept.sync.DeviceConfig
 import mozilla.components.concept.sync.DeviceConstellation
 import mozilla.components.concept.sync.DeviceType
+import mozilla.components.concept.sync.InFlightMigrationState
+import mozilla.components.concept.sync.MigratingAccountInfo
 import mozilla.components.concept.sync.OAuthAccount
 import mozilla.components.concept.sync.OAuthScopedKey
 import mozilla.components.concept.sync.Profile
+import mozilla.components.concept.sync.ServiceResult
 import mozilla.components.concept.sync.StatePersistenceCallback
-import mozilla.components.service.fxa.manager.AccountState
-import mozilla.components.service.fxa.manager.Event
 import mozilla.components.service.fxa.manager.FxaAccountManager
-import mozilla.components.service.fxa.manager.authErrorRegistry
-import mozilla.components.service.fxa.manager.SCOPE_SYNC
+import mozilla.components.service.fxa.manager.GlobalAccountManager
+import mozilla.components.service.fxa.manager.MigrationResult
+import mozilla.components.service.fxa.manager.SyncEnginesStorage
 import mozilla.components.service.fxa.sharing.ShareableAccount
-import mozilla.components.service.fxa.sharing.ShareableAuthInfo
-import mozilla.components.service.fxa.sync.SyncManager
 import mozilla.components.service.fxa.sync.SyncDispatcher
+import mozilla.components.service.fxa.sync.SyncManager
+import mozilla.components.service.fxa.sync.SyncReason
 import mozilla.components.service.fxa.sync.SyncStatusObserver
 import mozilla.components.support.base.observer.Observable
 import mozilla.components.support.base.observer.ObserverRegistry
@@ -41,6 +45,7 @@ import mozilla.components.support.test.argumentCaptor
 import mozilla.components.support.test.eq
 import mozilla.components.support.test.mock
 import mozilla.components.support.test.robolectric.testContext
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -52,150 +57,92 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.ArgumentMatchers.anyBoolean
 import org.mockito.ArgumentMatchers.anyString
-import org.mockito.ArgumentMatchers.anyLong
-import org.mockito.Mockito.`when`
+import org.mockito.Mockito.doAnswer
 import org.mockito.Mockito.never
 import org.mockito.Mockito.reset
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
-import java.lang.Exception
-import java.lang.IllegalArgumentException
+import org.mockito.Mockito.verifyNoInteractions
+import org.mockito.Mockito.verifyNoMoreInteractions
+import org.mockito.Mockito.`when`
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.CoroutineContext
+
+internal class TestableStorageWrapper(
+    manager: FxaAccountManager,
+    accountEventObserverRegistry: ObserverRegistry<AccountEventsObserver>,
+    serverConfig: ServerConfig,
+    private val block: () -> OAuthAccount = {
+        val account: OAuthAccount = mock()
+        `when`(account.deviceConstellation()).thenReturn(mock())
+        account
+    },
+) : StorageWrapper(manager, accountEventObserverRegistry, serverConfig) {
+    override fun obtainAccount(): OAuthAccount = block()
+}
 
 // Same as the actual account manager, except we get to control how FirefoxAccountShaped instances
 // are created. This is necessary because due to some build issues (native dependencies not available
 // within the test environment) we can't use fxaclient supplied implementation of FirefoxAccountShaped.
 // Instead, we express all of our account-related operations over an interface.
-open class TestableFxaAccountManager(
+internal open class TestableFxaAccountManager(
     context: Context,
     config: ServerConfig,
     private val storage: AccountStorage,
     capabilities: Set<DeviceCapability> = emptySet(),
     syncConfig: SyncConfig? = null,
     coroutineContext: CoroutineContext,
-    private val block: () -> OAuthAccount = { mock() }
-) : FxaAccountManager(context, config, DeviceConfig("test", DeviceType.UNKNOWN, capabilities), syncConfig, emptySet(), coroutineContext) {
-    override fun createAccount(config: ServerConfig): OAuthAccount {
-        return block()
+    crashReporter: CrashReporting? = null,
+    block: () -> OAuthAccount = {
+        val account: OAuthAccount = mock()
+        `when`(account.deviceConstellation()).thenReturn(mock())
+        account
+    },
+) : FxaAccountManager(context, config, DeviceConfig("test", DeviceType.UNKNOWN, capabilities), syncConfig, emptySet(), crashReporter, coroutineContext) {
+    private val testableStorageWrapper = TestableStorageWrapper(this, accountEventObserverRegistry, serverConfig, block)
+
+    override var syncStatusObserverRegistry = ObserverRegistry<SyncStatusObserver>()
+
+    override fun getStorageWrapper(): StorageWrapper {
+        return testableStorageWrapper
     }
 
     override fun getAccountStorage(): AccountStorage {
         return storage
     }
+
+    override fun createSyncManager(config: SyncConfig): SyncManager = mock()
 }
 
 const val EXPECTED_AUTH_STATE = "goodAuthState"
 const val UNEXPECTED_AUTH_STATE = "badAuthState"
 
+@ExperimentalCoroutinesApi // for runTest
 @RunWith(AndroidJUnit4::class)
 class FxaAccountManagerTest {
 
     @After
     fun cleanup() {
-        // This registry is global, so we need to clear it between test runs, otherwise different
-        // manager instances will be kept around.
-        authErrorRegistry.unregisterObservers()
         SyncAuthInfoCache(testContext).clear()
+        SyncEnginesStorage(testContext).clear()
     }
 
-    @Test
-    fun `state transitions`() {
-        // State 'Start'.
-        var state = AccountState.Start
-
-        assertEquals(AccountState.Start, FxaAccountManager.nextState(state, Event.Init))
-        assertEquals(AccountState.NotAuthenticated, FxaAccountManager.nextState(state, Event.AccountNotFound))
-        assertEquals(AccountState.AuthenticatedNoProfile, FxaAccountManager.nextState(state, Event.AccountRestored))
-        assertNull(FxaAccountManager.nextState(state, Event.Authenticate))
-        assertNull(FxaAccountManager.nextState(state, Event.Authenticated(FxaAuthData(AuthType.Signin, "code", "state"))))
-        assertNull(FxaAccountManager.nextState(state, Event.FetchProfile))
-        assertNull(FxaAccountManager.nextState(state, Event.FetchedProfile))
-        assertNull(FxaAccountManager.nextState(state, Event.FailedToFetchProfile))
-        assertNull(FxaAccountManager.nextState(state, Event.FailedToAuthenticate))
-        assertNull(FxaAccountManager.nextState(state, Event.Logout))
-        assertNull(FxaAccountManager.nextState(state, Event.AuthenticationError(AuthException(AuthExceptionType.UNAUTHORIZED))))
-        assertNull(FxaAccountManager.nextState(state, Event.SignInShareableAccount(mock())))
-        assertNull(FxaAccountManager.nextState(state, Event.SignedInShareableAccount))
-
-        // State 'NotAuthenticated'.
-        state = AccountState.NotAuthenticated
-        assertNull(FxaAccountManager.nextState(state, Event.Init))
-        assertNull(FxaAccountManager.nextState(state, Event.AccountNotFound))
-        assertNull(FxaAccountManager.nextState(state, Event.AccountRestored))
-        assertEquals(AccountState.NotAuthenticated, FxaAccountManager.nextState(state, Event.Authenticate))
-        assertEquals(AccountState.NotAuthenticated, FxaAccountManager.nextState(state, Event.Pair("auth://pair")))
-        assertEquals(AccountState.AuthenticatedNoProfile, FxaAccountManager.nextState(state, Event.Authenticated(FxaAuthData(AuthType.Signup, "code", "state"))))
-        assertNull(FxaAccountManager.nextState(state, Event.FetchProfile))
-        assertNull(FxaAccountManager.nextState(state, Event.FetchedProfile))
-        assertNull(FxaAccountManager.nextState(state, Event.FailedToFetchProfile))
-        assertEquals(AccountState.NotAuthenticated, FxaAccountManager.nextState(state, Event.FailedToAuthenticate))
-        assertNull(FxaAccountManager.nextState(state, Event.Logout))
-        assertNull(FxaAccountManager.nextState(state, Event.AuthenticationError(AuthException(AuthExceptionType.UNAUTHORIZED))))
-        assertEquals(AccountState.NotAuthenticated, FxaAccountManager.nextState(state, Event.SignInShareableAccount(mock())))
-        assertEquals(AccountState.AuthenticatedNoProfile, FxaAccountManager.nextState(state, Event.SignedInShareableAccount))
-
-        // State 'AuthenticatedNoProfile'.
-        state = AccountState.AuthenticatedNoProfile
-        assertNull(FxaAccountManager.nextState(state, Event.Init))
-        assertNull(FxaAccountManager.nextState(state, Event.AccountNotFound))
-        assertNull(FxaAccountManager.nextState(state, Event.AccountRestored))
-        assertNull(FxaAccountManager.nextState(state, Event.Authenticate))
-        assertNull(FxaAccountManager.nextState(state, Event.Authenticated(FxaAuthData(AuthType.Pairing, "code", "state"))))
-        assertEquals(AccountState.AuthenticatedNoProfile, FxaAccountManager.nextState(state, Event.FetchProfile))
-        assertEquals(AccountState.AuthenticatedWithProfile, FxaAccountManager.nextState(state, Event.FetchedProfile))
-        assertEquals(AccountState.AuthenticatedNoProfile, FxaAccountManager.nextState(state, Event.FailedToFetchProfile))
-        assertNull(FxaAccountManager.nextState(state, Event.FailedToAuthenticate))
-        assertEquals(AccountState.NotAuthenticated, FxaAccountManager.nextState(state, Event.Logout))
-        assertEquals(AccountState.AuthenticationProblem, FxaAccountManager.nextState(state, Event.AuthenticationError(AuthException(AuthExceptionType.UNAUTHORIZED))))
-        assertNull(FxaAccountManager.nextState(state, Event.SignInShareableAccount(mock())))
-        assertNull(FxaAccountManager.nextState(state, Event.SignedInShareableAccount))
-
-        // State 'AuthenticatedWithProfile'.
-        state = AccountState.AuthenticatedWithProfile
-        assertNull(FxaAccountManager.nextState(state, Event.Init))
-        assertNull(FxaAccountManager.nextState(state, Event.AccountNotFound))
-        assertNull(FxaAccountManager.nextState(state, Event.AccountRestored))
-        assertNull(FxaAccountManager.nextState(state, Event.Authenticate))
-        assertNull(FxaAccountManager.nextState(state, Event.Authenticated(FxaAuthData(AuthType.OtherExternal("oi"), "code", "state"))))
-        assertNull(FxaAccountManager.nextState(state, Event.FetchProfile))
-        assertNull(FxaAccountManager.nextState(state, Event.FetchedProfile))
-        assertNull(FxaAccountManager.nextState(state, Event.FailedToFetchProfile))
-        assertNull(FxaAccountManager.nextState(state, Event.FailedToAuthenticate))
-        assertEquals(AccountState.NotAuthenticated, FxaAccountManager.nextState(state, Event.Logout))
-        assertEquals(AccountState.AuthenticationProblem, FxaAccountManager.nextState(state, Event.AuthenticationError(AuthException(AuthExceptionType.UNAUTHORIZED))))
-        assertNull(FxaAccountManager.nextState(state, Event.SignInShareableAccount(mock())))
-        assertNull(FxaAccountManager.nextState(state, Event.SignedInShareableAccount))
-
-        // State 'AuthenticationProblem'.
-        state = AccountState.AuthenticationProblem
-        assertNull(FxaAccountManager.nextState(state, Event.Init))
-        assertNull(FxaAccountManager.nextState(state, Event.AccountNotFound))
-        assertNull(FxaAccountManager.nextState(state, Event.AccountRestored))
-        assertEquals(AccountState.AuthenticationProblem, FxaAccountManager.nextState(state, Event.Authenticate))
-        assertEquals(AccountState.AuthenticatedNoProfile, FxaAccountManager.nextState(state, Event.Authenticated(FxaAuthData(AuthType.Signin, "code", "state"))))
-        assertNull(FxaAccountManager.nextState(state, Event.FetchProfile))
-        assertNull(FxaAccountManager.nextState(state, Event.FetchedProfile))
-        assertNull(FxaAccountManager.nextState(state, Event.FailedToFetchProfile))
-        assertEquals(AccountState.AuthenticationProblem, FxaAccountManager.nextState(state, Event.FailedToAuthenticate))
-        assertEquals(AccountState.NotAuthenticated, FxaAccountManager.nextState(state, Event.Logout))
-        assertNull(FxaAccountManager.nextState(state, Event.AuthenticationError(AuthException(AuthExceptionType.UNAUTHORIZED))))
-        assertNull(FxaAccountManager.nextState(state, Event.SignInShareableAccount(mock())))
-        assertNull(FxaAccountManager.nextState(state, Event.SignedInShareableAccount))
-    }
-
-    class TestSyncDispatcher(registry: ObserverRegistry<SyncStatusObserver>) : SyncDispatcher, Observable<SyncStatusObserver> by registry {
+    internal class TestSyncDispatcher(registry: ObserverRegistry<SyncStatusObserver>) : SyncDispatcher, Observable<SyncStatusObserver> by registry {
         val inner: SyncDispatcher = mock()
         override fun isSyncActive(): Boolean {
             return inner.isSyncActive()
         }
 
-        override fun syncNow(startup: Boolean, debounce: Boolean) {
-            inner.syncNow(startup, debounce)
+        override fun syncNow(
+            reason: SyncReason,
+            debounce: Boolean,
+            customEngineSubset: List<SyncEngine>,
+        ) {
+            inner.syncNow(reason, debounce, customEngineSubset)
         }
 
-        override fun startPeriodicSync(unit: TimeUnit, period: Long) {
-            inner.startPeriodicSync(unit, period)
+        override fun startPeriodicSync(unit: TimeUnit, period: Long, initialDelay: Long) {
+            inner.startPeriodicSync(unit, period, initialDelay)
         }
 
         override fun stopPeriodicSync() {
@@ -211,7 +158,7 @@ class FxaAccountManagerTest {
         }
     }
 
-    class TestSyncManager(config: SyncConfig) : SyncManager(config) {
+    internal class TestSyncManager(config: SyncConfig) : SyncManager(config) {
         val dispatcherRegistry = ObserverRegistry<SyncStatusObserver>()
         val dispatcher: TestSyncDispatcher = TestSyncDispatcher(dispatcherRegistry)
 
@@ -244,218 +191,7 @@ class FxaAccountManagerTest {
     }
 
     @Test
-    fun `updating sync config, without it at first`() = runBlocking {
-        val accountStorage: AccountStorage = mock()
-        val profile = Profile("testUid", "test@example.com", null, "Test Profile")
-        val constellation: DeviceConstellation = mockDeviceConstellation()
-
-        val syncAccessTokenExpiresAt = System.currentTimeMillis() + 10 * 60 * 1000L
-        val account = StatePersistenceTestableAccount(profile, constellation, tokenServerEndpointUrl = "https://some.server.com/test") {
-            AccessTokenInfo(
-                SCOPE_SYNC,
-                "tolkien",
-                OAuthScopedKey("kty-test", SCOPE_SYNC, "kid-test", "k-test"),
-                syncAccessTokenExpiresAt
-            )
-        }
-
-        var latestSyncManager: TestSyncManager? = null
-        // Without sync config to begin with. NB: we're pretending that we "have" a sync scope.
-        val manager = object : TestableFxaAccountManager(
-            context = testContext,
-            config = ServerConfig.release("dummyId", "http://auth-url/redirect"),
-            storage = accountStorage,
-            capabilities = setOf(DeviceCapability.SEND_TAB),
-            syncConfig = null,
-            coroutineContext = this@runBlocking.coroutineContext,
-            block = { account }
-        ) {
-            override fun createSyncManager(config: SyncConfig): SyncManager {
-                return TestSyncManager(config).also { latestSyncManager = it }
-            }
-        }
-
-        `when`(constellation.ensureCapabilitiesAsync(any())).thenReturn(CompletableDeferred(true))
-        // We have an account at the start.
-        `when`(accountStorage.read()).thenReturn(account)
-
-        manager.initAsync().await()
-
-        // Can check if sync is running (it's not!), even if we don't have sync configured.
-        assertFalse(manager.isSyncActive())
-
-        // No sync engines are supported, since sync isn't configured.
-        assertNull(manager.supportedSyncEngines())
-
-        val syncStatusObserver = TestSyncStatusObserver()
-        val lifecycleOwner: LifecycleOwner = mock()
-        val lifecycle: Lifecycle = mock()
-        `when`(lifecycle.currentState).thenReturn(Lifecycle.State.STARTED)
-        `when`(lifecycleOwner.lifecycle).thenReturn(lifecycle)
-        manager.registerForSyncEvents(syncStatusObserver, lifecycleOwner, true)
-
-        // Bad configuration: no stores.
-        try {
-            manager.setSyncConfigAsync(SyncConfig(setOf())).await()
-            fail()
-        } catch (e: IllegalArgumentException) {}
-
-        assertNull(latestSyncManager)
-
-        assertEquals(0, syncStatusObserver.onStartedCount)
-        assertEquals(0, syncStatusObserver.onIdleCount)
-        assertEquals(0, syncStatusObserver.onErrorCount)
-
-        // No periodic sync.
-        manager.setSyncConfigAsync(SyncConfig(setOf(SyncEngine.HISTORY))).await()
-
-        assertEquals(setOf(SyncEngine.HISTORY), manager.supportedSyncEngines())
-        assertNotNull(latestSyncManager)
-        assertNotNull(latestSyncManager?.dispatcher)
-        assertNotNull(latestSyncManager?.dispatcher?.inner)
-        verify(latestSyncManager!!.dispatcher.inner, never()).startPeriodicSync(any(), anyLong())
-        verify(latestSyncManager!!.dispatcher.inner, never()).stopPeriodicSync()
-        verify(latestSyncManager!!.dispatcher.inner, times(1)).syncNow(anyBoolean(), anyBoolean())
-
-        // With periodic sync.
-        manager.setSyncConfigAsync(SyncConfig(setOf(SyncEngine.HISTORY, SyncEngine.PASSWORDS), 60 * 1000L)).await()
-
-        assertEquals(setOf(SyncEngine.HISTORY, SyncEngine.PASSWORDS), manager.supportedSyncEngines())
-        verify(latestSyncManager!!.dispatcher.inner, times(1)).startPeriodicSync(any(), anyLong())
-        verify(latestSyncManager!!.dispatcher.inner, never()).stopPeriodicSync()
-        verify(latestSyncManager!!.dispatcher.inner, times(1)).syncNow(anyBoolean(), anyBoolean())
-
-        // Make sure sync status listeners are working.
-        // TODO fix these tests.
-//        // Test dispatcher -> sync manager -> account manager -> our test observer.
-//        latestSyncManager!!.dispatcherRegistry.notifyObservers { onStarted() }
-//        assertEquals(1, syncStatusObserver.onStartedCount)
-//        latestSyncManager!!.dispatcherRegistry.notifyObservers { onIdle() }
-//        assertEquals(1, syncStatusObserver.onIdleCount)
-//        latestSyncManager!!.dispatcherRegistry.notifyObservers { onError(null) }
-//        assertEquals(1, syncStatusObserver.onErrorCount)
-
-        // Make sure that sync access token was cached correctly.
-        assertFalse(SyncAuthInfoCache(testContext).expired())
-        val cachedAuthInfo = SyncAuthInfoCache(testContext).getCached()
-        assertNotNull(cachedAuthInfo)
-        assertEquals("tolkien", cachedAuthInfo!!.fxaAccessToken)
-        assertEquals(syncAccessTokenExpiresAt, cachedAuthInfo.fxaAccessTokenExpiresAt)
-        assertEquals("https://some.server.com/test", cachedAuthInfo.tokenServerUrl)
-        assertEquals("kid-test", cachedAuthInfo.kid)
-        assertEquals("k-test", cachedAuthInfo.syncKey)
-    }
-
-    @Test
-    fun `updating sync config, with one to begin with`() = runBlocking {
-        val accountStorage: AccountStorage = mock()
-        val profile = Profile("testUid", "test@example.com", null, "Test Profile")
-        val constellation: DeviceConstellation = mockDeviceConstellation()
-
-        val syncAccessTokenExpiresAt = System.currentTimeMillis() + 10 * 60 * 1000L
-        val account = StatePersistenceTestableAccount(profile, constellation, tokenServerEndpointUrl = "https://some.server.com/test") {
-            AccessTokenInfo(
-                SCOPE_SYNC,
-                "arda",
-                OAuthScopedKey("kty-test", SCOPE_SYNC, "kid-test", "k-test"),
-                syncAccessTokenExpiresAt
-            )
-        }
-
-        // With a sync config this time.
-        var latestSyncManager: TestSyncManager? = null
-        val syncConfig = SyncConfig(setOf(SyncEngine.HISTORY), syncPeriodInMinutes = 120L)
-        val manager = object : TestableFxaAccountManager(
-            context = testContext,
-            config = ServerConfig.release("dummyId", "http://auth-url/redirect"),
-            storage = accountStorage,
-            capabilities = setOf(DeviceCapability.SEND_TAB),
-            syncConfig = syncConfig,
-            coroutineContext = this@runBlocking.coroutineContext,
-            block = { account }
-        ) {
-            override fun createSyncManager(config: SyncConfig): SyncManager {
-                return TestSyncManager(config).also { latestSyncManager = it }
-            }
-        }
-
-        `when`(constellation.ensureCapabilitiesAsync(any())).thenReturn(CompletableDeferred(true))
-        // We have an account at the start.
-        `when`(accountStorage.read()).thenReturn(account)
-
-        val syncStatusObserver = TestSyncStatusObserver()
-        val lifecycleOwner: LifecycleOwner = mock()
-        val lifecycle: Lifecycle = mock()
-        `when`(lifecycle.currentState).thenReturn(Lifecycle.State.STARTED)
-        `when`(lifecycleOwner.lifecycle).thenReturn(lifecycle)
-        manager.registerForSyncEvents(syncStatusObserver, lifecycleOwner, true)
-
-        manager.initAsync().await()
-
-        // Make sure that sync access token was cached correctly.
-        assertFalse(SyncAuthInfoCache(testContext).expired())
-        val cachedAuthInfo = SyncAuthInfoCache(testContext).getCached()
-        assertNotNull(cachedAuthInfo)
-        assertEquals("arda", cachedAuthInfo!!.fxaAccessToken)
-        assertEquals(syncAccessTokenExpiresAt, cachedAuthInfo.fxaAccessTokenExpiresAt)
-        assertEquals("https://some.server.com/test", cachedAuthInfo.tokenServerUrl)
-        assertEquals("kid-test", cachedAuthInfo.kid)
-        assertEquals("k-test", cachedAuthInfo.syncKey)
-
-        // Make sure periodic syncing started, and an immediate sync was requested.
-        assertNotNull(latestSyncManager)
-        assertNotNull(latestSyncManager!!.dispatcher)
-        assertNotNull(latestSyncManager!!.dispatcher.inner)
-        verify(latestSyncManager!!.dispatcher.inner, times(1)).startPeriodicSync(any(), anyLong())
-        verify(latestSyncManager!!.dispatcher.inner, never()).stopPeriodicSync()
-        verify(latestSyncManager!!.dispatcher.inner, times(1)).syncNow(anyBoolean(), anyBoolean())
-
-        // Can trigger syncs.
-        manager.syncNowAsync().await()
-        verify(latestSyncManager!!.dispatcher.inner, times(2)).syncNow(startup = false, debounce = false)
-        manager.syncNowAsync(startup = true).await()
-        verify(latestSyncManager!!.dispatcher.inner, times(1)).syncNow(startup = true, debounce = false)
-        manager.syncNowAsync(startup = true, debounce = true).await()
-        verify(latestSyncManager!!.dispatcher.inner, times(1)).syncNow(startup = true, debounce = true)
-
-        // TODO fix these tests
-//        assertEquals(0, syncStatusObserver.onStartedCount)
-//        assertEquals(0, syncStatusObserver.onIdleCount)
-//        assertEquals(0, syncStatusObserver.onErrorCount)
-
-        // Make sure sync status listeners are working.
-//        // Test dispatcher -> sync manager -> account manager -> our test observer.
-//        latestSyncManager!!.dispatcherRegistry.notifyObservers { onStarted() }
-//        assertEquals(1, syncStatusObserver.onStartedCount)
-//        latestSyncManager!!.dispatcherRegistry.notifyObservers { onIdle() }
-//        assertEquals(1, syncStatusObserver.onIdleCount)
-//        latestSyncManager!!.dispatcherRegistry.notifyObservers { onError(null) }
-//        assertEquals(1, syncStatusObserver.onErrorCount)
-
-        // Turn off periodic syncing.
-        manager.setSyncConfigAsync(SyncConfig(setOf(SyncEngine.HISTORY))).await()
-
-        verify(latestSyncManager!!.dispatcher.inner, never()).startPeriodicSync(any(), anyLong())
-        verify(latestSyncManager!!.dispatcher.inner, never()).stopPeriodicSync()
-        verify(latestSyncManager!!.dispatcher.inner, times(1)).syncNow(anyBoolean(), anyBoolean())
-
-        // Can trigger syncs.
-        manager.syncNowAsync().await()
-        verify(latestSyncManager!!.dispatcher.inner, times(2)).syncNow(startup = false, debounce = false)
-        manager.syncNowAsync(startup = true).await()
-        verify(latestSyncManager!!.dispatcher.inner, times(1)).syncNow(startup = true, debounce = false)
-
-        // Pretend sync is running.
-        `when`(latestSyncManager!!.dispatcher.inner.isSyncActive()).thenReturn(true)
-        assertTrue(manager.isSyncActive())
-
-        // Pretend sync is not running.
-        `when`(latestSyncManager!!.dispatcher.inner.isSyncActive()).thenReturn(false)
-        assertFalse(manager.isSyncActive())
-    }
-
-    @Test
-    fun `migrating an account via migrateAccountAsync`() = runBlocking {
+    fun `migrating an account via copyAccountAsync - creating a new session token`() = runTest {
         // We'll test three scenarios:
         // - hitting a network issue during migration
         // - hitting an auth issue during migration (bad credentials)
@@ -467,8 +203,12 @@ class FxaAccountManagerTest {
         val accountObserver: AccountObserver = mock()
 
         val manager = TestableFxaAccountManager(
-                testContext, ServerConfig.release("dummyId", "http://auth-url/redirect"), accountStorage,
-                setOf(DeviceCapability.SEND_TAB), null, this.coroutineContext
+            testContext,
+            ServerConfig(Server.RELEASE, "dummyId", "http://auth-url/redirect"),
+            accountStorage,
+            setOf(DeviceCapability.SEND_TAB),
+            null,
+            this.coroutineContext,
         ) {
             account
         }
@@ -476,80 +216,304 @@ class FxaAccountManagerTest {
 
         // We don't have an account at the start.
         `when`(accountStorage.read()).thenReturn(null)
-        manager.initAsync().await()
+        manager.start()
 
         // Bad package name.
         var migratableAccount = ShareableAccount(
             email = "test@example.com",
             sourcePackage = "org.mozilla.firefox",
-            authInfo = ShareableAuthInfo("session", "kSync", "kXCS")
+            authInfo = MigratingAccountInfo("session", "kSync", "kXCS"),
         )
 
         // TODO Need to mock inputs into - mock a PackageManager, and have it return PackageInfo with the right signature.
 //        AccountSharing.isTrustedPackage
 
         // We failed to migrate for some reason.
-        account.ableToMigrate = false
-        assertFalse(manager.signInWithShareableAccountAsync(migratableAccount).await())
+        account.migrationResult = MigrationResult.Failure
+        assertEquals(
+            MigrationResult.Failure,
+            manager.migrateFromAccount(migratableAccount),
+        )
 
-        assertEquals("session", account.latestMigrateAuthInfo?.sessionToken)
-        assertEquals("kSync", account.latestMigrateAuthInfo?.kSync)
-        assertEquals("kXCS", account.latestMigrateAuthInfo?.kXCS)
+        assertEquals("session", account.latestMigrateAuthInfo!!.sessionToken)
+        assertEquals("kSync", account.latestMigrateAuthInfo!!.kSync)
+        assertEquals("kXCS", account.latestMigrateAuthInfo!!.kXCS)
 
         assertNull(manager.authenticatedAccount())
 
         // Prepare for a successful migration.
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
+        `when`(constellation.finalizeDevice(eq(AuthType.MigratedCopy), any())).thenReturn(ServiceResult.Ok)
 
         // Success.
-        account.ableToMigrate = true
+        account.migrationResult = MigrationResult.Success
         migratableAccount = migratableAccount.copy(
-            authInfo = ShareableAuthInfo("session2", "kSync2", "kXCS2")
+            authInfo = MigratingAccountInfo("session2", "kSync2", "kXCS2"),
         )
 
-        assertTrue(manager.signInWithShareableAccountAsync(migratableAccount).await())
+        assertEquals(
+            MigrationResult.Success,
+            manager.migrateFromAccount(migratableAccount),
+        )
 
-        assertEquals("session2", account.latestMigrateAuthInfo?.sessionToken)
-        assertEquals("kSync2", account.latestMigrateAuthInfo?.kSync)
-        assertEquals("kXCS2", account.latestMigrateAuthInfo?.kXCS)
+        assertEquals("session2", account.latestMigrateAuthInfo!!.sessionToken)
+        assertEquals("kSync2", account.latestMigrateAuthInfo!!.kSync)
+        assertEquals("kXCS2", account.latestMigrateAuthInfo!!.kXCS)
 
         assertNotNull(manager.authenticatedAccount())
         assertEquals(profile, manager.accountProfile())
 
-        verify(accountObserver, times(1)).onAuthenticated(account, AuthType.Shared)
+        verify(constellation, times(1)).finalizeDevice(eq(AuthType.MigratedCopy), any())
+        verify(accountObserver, times(1)).onAuthenticated(account, AuthType.MigratedCopy)
     }
 
     @Test
-    fun `restored account state persistence`() = runBlocking {
+    fun `migrating an account via migrateAccountAsync - reusing existing session token`() = runTest {
+        // We'll test three scenarios:
+        // - hitting a network issue during migration
+        // - hitting an auth issue during migration (bad credentials)
+        // - all good, migrated successfully
+        val accountStorage: AccountStorage = mock()
+        val profile = Profile("testUid", "test@example.com", null, "Test Profile")
+        val constellation: DeviceConstellation = mockDeviceConstellation()
+        val account = StatePersistenceTestableAccount(profile, constellation)
+        val accountObserver: AccountObserver = mock()
+
+        val manager = TestableFxaAccountManager(
+            testContext,
+            ServerConfig(Server.RELEASE, "dummyId", "http://auth-url/redirect"),
+            accountStorage,
+            setOf(DeviceCapability.SEND_TAB),
+            null,
+            this.coroutineContext,
+        ) {
+            account
+        }
+        manager.register(accountObserver)
+
+        // We don't have an account at the start.
+        `when`(accountStorage.read()).thenReturn(null)
+        manager.start()
+
+        // Bad package name.
+        var migratableAccount = ShareableAccount(
+            email = "test@example.com",
+            sourcePackage = "org.mozilla.firefox",
+            authInfo = MigratingAccountInfo("session", "kSync", "kXCS"),
+        )
+
+        // TODO Need to mock inputs into - mock a PackageManager, and have it return PackageInfo with the right signature.
+//        AccountSharing.isTrustedPackage
+
+        // We failed to migrate for some reason.
+        account.migrationResult = MigrationResult.Failure
+        assertEquals(
+            MigrationResult.Failure,
+            manager.migrateFromAccount(migratableAccount, reuseSessionToken = true),
+        )
+
+        assertEquals("session", account.latestMigrateAuthInfo!!.sessionToken)
+        assertEquals("kSync", account.latestMigrateAuthInfo!!.kSync)
+        assertEquals("kXCS", account.latestMigrateAuthInfo!!.kXCS)
+
+        assertNull(manager.authenticatedAccount())
+
+        // Prepare for a successful migration.
+        `when`(constellation.finalizeDevice(eq(AuthType.MigratedReuse), any())).thenReturn(ServiceResult.Ok)
+
+        // Success.
+        account.migrationResult = MigrationResult.Success
+        migratableAccount = migratableAccount.copy(
+            authInfo = MigratingAccountInfo("session2", "kSync2", "kXCS2"),
+        )
+
+        assertEquals(
+            MigrationResult.Success,
+            manager.migrateFromAccount(migratableAccount, reuseSessionToken = true),
+        )
+
+        assertEquals("session2", account.latestMigrateAuthInfo!!.sessionToken)
+        assertEquals("kSync2", account.latestMigrateAuthInfo!!.kSync)
+        assertEquals("kXCS2", account.latestMigrateAuthInfo!!.kXCS)
+
+        assertNotNull(manager.authenticatedAccount())
+        assertEquals(profile, manager.accountProfile())
+
+        verify(constellation, times(1)).finalizeDevice(eq(AuthType.MigratedReuse), any())
+        verify(accountObserver, times(1)).onAuthenticated(account, AuthType.MigratedReuse)
+    }
+
+    @Test
+    fun `migrating an account via migrateAccountAsync - retry scenario`() = runTest {
+        val accountStorage: AccountStorage = mock()
+        val profile = Profile("testUid", "test@example.com", null, "Test Profile")
+        val constellation: DeviceConstellation = mockDeviceConstellation()
+        val account = StatePersistenceTestableAccount(profile, constellation)
+        val accountObserver: AccountObserver = mock()
+
+        val manager = TestableFxaAccountManager(
+            testContext,
+            ServerConfig(Server.RELEASE, "dummyId", "http://auth-url/redirect"),
+            accountStorage,
+            setOf(DeviceCapability.SEND_TAB),
+            null,
+            this.coroutineContext,
+        ) {
+            account
+        }
+        manager.register(accountObserver)
+
+        // We don't have an account at the start.
+        `when`(accountStorage.read()).thenReturn(null)
+        manager.start()
+
+        // Bad package name.
+        val migratableAccount = ShareableAccount(
+            email = "test@example.com",
+            sourcePackage = "org.mozilla.firefox",
+            authInfo = MigratingAccountInfo("session", "kSync", "kXCS"),
+        )
+
+        // TODO Need to mock inputs into - mock a PackageManager, and have it return PackageInfo with the right signature.
+//        AccountSharing.isTrustedPackage
+
+        // We failed to migrate for some reason. 'WillRetry' in this case assumes reuse flow.
+        account.migrationResult = MigrationResult.WillRetry
+        assertEquals(
+            MigrationResult.WillRetry,
+            manager.migrateFromAccount(migratableAccount, reuseSessionToken = true),
+        )
+
+        assertEquals("session", account.latestMigrateAuthInfo!!.sessionToken)
+        assertEquals("kSync", account.latestMigrateAuthInfo!!.kSync)
+        assertEquals("kXCS", account.latestMigrateAuthInfo!!.kXCS)
+
+        assertNotNull(manager.authenticatedAccount())
+        assertNull(manager.accountProfile())
+
+        // Prepare for a successful migration.
+        `when`(constellation.finalizeDevice(eq(AuthType.MigratedReuse), any())).thenReturn(ServiceResult.Ok)
+        account.migrationResult = MigrationResult.Success
+        account.migrationRetrySuccess = true
+
+        // 'sync now' user action will trigger a sign-in retry.
+        manager.syncNow(SyncReason.User)
+
+        assertNotNull(manager.authenticatedAccount())
+        assertEquals(profile, manager.accountProfile())
+
+        verify(constellation, times(1)).finalizeDevice(eq(AuthType.MigratedReuse), any())
+        verify(accountObserver, times(1)).onAuthenticated(account, AuthType.MigratedReuse)
+    }
+
+    @Test
+    fun `restored account has an in-flight migration, retries and fails`() = runTest {
         val accountStorage: AccountStorage = mock()
         val profile = Profile("testUid", "test@example.com", null, "Test Profile")
         val constellation: DeviceConstellation = mockDeviceConstellation()
         val account = StatePersistenceTestableAccount(profile, constellation)
 
         val manager = TestableFxaAccountManager(
-            testContext, ServerConfig.release("dummyId", "http://auth-url/redirect"), accountStorage,
-            setOf(DeviceCapability.SEND_TAB), null, this.coroutineContext
+            testContext,
+            ServerConfig(Server.RELEASE, "dummyId", "http://auth-url/redirect"),
+            accountStorage,
+            setOf(DeviceCapability.SEND_TAB),
+            null,
+            this.coroutineContext,
         ) {
             account
         }
 
-        `when`(constellation.ensureCapabilitiesAsync(any())).thenReturn(CompletableDeferred(true))
+        `when`(constellation.finalizeDevice(eq(AuthType.MigratedReuse), any())).thenReturn(ServiceResult.Ok)
+        // We have an account at the start.
+        `when`(accountStorage.read()).thenReturn(account)
+
+        account.migrationResult = MigrationResult.WillRetry
+        account.migrationRetrySuccess = false
+
+        assertNull(account.persistenceCallback)
+        manager.start()
+        // Make sure a persistence callback was registered while pumping the state machine.
+        assertNotNull(account.persistenceCallback)
+
+        // Assert that neither ensureCapabilities nor initialization fired.
+        verify(constellation, never()).finalizeDevice(any(), any())
+
+        // Assert that we do not refresh device state.
+        verify(constellation, never()).refreshDevices()
+
+        // Finally, assert that we see an account with an inflight migration.
+        assertNotNull(manager.authenticatedAccount())
+        assertNull(manager.accountProfile())
+    }
+
+    @Test
+    fun `restored account has an in-flight migration, retries and succeeds`() = runTest {
+        val accountStorage: AccountStorage = mock()
+        val profile = Profile("testUid", "test@example.com", null, "Test Profile")
+        val constellation: DeviceConstellation = mockDeviceConstellation()
+        val account = StatePersistenceTestableAccount(profile, constellation)
+
+        val manager = TestableFxaAccountManager(
+            testContext,
+            ServerConfig(Server.RELEASE, "dummyId", "http://auth-url/redirect"),
+            accountStorage,
+            setOf(DeviceCapability.SEND_TAB),
+            null,
+            this.coroutineContext,
+        ) {
+            account
+        }
+
+        `when`(constellation.finalizeDevice(eq(AuthType.MigratedReuse), any())).thenReturn(ServiceResult.Ok)
+        // We have an account at the start.
+        `when`(accountStorage.read()).thenReturn(account)
+
+        account.migrationResult = MigrationResult.WillRetry
+        account.migrationRetrySuccess = true
+
+        assertNull(account.persistenceCallback)
+        manager.start()
+        // Make sure a persistence callback was registered while pumping the state machine.
+        assertNotNull(account.persistenceCallback)
+
+        verify(constellation).finalizeDevice(eq(AuthType.MigratedReuse), any())
+
+        // Finally, assert that we see an account in good standing.
+        assertNotNull(manager.authenticatedAccount())
+        assertFalse(manager.accountNeedsReauth())
+        assertEquals(profile, manager.accountProfile())
+    }
+
+    @Test
+    fun `restored account state persistence`() = runTest {
+        val accountStorage: AccountStorage = mock()
+        val profile = Profile("testUid", "test@example.com", null, "Test Profile")
+        val constellation: DeviceConstellation = mockDeviceConstellation()
+        val account = StatePersistenceTestableAccount(profile, constellation)
+
+        val manager = TestableFxaAccountManager(
+            testContext,
+            ServerConfig(Server.RELEASE, "dummyId", "http://auth-url/redirect"),
+            accountStorage,
+            setOf(DeviceCapability.SEND_TAB),
+            null,
+            this.coroutineContext,
+        ) {
+            account
+        }
+
+        `when`(constellation.finalizeDevice(eq(AuthType.Existing), any())).thenReturn(ServiceResult.Ok)
         // We have an account at the start.
         `when`(accountStorage.read()).thenReturn(account)
 
         assertNull(account.persistenceCallback)
-        manager.initAsync().await()
+        manager.start()
 
         // Assert that persistence callback is set.
         assertNotNull(account.persistenceCallback)
 
         // Assert that ensureCapabilities fired, but not the device initialization (since we're restoring).
-        verify(constellation).ensureCapabilitiesAsync(setOf(DeviceCapability.SEND_TAB))
-        verify(constellation, never()).initDeviceAsync(any(), any(), any())
-
-        // Assert that we refresh device state.
-        verify(constellation).refreshDevicesAsync()
-        verify(constellation).pollForEventsAsync()
+        verify(constellation).finalizeDevice(eq(AuthType.Existing), any())
 
         // Assert that persistence callback is interacting with the storage layer.
         account.persistenceCallback!!.persist("test")
@@ -557,40 +521,46 @@ class FxaAccountManagerTest {
     }
 
     @Test
-    fun `restored account state persistence, ensureCapabilities hit an intermittent error`() = runBlocking {
+    fun `restored account state persistence, finalizeDevice hit an intermittent error`() = runTest {
         val accountStorage: AccountStorage = mock()
         val profile = Profile("testUid", "test@example.com", null, "Test Profile")
         val constellation: DeviceConstellation = mockDeviceConstellation()
         val account = StatePersistenceTestableAccount(profile, constellation)
 
         val manager = TestableFxaAccountManager(
-            testContext, ServerConfig.release("dummyId", "http://auth-url/redirect"), accountStorage,
-                setOf(DeviceCapability.SEND_TAB), null, this.coroutineContext
+            testContext,
+            ServerConfig(Server.RELEASE, "dummyId", "http://auth-url/redirect"),
+            accountStorage,
+            setOf(DeviceCapability.SEND_TAB),
+            null,
+            this.coroutineContext,
         ) {
             account
         }
 
-        `when`(constellation.ensureCapabilitiesAsync(any())).thenReturn(CompletableDeferred(false))
+        `when`(constellation.finalizeDevice(eq(AuthType.Existing), any())).thenReturn(ServiceResult.OtherError)
         // We have an account at the start.
         `when`(accountStorage.read()).thenReturn(account)
 
         assertNull(account.persistenceCallback)
-        manager.initAsync().await()
+        manager.start()
 
         // Assert that persistence callback is set.
         assertNotNull(account.persistenceCallback)
 
-        // Assert that ensureCapabilities fired, but not the device initialization (since we're restoring).
-        verify(constellation).ensureCapabilitiesAsync(setOf(DeviceCapability.SEND_TAB))
-        verify(constellation, never()).initDeviceAsync(any(), any(), any())
+        // Assert that finalizeDevice fired with a correct auth type. 3 times since we re-try.
+        verify(constellation, times(3)).finalizeDevice(eq(AuthType.Existing), any())
 
         // Assert that persistence callback is interacting with the storage layer.
         account.persistenceCallback!!.persist("test")
         verify(accountStorage).write("test")
+
+        // Since we weren't able to finalize the account state, we're no longer authenticated.
+        assertNull(manager.authenticatedAccount())
     }
 
     @Test
-    fun `restored account state persistence, hit an auth error`() = runBlocking {
+    fun `restored account state persistence, hit an auth error`() = runTest {
         val accountStorage: AccountStorage = mock()
         val profile = Profile("testUid", "test@example.com", null, "Test Profile")
         val constellation: DeviceConstellation = mockDeviceConstellation()
@@ -598,37 +568,38 @@ class FxaAccountManagerTest {
 
         val accountObserver: AccountObserver = mock()
         val manager = TestableFxaAccountManager(
-            testContext, ServerConfig.release("dummyId", "http://auth-url/redirect"), accountStorage,
-                setOf(DeviceCapability.SEND_TAB), null, this.coroutineContext
+            testContext,
+            ServerConfig(Server.RELEASE, "dummyId", "http://auth-url/redirect"),
+            accountStorage,
+            setOf(DeviceCapability.SEND_TAB),
+            null,
+            this.coroutineContext,
         ) {
             account
         }
 
         manager.register(accountObserver)
-
-        `when`(constellation.ensureCapabilitiesAsync(any())).then {
-            // Hit an auth error.
-            authErrorRegistry.notifyObservers { onAuthErrorAsync(AuthException(AuthExceptionType.UNAUTHORIZED)) }
-            CompletableDeferred(false)
-        }
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.AuthError)
         // We have an account at the start.
         `when`(accountStorage.read()).thenReturn(account)
 
         assertNull(account.persistenceCallback)
 
         assertFalse(manager.accountNeedsReauth())
-        assertFalse(account.accessTokenErrorCalled)
+        assertFalse(account.authErrorDetectedCalled)
+        assertFalse(account.checkAuthorizationStatusCalled)
         verify(accountObserver, never()).onAuthenticationProblems()
 
-        manager.initAsync().await()
+        manager.start()
 
         assertTrue(manager.accountNeedsReauth())
         verify(accountObserver, times(1)).onAuthenticationProblems()
-        assertTrue(account.accessTokenErrorCalled)
+        assertTrue(account.authErrorDetectedCalled)
+        assertTrue(account.checkAuthorizationStatusCalled)
     }
 
     @Test(expected = FxaPanicException::class)
-    fun `restored account state persistence, hit an fxa panic which is re-thrown`() = runBlocking {
+    fun `restored account state persistence, hit an fxa panic which is re-thrown`() = runTest {
         val accountStorage: AccountStorage = mock()
         val profile = Profile("testUid", "test@example.com", null, "Test Profile")
         val constellation: DeviceConstellation = mock()
@@ -636,8 +607,12 @@ class FxaAccountManagerTest {
 
         val accountObserver: AccountObserver = mock()
         val manager = TestableFxaAccountManager(
-            testContext, ServerConfig.release("dummyId", "http://auth-url/redirect"), accountStorage,
-                setOf(DeviceCapability.SEND_TAB), null, this.coroutineContext
+            testContext,
+            ServerConfig(Server.RELEASE, "dummyId", "http://auth-url/redirect"),
+            accountStorage,
+            setOf(DeviceCapability.SEND_TAB),
+            null,
+            this.coroutineContext,
         ) {
             account
         }
@@ -645,9 +620,10 @@ class FxaAccountManagerTest {
         manager.register(accountObserver)
 
         // Hit a panic while we're restoring account.
-        val fxaPanic = CompletableDeferred<Boolean>()
-        fxaPanic.completeExceptionally(FxaPanicException("panic!"))
-        `when`(constellation.ensureCapabilitiesAsync(any())).thenReturn(fxaPanic)
+        doAnswer {
+            throw FxaPanicException("don't panic!")
+        }.`when`(constellation).finalizeDevice(any(), any())
+
         // We have an account at the start.
         `when`(accountStorage.read()).thenReturn(account)
 
@@ -656,11 +632,11 @@ class FxaAccountManagerTest {
         assertFalse(manager.accountNeedsReauth())
         verify(accountObserver, never()).onAuthenticationProblems()
 
-        manager.initAsync().await()
+        manager.start()
     }
 
     @Test
-    fun `newly authenticated account state persistence`() = runBlocking {
+    fun `newly authenticated account state persistence`() = runTest {
         val accountStorage: AccountStorage = mock()
         val profile = Profile(uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
         val constellation: DeviceConstellation = mockDeviceConstellation()
@@ -670,14 +646,16 @@ class FxaAccountManagerTest {
         // but an actual implementation of the interface.
         val manager = TestableFxaAccountManager(
             testContext,
-                ServerConfig.release("dummyId", "bad://url"),
-                accountStorage,
-                setOf(DeviceCapability.SEND_TAB), null, this.coroutineContext
+            ServerConfig(Server.RELEASE, "dummyId", "bad://url"),
+            accountStorage,
+            setOf(DeviceCapability.SEND_TAB),
+            null,
+            this.coroutineContext,
         ) {
             account
         }
 
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
         // There's no account at the start.
         `when`(accountStorage.read()).thenReturn(null)
@@ -685,22 +663,16 @@ class FxaAccountManagerTest {
         manager.register(accountObserver)
 
         // Kick it off, we'll get into a "NotAuthenticated" state.
-        manager.initAsync().await()
-
-        assertNull(account.persistenceCallback)
+        manager.start()
 
         // Perform authentication.
 
-        assertEquals("auth://url", manager.beginAuthenticationAsync().await())
+        assertEquals("auth://url", manager.beginAuthentication())
 
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await())
-
-        // Assert that persistence callback is set.
-        assertNotNull(account.persistenceCallback)
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
 
         // Assert that initDevice fired, but not ensureCapabilities (since we're initing a new account).
-        verify(constellation).initDeviceAsync(any(), any(), eq(setOf(DeviceCapability.SEND_TAB)))
-        verify(constellation, never()).ensureCapabilitiesAsync(any())
+        verify(constellation).finalizeDevice(eq(AuthType.Signin), any())
 
         // Assert that persistence callback is interacting with the storage layer.
         account.persistenceCallback!!.persist("test")
@@ -708,7 +680,7 @@ class FxaAccountManagerTest {
     }
 
     @Test
-    fun `auth state verification while finishing authentication`() = runBlocking {
+    fun `auth state verification while finishing authentication`() = runTest {
         val accountStorage: AccountStorage = mock()
         val profile = Profile(uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
         val constellation: DeviceConstellation = mockDeviceConstellation()
@@ -718,9 +690,11 @@ class FxaAccountManagerTest {
         // but an actual implementation of the interface.
         val manager = TestableFxaAccountManager(
             testContext,
-            ServerConfig.release("dummyId", "bad://url"),
+            ServerConfig(Server.RELEASE, "dummyId", "bad://url"),
             accountStorage,
-            setOf(DeviceCapability.SEND_TAB), null, this.coroutineContext
+            setOf(DeviceCapability.SEND_TAB),
+            null,
+            this.coroutineContext,
         ) {
             account
         }
@@ -730,20 +704,20 @@ class FxaAccountManagerTest {
 
         manager.register(accountObserver)
         // Kick it off, we'll get into a "NotAuthenticated" state.
-        manager.initAsync().await()
+        manager.start()
 
         // Attempt to finish authentication without starting it first.
-        assertFalse(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await())
+        assertFalse(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
 
         // Start authentication. StatePersistenceTestableAccount will produce state=EXPECTED_AUTH_STATE.
-        assertEquals("auth://url", manager.beginAuthenticationAsync().await())
+        assertEquals("auth://url", manager.beginAuthentication())
 
         // Attempt to finish authentication with a wrong state.
-        assertFalse(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", UNEXPECTED_AUTH_STATE)).await())
+        assertFalse(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", UNEXPECTED_AUTH_STATE)))
 
         // Now attempt to finish it with a correct state.
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await())
+        `when`(constellation.finalizeDevice(eq(AuthType.Signin), any())).thenReturn(ServiceResult.Ok)
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
 
         // Assert that manager is authenticated.
         assertEquals(account, manager.authenticatedAccount())
@@ -754,65 +728,89 @@ class FxaAccountManagerTest {
         private val constellation: DeviceConstellation,
         val ableToRecoverFromAuthError: Boolean = false,
         val tokenServerEndpointUrl: String? = null,
-        var ableToMigrate: Boolean = false,
-        val accessToken: (() -> AccessTokenInfo)? = null
+        var migrationResult: MigrationResult = MigrationResult.Failure,
+        var migrationRetrySuccess: Boolean = false,
+        val accessToken: (() -> AccessTokenInfo)? = null,
     ) : OAuthAccount {
 
         var persistenceCallback: StatePersistenceCallback? = null
-        var accessTokenErrorCalled = false
-        var latestMigrateAuthInfo: ShareableAuthInfo? = null
+        var checkAuthorizationStatusCalled = false
+        var authErrorDetectedCalled = false
+        var latestMigrateAuthInfo: MigratingAccountInfo? = null
 
-        override fun beginOAuthFlowAsync(scopes: Set<String>): Deferred<AuthFlowUrl?> {
-            return CompletableDeferred(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url"))
+        override suspend fun beginOAuthFlow(scopes: Set<String>, entryPoint: String): AuthFlowUrl? {
+            return AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url")
         }
 
-        override fun beginPairingFlowAsync(pairingUrl: String, scopes: Set<String>): Deferred<AuthFlowUrl?> {
-            return CompletableDeferred(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url"))
+        override suspend fun beginPairingFlow(pairingUrl: String, scopes: Set<String>, entryPoint: String): AuthFlowUrl? {
+            return AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url")
         }
 
-        override fun getProfileAsync(ignoreCache: Boolean): Deferred<Profile?> {
-            return CompletableDeferred(profile)
-        }
-
-        override fun getProfileAsync(): Deferred<Profile?> {
-            return CompletableDeferred(profile)
+        override suspend fun getProfile(ignoreCache: Boolean): Profile? {
+            return profile
         }
 
         override fun getCurrentDeviceId(): String? {
-            return null
+            return "testFxaDeviceId"
         }
 
         override fun getSessionToken(): String? {
             return null
         }
 
-        override fun completeOAuthFlowAsync(code: String, state: String): Deferred<Boolean> {
-            return CompletableDeferred(true)
+        override suspend fun completeOAuthFlow(code: String, state: String): Boolean {
+            return true
         }
 
-        override fun migrateFromSessionTokenAsync(sessionToken: String, kSync: String, kXCS: String): Deferred<Boolean> {
-            latestMigrateAuthInfo = ShareableAuthInfo(sessionToken, kSync, kXCS)
-            return CompletableDeferred(ableToMigrate)
+        override suspend fun migrateFromAccount(authInfo: MigratingAccountInfo, reuseSessionToken: Boolean): JSONObject? {
+            latestMigrateAuthInfo = authInfo
+            return when (migrationResult) {
+                MigrationResult.Failure, MigrationResult.WillRetry -> null
+                MigrationResult.Success -> JSONObject()
+            }
         }
 
-        override fun getAccessTokenAsync(singleScope: String): Deferred<AccessTokenInfo?> {
+        override fun isInMigrationState(): InFlightMigrationState? {
+            return when (migrationResult) {
+                MigrationResult.Success -> InFlightMigrationState.REUSE_SESSION_TOKEN
+                MigrationResult.WillRetry -> InFlightMigrationState.REUSE_SESSION_TOKEN
+                else -> null
+            }
+        }
+
+        override suspend fun retryMigrateFromSessionToken(): JSONObject? {
+            return when (migrationRetrySuccess) {
+                true -> JSONObject()
+                false -> null
+            }
+        }
+
+        override suspend fun getAccessToken(singleScope: String): AccessTokenInfo? {
             val token = accessToken?.invoke()
-            if (token != null) return CompletableDeferred(token)
+            if (token != null) return token
 
             fail()
-            return CompletableDeferred(null)
+            return null
         }
 
-        override fun checkAuthorizationStatusAsync(singleScope: String): Deferred<Boolean?> {
-            accessTokenErrorCalled = true
-            return CompletableDeferred(ableToRecoverFromAuthError)
+        override fun authErrorDetected() {
+            authErrorDetectedCalled = true
         }
 
-        override fun getTokenServerEndpointURL(): String {
+        override suspend fun checkAuthorizationStatus(singleScope: String): Boolean? {
+            checkAuthorizationStatusCalled = true
+            return ableToRecoverFromAuthError
+        }
+
+        override suspend fun getTokenServerEndpointURL(): String? {
             if (tokenServerEndpointUrl != null) return tokenServerEndpointUrl
 
             fail()
             return ""
+        }
+
+        override fun getPairingAuthorityURL(): String {
+            return "https://firefox.com/pair"
         }
 
         override fun registerPersistenceCallback(callback: StatePersistenceCallback) {
@@ -823,9 +821,8 @@ class FxaAccountManagerTest {
             return constellation
         }
 
-        override fun disconnectAsync(): Deferred<Boolean> {
-            fail()
-            return CompletableDeferred(false)
+        override suspend fun disconnect(): Boolean {
+            return true
         }
 
         override fun toJSONString(): String {
@@ -842,15 +839,16 @@ class FxaAccountManagerTest {
     }
 
     @Test
-    fun `error reading persisted account`() = runBlocking {
+    fun `error reading persisted account`() = runTest {
         val accountStorage = mock<AccountStorage>()
-        val readException = FxaException("pretend we failed to parse the account")
+        val readException = FxaNetworkException("pretend we failed to fetch the account")
         `when`(accountStorage.read()).thenThrow(readException)
 
         val manager = TestableFxaAccountManager(
             testContext,
-            ServerConfig.release("dummyId", "bad://url"),
-            accountStorage, coroutineContext = this.coroutineContext
+            ServerConfig(Server.RELEASE, "dummyId", "bad://url"),
+            accountStorage,
+            coroutineContext = this.coroutineContext,
         )
 
         val accountObserver = object : AccountObserver {
@@ -872,25 +870,26 @@ class FxaAccountManagerTest {
         }
 
         manager.register(accountObserver)
-        manager.initAsync().await()
+        manager.start()
     }
 
     @Test
-    fun `no persisted account`() = runBlocking {
+    fun `no persisted account`() = runTest {
         val accountStorage = mock<AccountStorage>()
         // There's no account at the start.
         `when`(accountStorage.read()).thenReturn(null)
 
         val manager = TestableFxaAccountManager(
             testContext,
-                ServerConfig.release("dummyId", "bad://url"),
-                accountStorage, coroutineContext = this.coroutineContext
+            ServerConfig(Server.RELEASE, "dummyId", "bad://url"),
+            accountStorage,
+            coroutineContext = this.coroutineContext,
         )
 
         val accountObserver: AccountObserver = mock()
 
         manager.register(accountObserver)
-        manager.initAsync().await()
+        manager.start()
 
         verify(accountObserver, never()).onAuthenticated(any(), any())
         verify(accountObserver, never()).onProfileUpdated(any())
@@ -905,30 +904,38 @@ class FxaAccountManagerTest {
     }
 
     @Test
-    fun `with persisted account and profile`() = runBlocking {
+    fun `with persisted account and profile`() = runTest {
         val accountStorage = mock<AccountStorage>()
         val mockAccount: OAuthAccount = mock()
         val constellation: DeviceConstellation = mock()
         val profile = Profile(
-            "testUid", "test@example.com", null, "Test Profile")
-        `when`(mockAccount.getProfileAsync(anyBoolean())).thenReturn(CompletableDeferred(profile))
+            "testUid",
+            "test@example.com",
+            null,
+            "Test Profile",
+        )
+        `when`(mockAccount.getProfile(ignoreCache = false)).thenReturn(profile)
+        `when`(mockAccount.isInMigrationState()).thenReturn(null)
         // We have an account at the start.
         `when`(accountStorage.read()).thenReturn(mockAccount)
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.ensureCapabilitiesAsync(any())).thenReturn(CompletableDeferred(true))
+        `when`(constellation.finalizeDevice(eq(AuthType.Existing), any())).thenReturn(ServiceResult.Ok)
 
         val manager = TestableFxaAccountManager(
             testContext,
-                ServerConfig.release("dummyId", "bad://url"),
-                accountStorage,
-                emptySet(), null, this.coroutineContext
+            ServerConfig(Server.RELEASE, "dummyId", "bad://url"),
+            accountStorage,
+            emptySet(),
+            null,
+            this.coroutineContext,
         )
 
         val accountObserver: AccountObserver = mock()
 
         manager.register(accountObserver)
 
-        manager.initAsync().await()
+        manager.start()
 
         // Make sure that account and profile observers are fired exactly once.
         verify(accountObserver, times(1)).onAuthenticated(mockAccount, AuthType.Existing)
@@ -942,21 +949,24 @@ class FxaAccountManagerTest {
         assertEquals(mockAccount, manager.authenticatedAccount())
         assertEquals(profile, manager.accountProfile())
 
-        // Assert that we don't refresh device state for non-SEND_TAB enabled devices.
-        verify(constellation, never()).refreshDevicesAsync()
-        verify(constellation, never()).pollForEventsAsync()
-
         // Make sure 'logoutAsync' clears out state and fires correct observers.
         reset(accountObserver)
         reset(accountStorage)
-        `when`(mockAccount.disconnectAsync()).thenReturn(CompletableDeferred(true))
-        verify(mockAccount, never()).disconnectAsync()
-        manager.logoutAsync().await()
+        `when`(mockAccount.disconnect()).thenReturn(true)
 
+        // Simulate SyncManager populating SyncEnginesStorage with some state.
+        SyncEnginesStorage(testContext).setStatus(SyncEngine.History, true)
+        SyncEnginesStorage(testContext).setStatus(SyncEngine.Passwords, false)
+        assertTrue(SyncEnginesStorage(testContext).getStatus().isNotEmpty())
+
+        verify(mockAccount, never()).disconnect()
+        manager.logout()
+
+        assertTrue(SyncEnginesStorage(testContext).getStatus().isEmpty())
         verify(accountObserver, never()).onAuthenticated(any(), any())
         verify(accountObserver, never()).onProfileUpdated(any())
         verify(accountObserver, times(1)).onLoggedOut()
-        verify(mockAccount, times(1)).disconnectAsync()
+        verify(mockAccount, times(1)).disconnect()
 
         verify(accountStorage, never()).read()
         verify(accountStorage, never()).write(any())
@@ -967,9 +977,10 @@ class FxaAccountManagerTest {
     }
 
     @Test
-    fun `happy authentication and profile flow`() = runBlocking {
+    fun `happy authentication and profile flow`() = runTest {
         val mockAccount: OAuthAccount = mock()
         val constellation: DeviceConstellation = mock()
+        `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
         val profile = Profile(uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
         val accountStorage = mock<AccountStorage>()
         val accountObserver: AccountObserver = mock()
@@ -980,14 +991,15 @@ class FxaAccountManagerTest {
         verify(accountObserver, never()).onAuthenticated(any(), any())
 
         reset(accountObserver)
-        assertEquals("auth://url", manager.beginAuthenticationAsync().await())
+        assertEquals("auth://url", manager.beginAuthentication())
         assertNull(manager.authenticatedAccount())
         assertNull(manager.accountProfile())
 
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await())
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
 
         verify(accountStorage, times(1)).read()
         verify(accountStorage, never()).clear()
@@ -998,12 +1010,21 @@ class FxaAccountManagerTest {
 
         assertEquals(mockAccount, manager.authenticatedAccount())
         assertEquals(profile, manager.accountProfile())
+
+        val cachedAuthInfo = SyncAuthInfoCache(testContext).getCached()
+        assertNotNull(cachedAuthInfo)
+        assertEquals("kid", cachedAuthInfo!!.kid)
+        assertEquals("someToken", cachedAuthInfo.fxaAccessToken)
+        assertEquals("k", cachedAuthInfo.syncKey)
+        assertEquals("some://url", cachedAuthInfo.tokenServerUrl)
+        assertTrue(cachedAuthInfo.fxaAccessTokenExpiresAt > 0)
     }
 
     @Test(expected = FxaPanicException::class)
-    fun `fxa panic during initDevice flow`() = runBlocking {
+    fun `fxa panic during initDevice flow`() = runTest {
         val mockAccount: OAuthAccount = mock()
         val constellation: DeviceConstellation = mock()
+        `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
         val profile = Profile(uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
         val accountStorage = mock<AccountStorage>()
         val accountObserver: AccountObserver = mock()
@@ -1014,50 +1035,52 @@ class FxaAccountManagerTest {
         verify(accountObserver, never()).onAuthenticated(any(), any())
 
         reset(accountObserver)
-        assertEquals("auth://url", manager.beginAuthenticationAsync().await())
+        assertEquals("auth://url", manager.beginAuthentication())
         assertNull(manager.authenticatedAccount())
         assertNull(manager.accountProfile())
 
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        val fxaPanic = CompletableDeferred<Boolean>()
-        fxaPanic.completeExceptionally(FxaPanicException("panic!"))
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(fxaPanic)
+        doAnswer {
+            throw FxaPanicException("Don't panic!")
+        }.`when`(constellation).finalizeDevice(any(), any())
 
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await())
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
     }
 
     @Test(expected = FxaPanicException::class)
-    fun `fxa panic during pairing flow`() = runBlocking {
+    fun `fxa panic during pairing flow`() = runTest {
         val mockAccount: OAuthAccount = mock()
+        `when`(mockAccount.deviceConstellation()).thenReturn(mock())
         val profile = Profile(uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
         val accountStorage = mock<AccountStorage>()
-        `when`(mockAccount.getProfileAsync(anyBoolean())).thenReturn(CompletableDeferred(profile))
+        `when`(mockAccount.getProfile(ignoreCache = false)).thenReturn(profile)
 
-        val fxaPanic = CompletableDeferred<AuthFlowUrl>()
-        fxaPanic.completeExceptionally(FxaPanicException("panic!"))
-
-        `when`(mockAccount.beginPairingFlowAsync(any(), any())).thenReturn(fxaPanic)
-        `when`(mockAccount.completeOAuthFlowAsync(anyString(), anyString())).thenReturn(CompletableDeferred(true))
+        doAnswer {
+            throw FxaPanicException("Don't panic!")
+        }.`when`(mockAccount).beginPairingFlow(any(), any(), anyString())
+        `when`(mockAccount.completeOAuthFlow(anyString(), anyString())).thenReturn(true)
         // There's no account at the start.
         `when`(accountStorage.read()).thenReturn(null)
 
         val manager = TestableFxaAccountManager(
             testContext,
-                ServerConfig.release("dummyId", "bad://url"),
-                accountStorage, coroutineContext = coroutineContext
+            ServerConfig(Server.RELEASE, "dummyId", "bad://url"),
+            accountStorage,
+            coroutineContext = coroutineContext,
         ) {
             mockAccount
         }
 
-        manager.initAsync().await()
-        manager.beginAuthenticationAsync("http://pairing.com").await()
+        manager.start()
+        manager.beginAuthentication("http://pairing.com")
         fail()
     }
 
     @Test
-    fun `happy pairing authentication and profile flow`() = runBlocking {
+    fun `happy pairing authentication and profile flow`() = runTest {
         val mockAccount: OAuthAccount = mock()
         val constellation: DeviceConstellation = mock()
+        `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
         val profile = Profile(uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
         val accountStorage = mock<AccountStorage>()
         val accountObserver: AccountObserver = mock()
@@ -1068,14 +1091,15 @@ class FxaAccountManagerTest {
         verify(accountObserver, never()).onAuthenticated(any(), any())
 
         reset(accountObserver)
-        assertEquals("auth://url", manager.beginAuthenticationAsync(pairingUrl = "auth://pairing").await())
+        assertEquals("auth://url", manager.beginAuthentication(pairingUrl = "auth://pairing"))
         assertNull(manager.authenticatedAccount())
         assertNull(manager.accountProfile())
 
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await())
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
 
         verify(accountStorage, times(1)).read()
         verify(accountStorage, never()).clear()
@@ -1089,7 +1113,50 @@ class FxaAccountManagerTest {
     }
 
     @Test
-    fun `unhappy authentication flow`() = runBlocking {
+    fun `repeated unfinished authentication attempts succeed`() = runTest {
+        val mockAccount: OAuthAccount = mock()
+        val constellation: DeviceConstellation = mock()
+        `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
+        val profile = Profile(uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
+        val accountStorage = mock<AccountStorage>()
+        val accountObserver: AccountObserver = mock()
+        val manager = prepareHappyAuthenticationFlow(mockAccount, profile, accountStorage, accountObserver, this.coroutineContext)
+
+        // We start off as logged-out, but the event won't be called (initial default state is assumed).
+        verify(accountObserver, never()).onLoggedOut()
+        verify(accountObserver, never()).onAuthenticated(any(), any())
+
+        // Begin auth for the first time.
+        reset(accountObserver)
+        assertEquals("auth://url", manager.beginAuthentication(pairingUrl = "auth://pairing"))
+        assertNull(manager.authenticatedAccount())
+        assertNull(manager.accountProfile())
+
+        // Now, try to begin again before finishing the first one.
+        assertEquals("auth://url", manager.beginAuthentication(pairingUrl = "auth://pairing"))
+        assertNull(manager.authenticatedAccount())
+        assertNull(manager.accountProfile())
+
+        // The rest should "just work".
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
+        `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
+
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
+
+        verify(accountStorage, times(1)).read()
+        verify(accountStorage, never()).clear()
+
+        verify(accountObserver, times(1)).onAuthenticated(mockAccount, AuthType.Signin)
+        verify(accountObserver, times(1)).onProfileUpdated(profile)
+        verify(accountObserver, never()).onLoggedOut()
+
+        assertEquals(mockAccount, manager.authenticatedAccount())
+        assertEquals(profile, manager.accountProfile())
+    }
+
+    @Test
+    fun `unhappy authentication flow`() = runTest {
         val accountStorage = mock<AccountStorage>()
         val mockAccount: OAuthAccount = mock()
         val constellation: DeviceConstellation = mock()
@@ -1098,6 +1165,7 @@ class FxaAccountManagerTest {
         val manager = prepareUnhappyAuthenticationFlow(mockAccount, profile, accountStorage, accountObserver, this.coroutineContext)
 
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
 
         // We start off as logged-out, but the event won't be called (initial default state is assumed).
         verify(accountObserver, never()).onLoggedOut()
@@ -1105,25 +1173,26 @@ class FxaAccountManagerTest {
 
         reset(accountObserver)
 
-        assertNull(manager.beginAuthenticationAsync().await())
+        assertNull(manager.beginAuthentication())
 
         // Confirm that account state observable doesn't receive authentication errors.
         assertNull(manager.authenticatedAccount())
         assertNull(manager.accountProfile())
 
         // Try again, without any network problems this time.
-        `when`(mockAccount.beginOAuthFlowAsync(any())).thenReturn(CompletableDeferred(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url")))
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
+        `when`(mockAccount.beginOAuthFlow(any(), anyString())).thenReturn(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url"))
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
-        assertEquals("auth://url", manager.beginAuthenticationAsync().await())
+        assertEquals("auth://url", manager.beginAuthentication())
 
         assertNull(manager.authenticatedAccount())
         assertNull(manager.accountProfile())
+        verify(accountStorage, times(1)).clear()
 
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await())
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
 
         verify(accountStorage, times(1)).read()
-        verify(accountStorage, never()).clear()
+        verify(accountStorage, times(1)).clear()
 
         verify(accountObserver, times(1)).onAuthenticated(mockAccount, AuthType.Signin)
         verify(accountObserver, times(1)).onProfileUpdated(profile)
@@ -1134,7 +1203,7 @@ class FxaAccountManagerTest {
     }
 
     @Test
-    fun `unhappy pairing authentication flow`() = runBlocking {
+    fun `unhappy pairing authentication flow`() = runTest {
         val accountStorage = mock<AccountStorage>()
         val mockAccount: OAuthAccount = mock()
         val constellation: DeviceConstellation = mock()
@@ -1142,6 +1211,7 @@ class FxaAccountManagerTest {
         val accountObserver: AccountObserver = mock()
         val manager = prepareUnhappyAuthenticationFlow(mockAccount, profile, accountStorage, accountObserver, this.coroutineContext)
 
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
 
         // We start off as logged-out, but the event won't be called (initial default state is assumed).
@@ -1150,25 +1220,26 @@ class FxaAccountManagerTest {
 
         reset(accountObserver)
 
-        assertNull(manager.beginAuthenticationAsync(pairingUrl = "auth://pairing").await())
+        assertNull(manager.beginAuthentication(pairingUrl = "auth://pairing"))
 
         // Confirm that account state observable doesn't receive authentication errors.
         assertNull(manager.authenticatedAccount())
         assertNull(manager.accountProfile())
 
         // Try again, without any network problems this time.
-        `when`(mockAccount.beginPairingFlowAsync(anyString(), any())).thenReturn(CompletableDeferred(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url")))
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
+        `when`(mockAccount.beginPairingFlow(anyString(), any(), anyString())).thenReturn(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url"))
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
-        assertEquals("auth://url", manager.beginAuthenticationAsync(pairingUrl = "auth://pairing").await())
+        assertEquals("auth://url", manager.beginAuthentication(pairingUrl = "auth://pairing"))
 
         assertNull(manager.authenticatedAccount())
         assertNull(manager.accountProfile())
+        verify(accountStorage, times(1)).clear()
 
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await())
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
 
         verify(accountStorage, times(1)).read()
-        verify(accountStorage, never()).clear()
+        verify(accountStorage, times(1)).clear()
 
         verify(accountObserver, times(1)).onAuthenticated(mockAccount, AuthType.Signin)
         verify(accountObserver, times(1)).onProfileUpdated(profile)
@@ -1179,9 +1250,10 @@ class FxaAccountManagerTest {
     }
 
     @Test
-    fun `authentication issues are propagated via AccountObserver`() = runBlocking {
+    fun `authentication issues are propagated via AccountObserver`() = runTest {
         val mockAccount: OAuthAccount = mock()
         val constellation: DeviceConstellation = mock()
+        `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
         val profile = Profile(uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
         val accountStorage = mock<AccountStorage>()
         val accountObserver: AccountObserver = mock()
@@ -1192,39 +1264,37 @@ class FxaAccountManagerTest {
         verify(accountObserver, never()).onAuthenticated(any(), any())
 
         reset(accountObserver)
-        assertEquals("auth://url", manager.beginAuthenticationAsync().await())
+        assertEquals("auth://url", manager.beginAuthentication())
         assertNull(manager.authenticatedAccount())
         assertNull(manager.accountProfile())
 
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await())
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
 
         verify(accountObserver, never()).onAuthenticationProblems()
         assertFalse(manager.accountNeedsReauth())
 
         // Our recovery flow should attempt to hit this API. Model the "can't recover" condition by returning 'false'.
-        `when`(mockAccount.checkAuthorizationStatusAsync(eq("profile"))).thenReturn(CompletableDeferred(false))
+        `when`(mockAccount.checkAuthorizationStatus(eq("profile"))).thenReturn(false)
 
         // At this point, we're logged in. Trigger a 401.
-        authErrorRegistry.notifyObservers {
-            runBlocking(this@runBlocking.coroutineContext) {
-                onAuthErrorAsync(AuthException(AuthExceptionType.UNAUTHORIZED, FxaUnauthorizedException("401"))).await()
-            }
-        }
+        manager.encounteredAuthError("a test")
 
         verify(accountObserver, times(1)).onAuthenticationProblems()
         assertTrue(manager.accountNeedsReauth())
         assertEquals(mockAccount, manager.authenticatedAccount())
-        assertNull(manager.accountProfile())
+
+        // Make sure profile is still available.
+        assertEquals(profile, manager.accountProfile())
 
         // Able to re-authenticate.
         reset(accountObserver)
-        assertEquals("auth://url", manager.beginAuthenticationAsync().await())
-        assertEquals(mockAccount, manager.authenticatedAccount())
+        assertEquals("auth://url", manager.beginAuthentication())
 
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Pairing, "dummyCode", EXPECTED_AUTH_STATE)).await())
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Pairing, "dummyCode", EXPECTED_AUTH_STATE)))
 
         verify(accountObserver).onAuthenticated(mockAccount, AuthType.Pairing)
         verify(accountObserver, never()).onAuthenticationProblems()
@@ -1233,65 +1303,160 @@ class FxaAccountManagerTest {
     }
 
     @Test
-    fun `authentication issues are recoverable via checkAuthorizationState`() = runBlocking {
+    fun `authentication issues are recoverable via checkAuthorizationState`() = runTest {
         val mockAccount: OAuthAccount = mock()
         val constellation: DeviceConstellation = mock()
+        `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
         val profile = Profile(uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
         val accountStorage = mock<AccountStorage>()
         val accountObserver: AccountObserver = mock()
-        val manager = prepareHappyAuthenticationFlow(mockAccount, profile, accountStorage, accountObserver, this.coroutineContext)
+        val crashReporter: CrashReporting = mock()
+        val manager = prepareHappyAuthenticationFlow(
+            mockAccount,
+            profile,
+            accountStorage,
+            accountObserver,
+            this.coroutineContext,
+            setOf(DeviceCapability.SEND_TAB),
+            crashReporter,
+        )
 
         // We start off as logged-out, but the event won't be called (initial default state is assumed).
         verify(accountObserver, never()).onLoggedOut()
         verify(accountObserver, never()).onAuthenticated(any(), any())
 
         reset(accountObserver)
-        assertEquals("auth://url", manager.beginAuthenticationAsync().await())
+        assertEquals("auth://url", manager.beginAuthentication())
         assertNull(manager.authenticatedAccount())
         assertNull(manager.accountProfile())
 
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
+        `when`(constellation.refreshDevices()).thenReturn(true)
 
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await())
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
 
         verify(accountObserver, never()).onAuthenticationProblems()
         assertFalse(manager.accountNeedsReauth())
 
         // Recovery flow will hit this API, and will recover if it returns 'true'.
-        `when`(mockAccount.checkAuthorizationStatusAsync(eq("profile"))).thenReturn(CompletableDeferred(true))
+        `when`(mockAccount.checkAuthorizationStatus(eq("profile"))).thenReturn(true)
 
         // At this point, we're logged in. Trigger a 401.
-        authErrorRegistry.notifyObservers {
-            runBlocking(this@runBlocking.coroutineContext) {
-                onAuthErrorAsync(AuthException(AuthExceptionType.UNAUTHORIZED, FxaUnauthorizedException("401"))).await()
-            }
-        }
-
-        // Since we've recovered, outside observers should not have witnessed the momentary problem state.
-        verify(accountObserver, never()).onAuthenticationProblems()
-        assertFalse(manager.accountNeedsReauth())
-        assertEquals(mockAccount, manager.authenticatedAccount())
+        manager.encounteredAuthError("a test")
+        assertRecovered(true, "a test", constellation, accountObserver, manager, mockAccount, crashReporter)
     }
 
     @Test
-    fun `unhappy profile fetching flow`() = runBlocking {
+    fun `authentication recovery flow has a circuit breaker`() = runTest {
+        val mockAccount: OAuthAccount = mock()
+        val constellation: DeviceConstellation = mock()
+        `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
+        val profile = Profile(uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
+        val accountStorage = mock<AccountStorage>()
+        val accountObserver: AccountObserver = mock()
+        val crashReporter: CrashReporting = mock()
+        val manager = prepareHappyAuthenticationFlow(
+            mockAccount,
+            profile,
+            accountStorage,
+            accountObserver,
+            this.coroutineContext,
+            setOf(DeviceCapability.SEND_TAB),
+            crashReporter,
+        )
+        GlobalAccountManager.setInstance(manager)
+
+        // We start off as logged-out, but the event won't be called (initial default state is assumed).
+        verify(accountObserver, never()).onLoggedOut()
+        verify(accountObserver, never()).onAuthenticated(any(), any())
+
+        reset(accountObserver)
+        assertEquals("auth://url", manager.beginAuthentication())
+        assertNull(manager.authenticatedAccount())
+        assertNull(manager.accountProfile())
+
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
+        `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
+        `when`(constellation.refreshDevices()).thenReturn(true)
+
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
+
+        verify(accountObserver, never()).onAuthenticationProblems()
+        assertFalse(manager.accountNeedsReauth())
+
+        // Recovery flow will hit this API, and will recover if it returns 'true'.
+        `when`(mockAccount.checkAuthorizationStatus(eq("profile"))).thenReturn(true)
+
+        // At this point, we're logged in. Trigger a 401 for the first time.
+        manager.encounteredAuthError("a test")
+        // ... and just for good measure, trigger another 401 to simulate overlapping API calls legitimately hitting 401s.
+        manager.encounteredAuthError("a test", errorCountWithinTheTimeWindow = 3)
+        assertRecovered(true, "a test", constellation, accountObserver, manager, mockAccount, crashReporter)
+
+        // We've fully recovered by now, let's hit another 401 sometime later (count has been reset).
+        manager.encounteredAuthError("a test")
+        assertRecovered(true, "a test", constellation, accountObserver, manager, mockAccount, crashReporter)
+
+        // Suddenly, we're in a bad loop, expect to hit our circuit-breaker here.
+        manager.encounteredAuthError("another test", errorCountWithinTheTimeWindow = 50)
+        assertRecovered(false, "another test", constellation, accountObserver, manager, mockAccount, crashReporter)
+    }
+
+    private suspend fun assertRecovered(
+        success: Boolean,
+        operation: String,
+        constellation: DeviceConstellation,
+        accountObserver: AccountObserver,
+        manager: FxaAccountManager,
+        mockAccount: OAuthAccount,
+        crashReporter: CrashReporting,
+    ) {
+        // During recovery, only 'sign-in' finalize device call should have been made.
+        verify(constellation, times(1)).finalizeDevice(eq(AuthType.Signin), any())
+        verify(constellation, never()).finalizeDevice(eq(AuthType.Recovered), any())
+
+        assertEquals(mockAccount, manager.authenticatedAccount())
+
+        if (success) {
+            // Since we've recovered, outside observers should not have witnessed the momentary problem state.
+            verify(accountObserver, never()).onAuthenticationProblems()
+            assertFalse(manager.accountNeedsReauth())
+            verifyNoInteractions(crashReporter)
+        } else {
+            // We were unable to recover, outside observers should have been told.
+            verify(accountObserver, times(1)).onAuthenticationProblems()
+            assertTrue(manager.accountNeedsReauth())
+
+            val captor = argumentCaptor<Throwable>()
+            verify(crashReporter).submitCaughtException(captor.capture())
+            assertEquals("Auth recovery circuit breaker triggered by: $operation", captor.value.message)
+            assertTrue(captor.value is AccountManagerException.AuthRecoveryCircuitBreakerException)
+        }
+    }
+
+    @Test
+    fun `unhappy profile fetching flow`() = runTest {
         val accountStorage = mock<AccountStorage>()
         val mockAccount: OAuthAccount = mock()
         val constellation: DeviceConstellation = mock()
 
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
-        `when`(mockAccount.getProfileAsync(anyBoolean())).thenReturn(CompletableDeferred(value = null))
-        `when`(mockAccount.beginOAuthFlowAsync(any())).thenReturn(CompletableDeferred(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url")))
-        `when`(mockAccount.completeOAuthFlowAsync(anyString(), anyString())).thenReturn(CompletableDeferred(true))
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
+        `when`(mockAccount.getProfile(ignoreCache = false)).thenReturn(null)
+        `when`(mockAccount.beginOAuthFlow(any(), anyString())).thenReturn(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url"))
+        `when`(mockAccount.completeOAuthFlow(anyString(), anyString())).thenReturn(true)
         // There's no account at the start.
         `when`(accountStorage.read()).thenReturn(null)
 
         val manager = TestableFxaAccountManager(
             testContext,
-                ServerConfig.release("dummyId", "bad://url"),
-                accountStorage, coroutineContext = this.coroutineContext
+            ServerConfig(Server.RELEASE, "dummyId", "bad://url"),
+            accountStorage,
+            coroutineContext = this.coroutineContext,
         ) {
             mockAccount
         }
@@ -1299,18 +1464,18 @@ class FxaAccountManagerTest {
         val accountObserver: AccountObserver = mock()
 
         manager.register(accountObserver)
-        manager.initAsync().await()
+        manager.start()
 
         // We start off as logged-out, but the event won't be called (initial default state is assumed).
         verify(accountObserver, never()).onLoggedOut()
         verify(accountObserver, never()).onAuthenticated(any(), any())
 
         reset(accountObserver)
-        assertEquals("auth://url", manager.beginAuthenticationAsync().await())
+        assertEquals("auth://url", manager.beginAuthentication())
         assertNull(manager.authenticatedAccount())
         assertNull(manager.accountProfile())
 
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await())
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
 
         verify(accountStorage, times(1)).read()
         verify(accountStorage, never()).clear()
@@ -1325,190 +1490,211 @@ class FxaAccountManagerTest {
         // Make sure we can re-try fetching a profile. This time, let's have it succeed.
         reset(accountObserver)
         val profile = Profile(
-            uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
+            uid = "testUID",
+            avatar = null,
+            email = "test@example.com",
+            displayName = "test profile",
+        )
 
-        `when`(mockAccount.getProfileAsync(anyBoolean())).thenReturn(CompletableDeferred(profile))
-
-        manager.updateProfileAsync().await()
+        `when`(mockAccount.getProfile(ignoreCache = true)).thenReturn(profile)
+        assertNull(manager.accountProfile())
+        assertEquals(profile, manager.refreshProfile(true))
 
         verify(accountObserver, times(1)).onProfileUpdated(profile)
         verify(accountObserver, never()).onAuthenticated(any(), any())
         verify(accountObserver, never()).onLoggedOut()
-        assertEquals(profile, manager.accountProfile())
     }
 
     @Test
-    fun `profile fetching flow hit an unrecoverable auth problem`() = runBlocking {
+    fun `profile fetching flow hit an unrecoverable auth problem`() = runTest {
         val accountStorage = mock<AccountStorage>()
         val mockAccount: OAuthAccount = mock()
         val constellation: DeviceConstellation = mock()
 
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
-
-        `when`(mockAccount.getProfileAsync(anyBoolean())).then {
-            // Hit an auth error.
-            authErrorRegistry.notifyObservers { onAuthErrorAsync(AuthException(AuthExceptionType.UNAUTHORIZED)) }
-            CompletableDeferred(value = null)
-        }
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
         // Our recovery flow should attempt to hit this API. Model the "can't recover" condition by returning false.
-        `when`(mockAccount.checkAuthorizationStatusAsync(eq("profile"))).thenReturn(CompletableDeferred(false))
+        `when`(mockAccount.checkAuthorizationStatus(eq("profile"))).thenReturn(false)
 
-        `when`(mockAccount.beginOAuthFlowAsync(any())).thenReturn(CompletableDeferred(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url")))
-        `when`(mockAccount.completeOAuthFlowAsync(anyString(), anyString())).thenReturn(CompletableDeferred(true))
-        // There's no account at the start.
-        `when`(accountStorage.read()).thenReturn(null)
-
-        val manager = TestableFxaAccountManager(
-                testContext,
-                ServerConfig.release("dummyId", "bad://url"),
-                accountStorage, coroutineContext = this.coroutineContext
-        ) {
-            mockAccount
-        }
-
-        val accountObserver: AccountObserver = mock()
-
-        manager.register(accountObserver)
-        manager.initAsync().await()
-
-        // We start off as logged-out, but the event won't be called (initial default state is assumed).
-        verify(accountObserver, never()).onLoggedOut()
-        verify(accountObserver, never()).onAuthenticated(any(), any())
-        verify(accountObserver, never()).onAuthenticationProblems()
-        verify(mockAccount, never()).checkAuthorizationStatusAsync(any())
-        assertFalse(manager.accountNeedsReauth())
-
-        reset(accountObserver)
-        assertEquals("auth://url", manager.beginAuthenticationAsync().await())
-        assertNull(manager.authenticatedAccount())
-        assertNull(manager.accountProfile())
-
-        manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await()
-
-        assertTrue(manager.accountNeedsReauth())
-        verify(accountObserver, times(1)).onAuthenticationProblems()
-        verify(mockAccount, times(1)).checkAuthorizationStatusAsync(eq("profile"))
-        Unit
-    }
-
-    @Test
-    fun `profile fetching flow hit an unrecoverable auth problem for which we can't determine a recovery state`() = runBlocking {
-        val accountStorage = mock<AccountStorage>()
-        val mockAccount: OAuthAccount = mock()
-        val constellation: DeviceConstellation = mock()
-
-        `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
-
-        `when`(mockAccount.getProfileAsync(anyBoolean())).then {
-            // Hit an auth error.
-            authErrorRegistry.notifyObservers { onAuthErrorAsync(AuthException(AuthExceptionType.UNAUTHORIZED)) }
-            CompletableDeferred(value = null)
-        }
-
-        // Our recovery flow should attempt to hit this API. Model the "don't know what's up" condition by returning null.
-        `when`(mockAccount.checkAuthorizationStatusAsync(eq("profile"))).thenReturn(CompletableDeferred(value = null))
-
-        `when`(mockAccount.beginOAuthFlowAsync(any())).thenReturn(CompletableDeferred(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url")))
-        `when`(mockAccount.completeOAuthFlowAsync(anyString(), anyString())).thenReturn(CompletableDeferred(true))
+        `when`(mockAccount.beginOAuthFlow(any(), anyString())).thenReturn(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url"))
+        `when`(mockAccount.completeOAuthFlow(anyString(), anyString())).thenReturn(true)
         // There's no account at the start.
         `when`(accountStorage.read()).thenReturn(null)
 
         val manager = TestableFxaAccountManager(
             testContext,
-                ServerConfig.release("dummyId", "bad://url"),
-                accountStorage, coroutineContext = this.coroutineContext
+            ServerConfig(Server.RELEASE, "dummyId", "bad://url"),
+            accountStorage,
+            coroutineContext = this.coroutineContext,
         ) {
             mockAccount
+        }
+
+        lateinit var waitFor: Job
+        `when`(mockAccount.getProfile(ignoreCache = false)).then {
+            // Hit an auth error.
+            waitFor = CoroutineScope(coroutineContext).launch { manager.encounteredAuthError("a test") }
+            null
         }
 
         val accountObserver: AccountObserver = mock()
 
         manager.register(accountObserver)
-        manager.initAsync().await()
+        manager.start()
 
         // We start off as logged-out, but the event won't be called (initial default state is assumed).
         verify(accountObserver, never()).onLoggedOut()
         verify(accountObserver, never()).onAuthenticated(any(), any())
         verify(accountObserver, never()).onAuthenticationProblems()
-        verify(mockAccount, never()).checkAuthorizationStatusAsync(any())
+        verify(mockAccount, never()).checkAuthorizationStatus(any())
         assertFalse(manager.accountNeedsReauth())
 
         reset(accountObserver)
-        assertEquals("auth://url", manager.beginAuthenticationAsync().await())
+        assertEquals("auth://url", manager.beginAuthentication())
         assertNull(manager.authenticatedAccount())
         assertNull(manager.accountProfile())
 
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await())
+        manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE))
 
+        waitFor.join()
         assertTrue(manager.accountNeedsReauth())
         verify(accountObserver, times(1)).onAuthenticationProblems()
-        verify(mockAccount, times(1)).checkAuthorizationStatusAsync(eq("profile"))
+        verify(mockAccount, times(1)).checkAuthorizationStatus(eq("profile"))
         Unit
     }
 
     @Test
-    fun `profile fetching flow hit a recoverable auth problem`() = runBlocking {
+    fun `profile fetching flow hit an unrecoverable auth problem for which we can't determine a recovery state`() = runTest {
+        val accountStorage = mock<AccountStorage>()
+        val mockAccount: OAuthAccount = mock()
+        val constellation: DeviceConstellation = mock()
+
+        `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
+
+        // Our recovery flow should attempt to hit this API. Model the "don't know what's up" condition by returning null.
+        `when`(mockAccount.checkAuthorizationStatus(eq("profile"))).thenReturn(null)
+
+        `when`(mockAccount.beginOAuthFlow(any(), anyString())).thenReturn(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url"))
+        `when`(mockAccount.completeOAuthFlow(anyString(), anyString())).thenReturn(true)
+        // There's no account at the start.
+        `when`(accountStorage.read()).thenReturn(null)
+
+        val manager = TestableFxaAccountManager(
+            testContext,
+            ServerConfig(Server.RELEASE, "dummyId", "bad://url"),
+            accountStorage,
+            coroutineContext = this.coroutineContext,
+        ) {
+            mockAccount
+        }
+
+        lateinit var waitFor: Job
+        `when`(mockAccount.getProfile(ignoreCache = false)).then {
+            // Hit an auth error.
+            waitFor = CoroutineScope(coroutineContext).launch { manager.encounteredAuthError("a test") }
+            null
+        }
+
+        val accountObserver: AccountObserver = mock()
+
+        manager.register(accountObserver)
+        manager.start()
+
+        // We start off as logged-out, but the event won't be called (initial default state is assumed).
+        verify(accountObserver, never()).onLoggedOut()
+        verify(accountObserver, never()).onAuthenticated(any(), any())
+        verify(accountObserver, never()).onAuthenticationProblems()
+        verify(mockAccount, never()).checkAuthorizationStatus(any())
+        assertFalse(manager.accountNeedsReauth())
+
+        reset(accountObserver)
+        assertEquals("auth://url", manager.beginAuthentication())
+        assertNull(manager.authenticatedAccount())
+        assertNull(manager.accountProfile())
+
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
+
+        waitFor.join()
+        assertTrue(manager.accountNeedsReauth())
+        verify(accountObserver, times(1)).onAuthenticationProblems()
+        verify(mockAccount, times(1)).checkAuthorizationStatus(eq("profile"))
+        Unit
+    }
+
+    @Test
+    fun `profile fetching flow hit a recoverable auth problem`() = runTest {
         val accountStorage = mock<AccountStorage>()
         val mockAccount: OAuthAccount = mock()
         val constellation: DeviceConstellation = mock()
         val captor = argumentCaptor<AuthType>()
 
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
         val profile = Profile(
-                uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
-        var didFailProfileFetch = false
-        `when`(mockAccount.getProfileAsync(anyBoolean())).then {
-            // Hit an auth error, but only once. As we recover from it, we'll attempt to fetch a profile
-            // again. At that point, we'd like to succeed.
-            if (!didFailProfileFetch) {
-                didFailProfileFetch = true
-                authErrorRegistry.notifyObservers { onAuthErrorAsync(AuthException(AuthExceptionType.UNAUTHORIZED)) }
-                CompletableDeferred<Profile?>(value = null)
-            } else {
-                CompletableDeferred(profile)
-            }
-        }
+            uid = "testUID",
+            avatar = null,
+            email = "test@example.com",
+            displayName = "test profile",
+        )
 
         // Recovery flow will hit this API, return a success.
-        `when`(mockAccount.checkAuthorizationStatusAsync(eq("profile"))).thenReturn(CompletableDeferred(true))
+        `when`(mockAccount.checkAuthorizationStatus(eq("profile"))).thenReturn(true)
 
-        `when`(mockAccount.beginOAuthFlowAsync(any())).thenReturn(CompletableDeferred(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url")))
-        `when`(mockAccount.completeOAuthFlowAsync(anyString(), anyString())).thenReturn(CompletableDeferred(true))
+        `when`(mockAccount.beginOAuthFlow(any(), anyString())).thenReturn(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url"))
+        `when`(mockAccount.completeOAuthFlow(anyString(), anyString())).thenReturn(true)
         // There's no account at the start.
         `when`(accountStorage.read()).thenReturn(null)
 
         val manager = TestableFxaAccountManager(
-                testContext,
-                ServerConfig.release("dummyId", "bad://url"),
-                accountStorage, coroutineContext = this.coroutineContext
+            testContext,
+            ServerConfig(Server.RELEASE, "dummyId", "bad://url"),
+            accountStorage,
+            coroutineContext = this.coroutineContext,
         ) {
             mockAccount
         }
 
+        var didFailProfileFetch = false
+        lateinit var waitFor: Job
+        `when`(mockAccount.getProfile(ignoreCache = false)).then {
+            // Hit an auth error, but only once. As we recover from it, we'll attempt to fetch a profile
+            // again. At that point, we'd like to succeed.
+            if (!didFailProfileFetch) {
+                didFailProfileFetch = true
+                waitFor = CoroutineScope(coroutineContext).launch { manager.encounteredAuthError("a test") }
+                null
+            } else {
+                profile
+            }
+        }
+        // Upon recovery, we'll hit an 'ignore cache' path.
+        `when`(mockAccount.getProfile(ignoreCache = true)).thenReturn(profile)
+
         val accountObserver: AccountObserver = mock()
 
         manager.register(accountObserver)
-        manager.initAsync().await()
+        manager.start()
 
         // We start off as logged-out, but the event won't be called (initial default state is assumed).
         verify(accountObserver, never()).onLoggedOut()
         verify(accountObserver, never()).onAuthenticated(any(), any())
         verify(accountObserver, never()).onAuthenticationProblems()
-        verify(mockAccount, never()).checkAuthorizationStatusAsync(any())
+        verify(mockAccount, never()).checkAuthorizationStatus(any())
         assertFalse(manager.accountNeedsReauth())
 
         reset(accountObserver)
-        assertEquals("auth://url", manager.beginAuthenticationAsync().await())
+        assertEquals("auth://url", manager.beginAuthentication())
         assertNull(manager.authenticatedAccount())
         assertNull(manager.accountProfile())
 
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signup, "dummyCode", EXPECTED_AUTH_STATE)).await())
-
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signup, "dummyCode", EXPECTED_AUTH_STATE)))
+        waitFor.join()
         assertFalse(manager.accountNeedsReauth())
         assertEquals(mockAccount, manager.authenticatedAccount())
         assertEquals(profile, manager.accountProfile())
@@ -1518,32 +1704,32 @@ class FxaAccountManagerTest {
         assertEquals(AuthType.Signup, captor.allValues[0])
         assertEquals(AuthType.Recovered, captor.allValues[1])
         // Verify that we went through the recovery flow.
-        verify(mockAccount, times(1)).checkAuthorizationStatusAsync(eq("profile"))
+        verify(mockAccount, times(1)).checkAuthorizationStatus(eq("profile"))
         Unit
     }
 
     @Test(expected = FxaPanicException::class)
-    fun `profile fetching flow hit an fxa panic, which is re-thrown`() = runBlocking {
+    fun `profile fetching flow hit an fxa panic, which is re-thrown`() = runTest {
         val accountStorage = mock<AccountStorage>()
         val mockAccount: OAuthAccount = mock()
         val constellation: DeviceConstellation = mock()
 
-        val exceptionalProfile = CompletableDeferred<Profile>()
-        val fxaException = FxaPanicException("500")
-        exceptionalProfile.completeExceptionally(fxaException)
-
+        `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.initDeviceAsync(any(), any(), any())).thenReturn(CompletableDeferred(true))
-        `when`(mockAccount.getProfileAsync(anyBoolean())).thenReturn(exceptionalProfile)
-        `when`(mockAccount.beginOAuthFlowAsync(any())).thenReturn(CompletableDeferred(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url")))
-        `when`(mockAccount.completeOAuthFlowAsync(anyString(), anyString())).thenReturn(CompletableDeferred(true))
+        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
+        doAnswer {
+            throw FxaPanicException("500")
+        }.`when`(mockAccount).getProfile(ignoreCache = false)
+        `when`(mockAccount.beginOAuthFlow(any(), anyString())).thenReturn(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url"))
+        `when`(mockAccount.completeOAuthFlow(anyString(), anyString())).thenReturn(true)
         // There's no account at the start.
         `when`(accountStorage.read()).thenReturn(null)
 
         val manager = TestableFxaAccountManager(
             testContext,
-                ServerConfig.release("dummyId", "bad://url"),
-                accountStorage, coroutineContext = this.coroutineContext
+            ServerConfig(Server.RELEASE, "dummyId", "bad://url"),
+            accountStorage,
+            coroutineContext = this.coroutineContext,
         ) {
             mockAccount
         }
@@ -1551,7 +1737,7 @@ class FxaAccountManagerTest {
         val accountObserver: AccountObserver = mock()
 
         manager.register(accountObserver)
-        manager.initAsync().await()
+        manager.start()
 
         // We start off as logged-out, but the event won't be called (initial default state is assumed).
         verify(accountObserver, never()).onLoggedOut()
@@ -1560,81 +1746,174 @@ class FxaAccountManagerTest {
         assertFalse(manager.accountNeedsReauth())
 
         reset(accountObserver)
-        assertEquals("auth://url", manager.beginAuthenticationAsync().await())
+        assertEquals("auth://url", manager.beginAuthentication())
         assertNull(manager.authenticatedAccount())
         assertNull(manager.accountProfile())
 
-        assertTrue(manager.finishAuthenticationAsync(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)).await())
+        assertTrue(manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE)))
     }
 
-    private fun prepareHappyAuthenticationFlow(
+    @Test
+    fun `accounts to sync integration`() {
+        val syncManager: SyncManager = mock()
+        val integration = FxaAccountManager.AccountsToSyncIntegration(syncManager)
+
+        // onAuthenticated - mapping of AuthType to SyncReason
+        integration.onAuthenticated(mock(), AuthType.Signin)
+        verify(syncManager, times(1)).start()
+        verify(syncManager, times(1)).now(eq(SyncReason.FirstSync), anyBoolean(), eq(listOf()))
+        integration.onAuthenticated(mock(), AuthType.Signup)
+        verify(syncManager, times(2)).start()
+        verify(syncManager, times(2)).now(eq(SyncReason.FirstSync), anyBoolean(), eq(listOf()))
+        integration.onAuthenticated(mock(), AuthType.Pairing)
+        verify(syncManager, times(3)).start()
+        verify(syncManager, times(3)).now(eq(SyncReason.FirstSync), anyBoolean(), eq(listOf()))
+        integration.onAuthenticated(mock(), AuthType.MigratedReuse)
+        verify(syncManager, times(4)).start()
+        verify(syncManager, times(4)).now(eq(SyncReason.FirstSync), anyBoolean(), eq(listOf()))
+        integration.onAuthenticated(mock(), AuthType.OtherExternal("test"))
+        verify(syncManager, times(5)).start()
+        verify(syncManager, times(5)).now(eq(SyncReason.FirstSync), anyBoolean(), eq(listOf()))
+        integration.onAuthenticated(mock(), AuthType.Existing)
+        verify(syncManager, times(6)).start()
+        verify(syncManager, times(1)).now(eq(SyncReason.Startup), anyBoolean(), eq(listOf()))
+        integration.onAuthenticated(mock(), AuthType.Recovered)
+        verify(syncManager, times(7)).start()
+        verify(syncManager, times(2)).now(eq(SyncReason.Startup), anyBoolean(), eq(listOf()))
+        verifyNoMoreInteractions(syncManager)
+
+        // onProfileUpdated - no-op
+        integration.onProfileUpdated(mock())
+        verifyNoMoreInteractions(syncManager)
+
+        // onAuthenticationProblems
+        integration.onAuthenticationProblems()
+        verify(syncManager).stop()
+        verifyNoMoreInteractions(syncManager)
+
+        // onLoggedOut
+        integration.onLoggedOut()
+        verify(syncManager, times(2)).stop()
+        verifyNoMoreInteractions(syncManager)
+    }
+
+    @Test
+    fun `GIVEN a sync observer WHEN registering it THEN add it to the sync observer registry`() {
+        val fxaManager = TestableFxaAccountManager(
+            context = testContext,
+            config = mock(),
+            storage = mock(),
+            capabilities = setOf(DeviceCapability.SEND_TAB),
+            syncConfig = null,
+            coroutineContext = mock(),
+        )
+        fxaManager.syncStatusObserverRegistry = mock()
+        val observer: SyncStatusObserver = mock()
+        val lifecycleOwner: LifecycleOwner = mock()
+
+        fxaManager.registerForSyncEvents(observer, lifecycleOwner, false)
+
+        verify(fxaManager.syncStatusObserverRegistry).register(observer, lifecycleOwner, false)
+        verifyNoMoreInteractions(fxaManager.syncStatusObserverRegistry)
+    }
+
+    @Test
+    fun `GIVEN a sync observer WHEN unregistering it THEN remove it from the sync observer registry`() {
+        val fxaManager = TestableFxaAccountManager(
+            context = testContext,
+            config = mock(),
+            storage = mock(),
+            capabilities = setOf(DeviceCapability.SEND_TAB),
+            syncConfig = null,
+            coroutineContext = mock(),
+        )
+        fxaManager.syncStatusObserverRegistry = mock()
+        val observer: SyncStatusObserver = mock()
+
+        fxaManager.unregisterForSyncEvents(observer)
+
+        verify(fxaManager.syncStatusObserverRegistry).unregister(observer)
+        verifyNoMoreInteractions(fxaManager.syncStatusObserverRegistry)
+    }
+
+    private suspend fun prepareHappyAuthenticationFlow(
         mockAccount: OAuthAccount,
         profile: Profile,
         accountStorage: AccountStorage,
         accountObserver: AccountObserver,
-        coroutineContext: CoroutineContext
+        coroutineContext: CoroutineContext,
+        capabilities: Set<DeviceCapability> = emptySet(),
+        crashReporter: CrashReporting? = null,
     ): FxaAccountManager {
+        val accessTokenInfo = AccessTokenInfo(
+            "testSc0pe",
+            "someToken",
+            OAuthScopedKey("kty", "testSc0pe", "kid", "k"),
+            System.currentTimeMillis() + 1000 * 10,
+        )
 
-        `when`(mockAccount.getProfileAsync(anyBoolean())).thenReturn(CompletableDeferred(profile))
-        `when`(mockAccount.beginOAuthFlowAsync(any())).thenReturn(CompletableDeferred(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url")))
-        `when`(mockAccount.beginPairingFlowAsync(anyString(), any())).thenReturn(CompletableDeferred(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url")))
-        `when`(mockAccount.completeOAuthFlowAsync(anyString(), anyString())).thenReturn(CompletableDeferred(true))
+        `when`(mockAccount.getProfile(ignoreCache = false)).thenReturn(profile)
+        `when`(mockAccount.beginOAuthFlow(any(), anyString())).thenReturn(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url"))
+        `when`(mockAccount.beginPairingFlow(anyString(), any(), anyString())).thenReturn(AuthFlowUrl(EXPECTED_AUTH_STATE, "auth://url"))
+        `when`(mockAccount.completeOAuthFlow(anyString(), anyString())).thenReturn(true)
+        `when`(mockAccount.getAccessToken(anyString())).thenReturn(accessTokenInfo)
+        `when`(mockAccount.getTokenServerEndpointURL()).thenReturn("some://url")
+
         // There's no account at the start.
         `when`(accountStorage.read()).thenReturn(null)
 
         val manager = TestableFxaAccountManager(
             testContext,
-                ServerConfig.release("dummyId", "bad://url"),
-                accountStorage, coroutineContext = coroutineContext
+            ServerConfig(Server.RELEASE, "dummyId", "bad://url"),
+            accountStorage,
+            capabilities,
+            SyncConfig(setOf(SyncEngine.History, SyncEngine.Bookmarks), PeriodicSyncConfig()),
+            coroutineContext = coroutineContext,
+            crashReporter = crashReporter,
+        ) {
+            mockAccount
+        }
+
+        manager.register(accountObserver)
+        manager.start()
+
+        return manager
+    }
+
+    private suspend fun prepareUnhappyAuthenticationFlow(
+        mockAccount: OAuthAccount,
+        profile: Profile,
+        accountStorage: AccountStorage,
+        accountObserver: AccountObserver,
+        coroutineContext: CoroutineContext,
+    ): FxaAccountManager {
+        `when`(mockAccount.getProfile(ignoreCache = false)).thenReturn(profile)
+        `when`(mockAccount.deviceConstellation()).thenReturn(mock())
+        `when`(mockAccount.beginOAuthFlow(any(), anyString())).thenReturn(null)
+        `when`(mockAccount.beginPairingFlow(anyString(), any(), anyString())).thenReturn(null)
+        `when`(mockAccount.completeOAuthFlow(anyString(), anyString())).thenReturn(true)
+        // There's no account at the start.
+        `when`(accountStorage.read()).thenReturn(null)
+
+        val manager = TestableFxaAccountManager(
+            testContext,
+            ServerConfig(Server.RELEASE, "dummyId", "bad://url"),
+            accountStorage,
+            coroutineContext = coroutineContext,
         ) {
             mockAccount
         }
 
         manager.register(accountObserver)
 
-        runBlocking(coroutineContext) {
-            manager.initAsync().await()
-        }
+        manager.start()
 
         return manager
     }
 
-    private fun prepareUnhappyAuthenticationFlow(
-        mockAccount: OAuthAccount,
-        profile: Profile,
-        accountStorage: AccountStorage,
-        accountObserver: AccountObserver,
-        coroutineContext: CoroutineContext
-    ): FxaAccountManager {
-        `when`(mockAccount.getProfileAsync(anyBoolean())).thenReturn(CompletableDeferred(profile))
-
-        `when`(mockAccount.beginOAuthFlowAsync(any())).thenReturn(CompletableDeferred(value = null))
-        `when`(mockAccount.beginPairingFlowAsync(anyString(), any())).thenReturn(CompletableDeferred(value = null))
-        `when`(mockAccount.completeOAuthFlowAsync(anyString(), anyString())).thenReturn(CompletableDeferred(true))
-        // There's no account at the start.
-        `when`(accountStorage.read()).thenReturn(null)
-
-        val manager = TestableFxaAccountManager(
-            testContext,
-                ServerConfig.release("dummyId", "bad://url"),
-                accountStorage, coroutineContext = coroutineContext
-        ) {
-            mockAccount
-        }
-
-        manager.register(accountObserver)
-
-        runBlocking(coroutineContext) {
-            manager.initAsync().await()
-        }
-
-        return manager
-    }
-
-    private fun mockDeviceConstellation(): DeviceConstellation {
+    private suspend fun mockDeviceConstellation(): DeviceConstellation {
         val c: DeviceConstellation = mock()
-        `when`(c.refreshDevicesAsync()).thenReturn(CompletableDeferred(true))
-        `when`(c.pollForEventsAsync()).thenReturn(CompletableDeferred(true))
+        `when`(c.refreshDevices()).thenReturn(true)
         return c
     }
 }

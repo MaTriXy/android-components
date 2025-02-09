@@ -13,16 +13,21 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
+import android.os.Build.VERSION.SDK_INT
 import android.util.LongSparseArray
-import androidx.annotation.RequiresPermission
+import androidx.annotation.VisibleForTesting
 import androidx.core.content.getSystemService
 import androidx.core.net.toUri
-import androidx.core.util.isEmpty
 import androidx.core.util.set
+import mozilla.components.browser.state.action.DownloadAction
 import mozilla.components.browser.state.state.content.DownloadState
+import mozilla.components.browser.state.state.content.DownloadState.Status
+import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.concept.fetch.Headers.Names.COOKIE
 import mozilla.components.concept.fetch.Headers.Names.REFERRER
 import mozilla.components.concept.fetch.Headers.Names.USER_AGENT
+import mozilla.components.feature.downloads.AbstractFetchDownloadService
 import mozilla.components.feature.downloads.ext.isScheme
 import mozilla.components.support.utils.DownloadUtils
 
@@ -36,13 +41,23 @@ typealias SystemRequest = android.app.DownloadManager.Request
  */
 class AndroidDownloadManager(
     private val applicationContext: Context,
-    override var onDownloadCompleted: OnDownloadCompleted = noop
+    private val store: BrowserStore,
+    override var onDownloadStopped: onDownloadStopped = noop,
 ) : BroadcastReceiver(), DownloadManager {
 
-    private val queuedDownloads = LongSparseArray<DownloadState>()
+    private val downloadRequests = LongSparseArray<SystemRequest>()
     private var isSubscribedReceiver = false
 
-    override val permissions = arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE)
+    // Do not require WRITE_EXTERNAL_STORAGE permission on API 29 and above (using scoped storage)
+    override val permissions
+        get() = if (getSDKVersion() >= Build.VERSION_CODES.Q) {
+            arrayOf(INTERNET)
+        } else {
+            arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE)
+        }
+
+    @VisibleForTesting
+    internal fun getSDKVersion() = SDK_INT
 
     /**
      * Schedules a download through the [AndroidDownloadManager].
@@ -50,9 +65,7 @@ class AndroidDownloadManager(
      * @param cookie any additional cookie to add as part of the download request.
      * @return the id reference of the scheduled download.
      */
-    @RequiresPermission(allOf = [INTERNET, WRITE_EXTERNAL_STORAGE])
-    override fun download(download: DownloadState, cookie: String): Long? {
-
+    override fun download(download: DownloadState, cookie: String): String? {
         val androidDownloadManager: SystemDownloadManager = applicationContext.getSystemService()!!
 
         if (!download.isScheme(listOf("http", "https"))) {
@@ -65,13 +78,16 @@ class AndroidDownloadManager(
         validatePermissionGranted(applicationContext)
 
         val request = download.toAndroidRequest(cookie)
-
         val downloadID = androidDownloadManager.enqueue(request)
-        queuedDownloads[downloadID] = download
-
+        store.dispatch(DownloadAction.AddDownloadAction(download.copy(id = downloadID.toString())))
+        downloadRequests[downloadID] = request
         registerBroadcastReceiver()
+        return downloadID.toString()
+    }
 
-        return downloadID
+    override fun tryAgain(downloadId: String) {
+        val androidDownloadManager: SystemDownloadManager = applicationContext.getSystemService()!!
+        androidDownloadManager.enqueue(downloadRequests[downloadId.toLong()])
     }
 
     /**
@@ -81,7 +97,7 @@ class AndroidDownloadManager(
         if (isSubscribedReceiver) {
             applicationContext.unregisterReceiver(this)
             isSubscribedReceiver = false
-            queuedDownloads.clear()
+            downloadRequests.clear()
         }
     }
 
@@ -94,21 +110,19 @@ class AndroidDownloadManager(
     }
 
     /**
-     * Invoked when a download is complete. Calls [onDownloadCompleted] and unregisters the
-     * broadcast receiver if there are no more queued downloads.
+     * Invoked when a download is complete. Notifies [onDownloadStopped] and removes the queued
+     * download if it's complete.
      */
     override fun onReceive(context: Context, intent: Intent) {
-        if (queuedDownloads.isEmpty()) unregisterListeners()
-
-        val downloadID = intent.getLongExtra(EXTRA_DOWNLOAD_ID, -1)
-        val download = queuedDownloads[downloadID]
+        val downloadID = intent.getStringExtra(EXTRA_DOWNLOAD_ID) ?: ""
+        val download = store.state.downloads[downloadID]
+        val downloadStatus =
+            intent.getSerializableExtra(AbstractFetchDownloadService.EXTRA_DOWNLOAD_STATUS)
+                as Status
 
         if (download != null) {
-            onDownloadCompleted(download, downloadID)
-            queuedDownloads.remove(downloadID)
+            onDownloadStopped(download, downloadID, downloadStatus)
         }
-
-        if (queuedDownloads.isEmpty()) unregisterListeners()
     }
 }
 
@@ -127,7 +141,7 @@ private fun DownloadState.toAndroidRequest(cookie: String): SystemRequest {
     }
 
     val fileName = if (fileName.isNullOrBlank()) {
-        DownloadUtils.guessFileName(null, url, contentType)
+        DownloadUtils.guessFileName(null, destinationDirectory, url, contentType)
     } else {
         fileName
     }

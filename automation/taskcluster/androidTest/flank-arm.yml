@@ -34,12 +34,10 @@ gcloud:
   performance-metrics: true
 
   device:
-   - model: shamu
-     version: 21
-   - model: sailfish 
-     version: 25
-   - model: sailfish 
+   - model: blueline
      version: 28
+   - model: Nexus6
+     version: 21
 
 flank:
   project: GOOGLE_PROJECT

@@ -6,75 +6,100 @@ package mozilla.components.browser.tabstray
 
 import android.view.LayoutInflater
 import android.view.ViewGroup
-import androidx.recyclerview.widget.RecyclerView
-import mozilla.components.browser.session.Session
-import mozilla.components.concept.tabstray.TabsTray
-import mozilla.components.support.base.observer.Observable
-import mozilla.components.support.base.observer.ObserverRegistry
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
+import mozilla.components.browser.state.state.TabPartition
+import mozilla.components.browser.state.state.TabSessionState
+import mozilla.components.concept.base.images.ImageLoader
 
 /**
- * RecyclerView adapter implementation to display a list/grid of tabs.
+ * Function responsible for creating a `TabViewHolder` in the `TabsAdapter`.
  */
-@Suppress("TooManyFunctions")
-class TabsAdapter(
-    delegate: Observable<TabsTray.Observer> = ObserverRegistry()
-) : RecyclerView.Adapter<TabViewHolder>(),
-    TabsTray,
-    Observable<TabsTray.Observer> by delegate {
+typealias ViewHolderProvider = (ViewGroup) -> TabViewHolder
 
-    internal lateinit var tabsTray: BrowserTabsTray
+/**
+ * RecyclerView adapter implementation to display a list of tabs.
+ *
+ * @param thumbnailLoader an implementation of an [ImageLoader] for loading thumbnail images in the tabs tray.
+ * @param viewHolderProvider a function that creates a [TabViewHolder].
+ * @param styling the default styling for the [TabsTrayStyling].
+ * @param delegate a delegate to handle interactions in the tabs tray.
+ */
+open class TabsAdapter(
+    thumbnailLoader: ImageLoader? = null,
+    private val viewHolderProvider: ViewHolderProvider = { parent ->
+        DefaultTabViewHolder(
+            LayoutInflater.from(parent.context).inflate(R.layout.mozac_browser_tabstray_item, parent, false),
+            thumbnailLoader,
+        )
+    },
+    private val styling: TabsTrayStyling = TabsTrayStyling(),
+    private val delegate: TabsTray.Delegate,
+) : ListAdapter<TabSessionState, TabViewHolder>(DiffCallback), TabsTray {
 
-    private val holders = mutableListOf<TabViewHolder>()
-    private var sessions: List<Session> = listOf()
-    private var selectedIndex: Int = -1
+    private var selectedTabId: String? = null
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): TabViewHolder {
-        return TabViewHolder(
-            LayoutInflater.from(parent.context).inflate(
-                R.layout.mozac_browser_tabstray_item,
-                parent,
-                false),
-            tabsTray
-        ).also {
-            holders.add(it)
+        return viewHolderProvider.invoke(parent)
+    }
+
+    override fun onBindViewHolder(holder: TabViewHolder, position: Int) {
+        val tab = getItem(position)
+
+        holder.bind(tab, tab.id == selectedTabId, styling, delegate)
+    }
+
+    override fun onBindViewHolder(
+        holder: TabViewHolder,
+        position: Int,
+        payloads: List<Any>,
+    ) {
+        val tabs = currentList
+        if (tabs.isEmpty()) return
+
+        if (payloads.isEmpty()) {
+            onBindViewHolder(holder, position)
+            return
+        }
+
+        val tab = getItem(position)
+
+        if (payloads.contains(PAYLOAD_HIGHLIGHT_SELECTED_ITEM) && tab.id == selectedTabId) {
+            holder.updateSelectedTabIndicator(true)
+        } else if (payloads.contains(PAYLOAD_DONT_HIGHLIGHT_SELECTED_ITEM) && tab.id == selectedTabId) {
+            holder.updateSelectedTabIndicator(false)
         }
     }
 
-    override fun getItemCount() = sessions.size
+    override fun updateTabs(tabs: List<TabSessionState>, tabPartition: TabPartition?, selectedTabId: String?) {
+        this.selectedTabId = selectedTabId
 
-    override fun onBindViewHolder(holder: TabViewHolder, position: Int) {
-        holder.bind(sessions[position], position == selectedIndex, this)
+        submitList(tabs)
     }
 
-    override fun onViewRecycled(holder: TabViewHolder) {
-        holder.unbind()
+    companion object {
+        /**
+         * Payload used in onBindViewHolder for a partial update of the current view.
+         *
+         * Signals that the currently selected tab should be highlighted. This is the default behavior.
+         */
+        val PAYLOAD_HIGHLIGHT_SELECTED_ITEM: Int = R.id.payload_highlight_selected_item
+
+        /**
+         * Payload used in onBindViewHolder for a partial update of the current view.
+         *
+         * Signals that the currently selected tab should NOT be highlighted. No tabs would appear as highlighted.
+         */
+        val PAYLOAD_DONT_HIGHLIGHT_SELECTED_ITEM: Int = R.id.payload_dont_highlight_selected_item
     }
 
-    fun unsubscribeHolders() {
-        holders.forEach { it.unbind() }
-        holders.clear()
+    private object DiffCallback : DiffUtil.ItemCallback<TabSessionState>() {
+        override fun areItemsTheSame(oldItem: TabSessionState, newItem: TabSessionState): Boolean {
+            return oldItem.id == newItem.id
+        }
+
+        override fun areContentsTheSame(oldItem: TabSessionState, newItem: TabSessionState): Boolean {
+            return oldItem == newItem
+        }
     }
-
-    override fun displaySessions(sessions: List<Session>, selectedIndex: Int) {
-        this.sessions = sessions
-        this.selectedIndex = selectedIndex
-        notifyDataSetChanged()
-    }
-
-    override fun updateSessions(sessions: List<Session>, selectedIndex: Int) {
-        this.sessions = sessions
-        this.selectedIndex = selectedIndex
-    }
-
-    override fun onSessionsInserted(position: Int, count: Int) =
-        notifyItemRangeInserted(position, count)
-
-    override fun onSessionsRemoved(position: Int, count: Int) =
-        notifyItemRangeRemoved(position, count)
-
-    override fun onSessionMoved(fromPosition: Int, toPosition: Int) =
-        notifyItemMoved(fromPosition, toPosition)
-
-    override fun onSessionsChanged(position: Int, count: Int) =
-        notifyItemRangeChanged(position, count, null)
 }

@@ -4,60 +4,50 @@
 
 package mozilla.components.browser.engine.gecko.media
 
+import androidx.annotation.VisibleForTesting
 import mozilla.components.browser.engine.gecko.GeckoEngineSession
-import mozilla.components.concept.engine.EngineSession
-import mozilla.components.concept.engine.media.Media
 import mozilla.components.concept.engine.media.RecordingDevice
 import org.mozilla.geckoview.GeckoSession
-import org.mozilla.geckoview.MediaElement
+import java.security.InvalidParameterException
 import org.mozilla.geckoview.GeckoSession.MediaDelegate.RecordingDevice as GeckoRecordingDevice
 
 /**
- * [GeckoSession.MediaDelegate] implementation for wrapping [MediaElement] instances in [GeckoMedia] ([Media]) and
- * forwarding them to the [EngineSession.Observer].
+ * Gecko-based GeckoMediaDelegate implementation.
  */
-internal class GeckoMediaDelegate(
-    private val engineSession: GeckoEngineSession
-) : GeckoSession.MediaDelegate {
-    private val mediaMap: MutableMap<MediaElement, Media> = mutableMapOf()
-
-    override fun onMediaAdd(session: GeckoSession, element: MediaElement) {
-        val media = GeckoMedia(element).also {
-            mediaMap[element] = it
-        }
-
-        engineSession.notifyObservers { onMediaAdded(media) }
-    }
-
-    override fun onMediaRemove(session: GeckoSession, element: MediaElement) {
-        mediaMap[element]?.let { media ->
-            engineSession.notifyObservers { onMediaRemoved(media) }
-        }
-    }
+internal class GeckoMediaDelegate(private val geckoEngineSession: GeckoEngineSession) :
+    GeckoSession.MediaDelegate {
 
     override fun onRecordingStatusChanged(
         session: GeckoSession,
-        devices: Array<out GeckoRecordingDevice>
+        geckoDevices: Array<out GeckoRecordingDevice>,
     ) {
-        val genericDevices = devices.map { it.toRecordingDevice() }
-        engineSession.notifyObservers {
-            onRecordingStateChanged(genericDevices)
+        val devices = geckoDevices.map { geckoRecording ->
+            val type = geckoRecording.toType()
+            val status = geckoRecording.toStatus()
+            RecordingDevice(type, status)
+        }
+        geckoEngineSession.notifyObservers { onRecordingStateChanged(devices) }
+    }
+}
+
+@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+internal fun GeckoRecordingDevice.toType(): RecordingDevice.Type {
+    return when (type) {
+        GeckoRecordingDevice.Type.CAMERA -> RecordingDevice.Type.CAMERA
+        GeckoRecordingDevice.Type.MICROPHONE -> RecordingDevice.Type.MICROPHONE
+        else -> {
+            throw InvalidParameterException("Unexpected Gecko Media type $type status $status")
         }
     }
 }
 
-private fun GeckoRecordingDevice.toRecordingDevice(): RecordingDevice {
-    val type = when (type) {
-        GeckoRecordingDevice.Type.CAMERA -> RecordingDevice.Type.CAMERA
-        GeckoRecordingDevice.Type.MICROPHONE -> RecordingDevice.Type.MICROPHONE
-        else -> throw IllegalStateException("Unknown device type: $type")
-    }
-
-    val status = when (status) {
-        GeckoRecordingDevice.Status.INACTIVE -> RecordingDevice.Status.INACTIVE
+@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+internal fun GeckoRecordingDevice.toStatus(): RecordingDevice.Status {
+    return when (status) {
         GeckoRecordingDevice.Status.RECORDING -> RecordingDevice.Status.RECORDING
-        else -> throw IllegalStateException("Unknown device status: $status")
+        GeckoRecordingDevice.Status.INACTIVE -> RecordingDevice.Status.INACTIVE
+        else -> {
+            throw InvalidParameterException("Unexpected Gecko Media type $type status $status")
+        }
     }
-
-    return RecordingDevice(type, status)
 }

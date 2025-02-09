@@ -10,12 +10,12 @@ import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentTransaction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import mozilla.components.feature.qr.QrFeature.Companion.QR_FRAGMENT_TAG
-import mozilla.components.support.base.feature.OnNeedToRequestPermissions
 import mozilla.components.support.test.any
 import mozilla.components.support.test.mock
 import mozilla.components.support.test.robolectric.grantPermission
 import mozilla.components.support.test.robolectric.testContext
 import mozilla.components.support.test.whenever
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -24,11 +24,12 @@ import org.junit.runner.RunWith
 import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mock
+import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.never
 import org.mockito.Mockito.spy
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
-import org.mockito.Mockito.verifyNoMoreInteractions
-import org.mockito.MockitoAnnotations.initMocks
+import org.mockito.MockitoAnnotations.openMocks
 
 @RunWith(AndroidJUnit4::class)
 class QrFeatureTest {
@@ -38,7 +39,7 @@ class QrFeatureTest {
 
     @Before
     fun setUp() {
-        initMocks(this)
+        openMocks(this)
 
         mock<FragmentTransaction>().let { transaction ->
             whenever(fragmentManager.beginTransaction())
@@ -50,14 +51,26 @@ class QrFeatureTest {
         }
     }
 
+    fun `scanning is in progress if the scanning fragment is shown`() {
+        val feature = QrFeature(testContext, fragmentManager)
+
+        assertFalse(feature.isScanInProgress)
+
+        doReturn(mock<QrFragment>()).`when`(fragmentManager).findFragmentByTag(QR_FRAGMENT_TAG)
+        assertTrue(feature.isScanInProgress)
+    }
+
     @Test
     fun `feature requests camera permission if required`() {
         // Given
-        val permissionsCallback = mock<OnNeedToRequestPermissions>()
+        var callbackInvoked = false
+        val permissionsCallback: (permissions: Array<String>) -> Unit = {
+            callbackInvoked = true
+        }
         val feature = QrFeature(
             testContext,
             fragmentManager,
-            onNeedToRequestPermissions = permissionsCallback
+            onNeedToRequestPermissions = permissionsCallback,
         )
 
         // When
@@ -65,7 +78,7 @@ class QrFeatureTest {
 
         // Then
         assertFalse(scanResult)
-        verify(permissionsCallback).invoke(arrayOf(CAMERA))
+        assertTrue(callbackInvoked)
     }
 
     @Test
@@ -74,7 +87,7 @@ class QrFeatureTest {
         grantPermission(CAMERA)
         val feature = QrFeature(
             testContext,
-            fragmentManager
+            fragmentManager,
         )
 
         // When
@@ -86,42 +99,62 @@ class QrFeatureTest {
     }
 
     @Test
+    fun `scan resumes qr fragment if permissions granted and scanning was already started`() {
+        grantPermission(CAMERA)
+        val feature = QrFeature(testContext, fragmentManager)
+        val qrFragment: QrFragment = mock()
+        doReturn(qrFragment).`when`(fragmentManager).findFragmentByTag(QR_FRAGMENT_TAG)
+
+        val scanResult = feature.scan()
+
+        assertTrue(scanResult)
+        verify(qrFragment).startScanning()
+    }
+
+    @Test
     fun `onPermissionsResult displays scanner only if permission granted`() {
         // Given
-        val feature = QrFeature(
-            testContext,
-            fragmentManager
+        val feature = spy(
+            QrFeature(
+                testContext,
+                fragmentManager,
+            ),
         )
 
         // When
         resolvePermissionRequestFrom(feature) { PermissionResolution.DENIED }
 
         // Then
-        verify(fragmentManager, never()).beginTransaction()
+        verify(feature, never()).scan(anyInt())
+        verify(feature).removeQrFragment()
 
         // When
         grantPermission(CAMERA)
         resolvePermissionRequestFrom(feature) { PermissionResolution.GRANTED }
 
         // Then
-        verify(fragmentManager).beginTransaction()
+        verify(feature, times(1)).scan(anyInt())
+        verify(feature, times(1)).removeQrFragment()
     }
 
     @Test
     fun `scan result is forwarded to caller`() {
         // Given
-        val scanResultCallback = spy(mock<OnScanResult>())
+        var scanResult: String? = null
+        val scanResultCallback: OnScanResult = { result ->
+            scanResult = result
+        }
         val feature = QrFeature(
             testContext,
             fragmentManager,
-            onScanResult = scanResultCallback
+            onScanResult = scanResultCallback,
         )
 
         // When
         feature.scanCompleteListener.onScanComplete("result")
 
         // Then
-        verify(scanResultCallback).invoke("result")
+        assertEquals("result", scanResult)
     }
 
     @Test
@@ -133,8 +166,8 @@ class QrFeatureTest {
         val feature = spy(
             QrFeature(
                 testContext,
-                fragmentManager
-            )
+                fragmentManager,
+            ),
         )
 
         // When
@@ -151,44 +184,86 @@ class QrFeatureTest {
         whenever(fragmentManager.findFragmentByTag(QR_FRAGMENT_TAG))
             .thenReturn(fragment)
 
-        val feature = QrFeature(
-            testContext,
-            fragmentManager
+        val feature = spy(
+            QrFeature(
+                testContext,
+                fragmentManager,
+            ),
         )
+        val listener = feature.scanCompleteListener
 
         // When
         feature.start()
 
         // Then
-        verify(fragment).scanCompleteListener = feature.scanCompleteListener
+        verify(feature).setScanCompleteListener(listener)
     }
 
     @Test
-    fun `do nothing when stop() is called`() {
+    fun `stop attaches a null listener`() {
         // Given
-        val scanResultCallback = mock<OnScanResult>()
-        val feature = QrFeature(
-            testContext,
-            fragmentManager,
-            onScanResult = scanResultCallback
+        val fragment = mock<QrFragment>()
+        whenever(fragmentManager.findFragmentByTag(QR_FRAGMENT_TAG))
+            .thenReturn(fragment)
+        val feature = spy(
+            QrFeature(
+                testContext,
+                fragmentManager,
+            ),
         )
 
         // When
         feature.stop()
 
         // Then
-        verifyNoMoreInteractions(scanResultCallback, fragmentManager)
+        verify(feature).setScanCompleteListener(null)
+    }
+
+    @Test
+    fun `setScanCompleteListener allows setting a null callback in QrFragment`() {
+        // Given
+        val fragment = mock<QrFragment>()
+        whenever(fragmentManager.findFragmentByTag(QR_FRAGMENT_TAG))
+            .thenReturn(fragment)
+        val feature = QrFeature(
+            testContext,
+            fragmentManager,
+        )
+        fragment.scanCompleteListener = feature.scanCompleteListener
+
+        // When
+        feature.setScanCompleteListener(null)
+        // Then
+        verify(fragment).scanCompleteListener = null
+    }
+
+    @Test
+    fun `setScanCompleteListener allows setting a valid callback in QrFragment`() {
+        // Given
+        val fragment = mock<QrFragment>()
+        whenever(fragmentManager.findFragmentByTag(QR_FRAGMENT_TAG))
+            .thenReturn(fragment)
+        val feature = QrFeature(
+            testContext,
+            fragmentManager,
+        )
+        fragment.scanCompleteListener = null
+
+        // When
+        feature.setScanCompleteListener(feature.scanCompleteListener)
+        // Then
+        verify(fragment).scanCompleteListener = feature.scanCompleteListener
     }
 }
 
 private enum class PermissionResolution(val value: Int) {
     GRANTED(PackageManager.PERMISSION_GRANTED),
-    DENIED(PackageManager.PERMISSION_DENIED)
+    DENIED(PackageManager.PERMISSION_DENIED),
 }
 
 private fun resolvePermissionRequestFrom(
     feature: QrFeature,
-    resolution: () -> PermissionResolution
+    resolution: () -> PermissionResolution,
 ) {
     feature.onPermissionsResult(emptyArray(), IntArray(1) { resolution().value })
 }

@@ -16,18 +16,19 @@ import org.mockito.ArgumentMatchers.anyFloat
 import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.ArgumentMatchers.anyLong
 import org.mockito.Mock
-import org.mockito.Mockito.`when`
 import org.mockito.Mockito.anyString
 import org.mockito.Mockito.verify
-import org.mockito.MockitoAnnotations.initMocks
+import org.mockito.Mockito.`when`
+import org.mockito.MockitoAnnotations.openMocks
 
 class SharedPreferencesTest {
     @Mock private lateinit var sharedPrefs: SharedPreferences
+
     @Mock private lateinit var editor: SharedPreferences.Editor
 
     @Before
     fun setup() {
-        initMocks(this)
+        openMocks(this)
 
         `when`(sharedPrefs.edit()).thenReturn(editor)
         `when`(editor.putBoolean(anyString(), anyBoolean())).thenReturn(editor)
@@ -171,39 +172,6 @@ class SharedPreferencesTest {
     }
 
     @Test
-    fun `getter returns string from shared preferences`() {
-        val holder = MockPreferencesHolder()
-        `when`(sharedPrefs.getString(eq("string"), anyString())).thenReturn("foo")
-
-        assertEquals("foo", holder.string)
-        verify(sharedPrefs).getString("string", "")
-    }
-
-    @Test
-    fun `setter applies string to shared preferences`() {
-        val holder = MockPreferencesHolder(defaultString = "foo")
-        holder.string = "bar"
-
-        verify(editor).putString("string", "bar")
-        verify(editor).apply()
-    }
-
-    @Test
-    fun `getter uses default string value`() {
-        val holderDefault = MockPreferencesHolder()
-        // Call the getter for the test
-        holderDefault.string
-
-        verify(sharedPrefs).getString("string", "")
-
-        val holderOther = MockPreferencesHolder(defaultString = "hello")
-        // Call the getter for the test
-        holderOther.string
-
-        verify(sharedPrefs).getString("string", "hello")
-    }
-
-    @Test
     fun `getter returns string set from shared preferences`() {
         val holder = MockPreferencesHolder()
         `when`(sharedPrefs.getStringSet(eq("string_set"), any())).thenReturn(setOf("foo"))
@@ -242,7 +210,7 @@ class SharedPreferencesTest {
         defaultInt: Int = 0,
         defaultLong: Long = 0L,
         defaultString: String = "",
-        defaultSet: Set<String> = emptySet()
+        defaultSet: Set<String> = emptySet(),
     ) : PreferencesHolder {
         override val preferences = sharedPrefs
 

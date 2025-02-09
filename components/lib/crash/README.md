@@ -87,7 +87,7 @@ SentryService(
 
 [Socorro](https://wiki.mozilla.org/Socorro) is the name for the [Mozilla Crash Stats](https://crash-stats.mozilla.org/) project.
 
-⚠️ Note: Socorro filters crashes by "app name". New app names need to be whitelisted for the server to accept the crash. [File a bug](https://bugzilla.mozilla.org/enter_bug.cgi?product=Socorro) if you would like to get your app added to the whitelist.
+⚠️ Note: Socorro filters crashes by "app name". New app names need to be safelisted for the server to accept the crash. [File a bug](https://bugzilla.mozilla.org/enter_bug.cgi?product=Socorro) if you would like to get your app added to the safelist.
 
 Add a `MozillaSocorroService` instance to your `CrashReporter` in order to upload crashes to Socorro:
 
@@ -99,12 +99,13 @@ CrashReporter(
 ).install(applicationContext)
 ```
 
+`MozillaSocorroService` will report version information such as App version, Android Component version, Glean version, Application Services version, GeckoView version and Build ID
 ⚠️ Note: Currently only native code crashes get uploaded to Socorro. Socorro has limited support for "uncaught exception" crashes too, but it is recommended to use a more elaborate solution like Sentry for that.
 
 ### Sending crash reports to Glean
 
 [Glean](https://docs.telemetry.mozilla.org/concepts/glean/glean.html) is a new way to collect telemetry by Mozilla. 
-This will record crash counts as a labeled counter with each label corresponding to a specific type of crash (`native_code_crash`, and `unhandled_exception`, currently).
+This will record crash counts as a labeled counter with each label corresponding to a specific type of crash (`fatal_native_code_crash`, `nonfatal_native_code_crash`, `caught_exception`, `uncaught_exception`, currently).
 The list of collected metrics is available in the [metrics.yaml file](metrics.yaml), with their documentation [living here](docs/metrics.md).
 Due to the fact that Glean can only be recorded to in the main process and lib-crash runs in a separate process when it runs to handle the crash, 
 lib-crash persists the data in a file format and then reads and records the data from the main process when the application is next run since the `GleanCrashReporterService`
@@ -182,7 +183,8 @@ val pendingIntent = PendingIntent.getActivity(
     Intent(this, MyActivity::class.java).apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     },
-    0)
+    PendingIntentUtils.defaultFlags
+)
 
 CrashReporter(
     shouldPrompt = CrashReporter.Prompt.ALWAYS,

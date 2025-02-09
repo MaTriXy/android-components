@@ -4,20 +4,20 @@
 
 package mozilla.components.support.locale
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.res.Configuration
+import android.content.res.Resources
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.os.ConfigurationCompat
 import mozilla.components.support.base.R
-import mozilla.components.support.base.log.logger.Logger
 import java.util.Locale
 
 /**
  * Helper for apps that want to change locale defined by the system.
  */
 object LocaleManager {
-    private val logger = Logger("LocaleManager")
-
     /**
      * Change the system defined locale to the indicated in the [language] parameter.
      * This new [language] will be stored and will be the new current locale returned by [getCurrentLocale].
@@ -26,38 +26,74 @@ object LocaleManager {
      * get recreated. If your app is using the single activity approach, this will be trivial just call
      * [AppCompatActivity.recreate]. On the other hand, if you have multiple activity this could be tricky, one
      * alternative could be restarting your application process see https://github.com/JakeWharton/ProcessPhoenix
+     *
+     * @param context The [Context]
+     * @param localeUseCase The [LocaleUseCases] used to notify the [BrowserStore] of the [Locale] changes.
+     * @param language The new [Locale] that has been selected
      * @return A new Context object for whose resources are adjusted to match the new [language].
      */
-    fun setNewLocale(context: Context, language: String): Context {
-        Storage.save(context, language)
+    fun setNewLocale(context: Context, localeUseCase: LocaleUseCases? = null, locale: Locale?): Context {
+        Storage.save(context, locale?.toLanguageTag())
+        notifyStore(locale, localeUseCase)
+
         return updateResources(context)
     }
 
     /**
      * The latest stored locale saved by [setNewLocale].
+     *
+     * @return The current selected locale. If the app is following the system default then this
+     * value will be null.
      */
     fun getCurrentLocale(context: Context): Locale? {
-        var currentLocale: Locale? = null
+        return Storage.getLocale(context)?.toLocale()
+    }
 
-        if (currentLocale == null) {
-            val locale = Storage.getLocale(context)
-            if (locale != null) {
-                currentLocale = locale.toLocale()
-            }
-        }
-        return currentLocale
+    /**
+     * Change the current locale to the system defined one. As a result, [getCurrentLocale] will
+     * return null.
+     *
+     * After calling this function, to visualize the locale changes you have to make sure all your visible activities
+     * get recreated. If your app is using the single activity approach, this will be trivial just call
+     * [AppCompatActivity.recreate]. On the other hand, if you have multiple activity this could be tricky, one
+     * alternative could be restarting your application process see https://github.com/JakeWharton/ProcessPhoenix
+     *
+     */
+    fun resetToSystemDefault(context: Context, localeUseCase: LocaleUseCases?) {
+        clear(context)
+        val locale = getSystemDefault()
+
+        updateSystemLocale(locale)
+        updateConfiguration(context, locale)
+
+        notifyStore(locale, localeUseCase)
+    }
+
+    /**
+     * Returns the locale set by the system
+     */
+    fun getSystemDefault(): Locale {
+        val config = Resources.getSystem().configuration
+        return ConfigurationCompat.getLocales(config).get(0) ?: Locale.getDefault()
     }
 
     internal fun updateResources(baseContext: Context): Context {
-        val locale = getCurrentLocale(baseContext)
-        return if (locale != null) {
-            updateSystemLocale(locale)
-            updateConfiguration(baseContext, locale)
-        } else {
-            baseContext
+        val locale = getCurrentLocale(baseContext) ?: getSystemDefault()
+
+        updateSystemLocale(locale)
+        return updateConfiguration(baseContext, locale)
+    }
+
+    /**
+     * Notify the [BrowserStore] that the [Locale] has been changed via [LocaleUseCases].
+     */
+    private fun notifyStore(locale: Locale?, localeUseCase: LocaleUseCases?) {
+        localeUseCase?.let { useCases ->
+            useCases.notifyLocaleChanged(locale)
         }
     }
 
+    @SuppressLint("AppBundleLocaleChanges")
     private fun updateConfiguration(context: Context, locale: Locale): Context {
         val configuration = Configuration(context.resources.configuration)
         configuration.setLocale(locale)
@@ -89,7 +125,7 @@ object LocaleManager {
         }
 
         @Synchronized
-        fun save(context: Context, localeCode: String) {
+        fun save(context: Context, localeCode: String?) {
             val settings = getSharedPreferences(context)
             val key = context.getString(R.string.mozac_support_base_locale_preference_key_locale)
             settings.edit().putString(key, localeCode).apply()

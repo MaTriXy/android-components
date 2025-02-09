@@ -27,29 +27,19 @@ internal object TrackingProtectionStateReducer {
         is TrackingProtectionAction.ClearTrackersAction -> state.copyWithTrackingProtectionState(action.tabId) {
             it.copy(loadedTrackers = emptyList(), blockedTrackers = emptyList())
         }
+        is TrackingProtectionAction.ToggleExclusionListAction -> state.copyWithTrackingProtectionState(
+            action.tabId,
+        ) {
+            it.copy(ignoredOnTrackingProtection = action.excluded)
+        }
     }
 }
 
-private fun BrowserState.copyWithTrackingProtectionState(
+private inline fun BrowserState.copyWithTrackingProtectionState(
     tabId: String,
-    update: (TrackingProtectionState) -> TrackingProtectionState
+    crossinline update: (TrackingProtectionState) -> TrackingProtectionState,
 ): BrowserState {
-    // Currently we map over both lists (tabs and customTabs). We could optimize this away later on if we know what
-    // type we want to modify.
-    return copy(
-        tabs = tabs.map { current ->
-            if (current.id == tabId) {
-                current.copy(trackingProtection = update.invoke(current.trackingProtection))
-            } else {
-                current
-            }
-        },
-        customTabs = customTabs.map { current ->
-            if (current.id == tabId) {
-                current.copy(trackingProtection = update.invoke(current.trackingProtection))
-            } else {
-                current
-            }
-        }
-    )
+    return updateTabOrCustomTabState(tabId) { current ->
+        current.createCopy(trackingProtection = update(current.trackingProtection))
+    }
 }

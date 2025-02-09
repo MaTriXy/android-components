@@ -52,11 +52,28 @@ class UAOverrides {
       return;
     }
 
-    const { matches, uaTransformer } = override.config;
+    const { blocks, matches, uaTransformer } = override.config;
     const listener = details => {
-      for (const header of details.requestHeaders) {
-        if (header.name.toLowerCase() === "user-agent") {
-          header.value = uaTransformer(header.value);
+      // Don't actually override the UA for an experiment if the user is not
+      // part of the experiment (unless they force-enabed the override).
+      if (
+        !override.config.experiment ||
+        override.permanentPrefEnabled === true
+      ) {
+        for (const header of details.requestHeaders) {
+          if (header.name.toLowerCase() === "user-agent") {
+            // Don't override the UA if we're on a mobile device that has the
+            // "Request Desktop Site" mode enabled. The UA for the desktop mode
+            // is set inside Gecko with a simple string replace, so we can use
+            // that as a check, see https://searchfox.org/mozilla-central/rev/89d33e1c3b0a57a9377b4815c2f4b58d933b7c32/mobile/android/chrome/geckoview/GeckoViewSettingsChild.js#23-28
+            let isMobileWithDesktopMode =
+              override.currentPlatform == "android" &&
+              header.value.includes("X11; Linux x86_64");
+
+            if (!isMobileWithDesktopMode) {
+              header.value = uaTransformer(header.value);
+            }
+          }
         }
       }
       return { requestHeaders: details.requestHeaders };
@@ -68,8 +85,61 @@ class UAOverrides {
       ["blocking", "requestHeaders"]
     );
 
-    this._activeListeners.set(override, listener);
+    const listeners = { onBeforeSendHeaders: listener };
+    if (blocks) {
+      const blistener = details => {
+        return { cancel: true };
+      };
+
+      browser.webRequest.onBeforeRequest.addListener(
+        blistener,
+        { urls: blocks },
+        ["blocking"]
+      );
+
+      listeners.onBeforeRequest = blistener;
+    }
+    this._activeListeners.set(override, listeners);
     override.active = true;
+  }
+
+  onOverrideConfigChanged(override) {
+    // Check whether the override should be hidden from about:compat.
+    override.hidden = override.config.hidden;
+
+    // Setting the override's permanent pref overrules whether it is hidden.
+    if (override.permanentPrefEnabled !== undefined) {
+      override.hidden = !override.permanentPrefEnabled;
+    }
+
+    // Also check whether the override should be active.
+    let shouldBeActive = true;
+
+    // Overrides can be force-deactivated by their permanent preference.
+    if (override.permanentPrefEnabled === false) {
+      shouldBeActive = false;
+    }
+
+    // Overrides gated behind an experiment the user is not part of do not
+    // have to be activated, unless they are gathering telemetry, or the
+    // user has force-enabled them with their permanent pref.
+    if (override.config.experiment && override.permanentPrefEnabled !== true) {
+      shouldBeActive = false;
+    }
+
+    if (shouldBeActive) {
+      this.enableOverride(override);
+    } else {
+      this.disableOverride(override);
+    }
+
+    if (this._overridesEnabled) {
+      this._aboutCompatBroker.portsToAboutCompatTabs.broadcast({
+        overridesChanged: this._aboutCompatBroker.filterOverrides(
+          this._availableOverrides
+        ),
+      });
+    }
   }
 
   async registerUAOverrides() {
@@ -80,7 +150,27 @@ class UAOverrides {
     for (const override of this._availableOverrides) {
       if (platformMatches.includes(override.platform)) {
         override.availableOnPlatform = true;
-        this.enableOverride(override);
+        override.currentPlatform = platformInfo.os;
+
+        // If there is a specific about:config preference governing
+        // this override, monitor its state.
+        const pref = override.config.permanentPref;
+        override.permanentPrefEnabled =
+          pref && (await browser.aboutConfigPrefs.getPref(pref));
+        if (pref) {
+          const checkOverridePref = () => {
+            browser.aboutConfigPrefs.getPref(pref).then(value => {
+              override.permanentPrefEnabled = value;
+              this.onOverrideConfigChanged(override);
+            });
+          };
+          browser.aboutConfigPrefs.onPrefChange.addListener(
+            checkOverridePref,
+            pref
+          );
+        }
+
+        this.onOverrideConfigChanged(override);
       }
     }
 
@@ -108,9 +198,10 @@ class UAOverrides {
       return;
     }
 
-    browser.webRequest.onBeforeSendHeaders.removeListener(
-      this._activeListeners.get(override)
-    );
+    const listeners = this._activeListeners.get(override);
+    for (const [name, listener] of Object.entries(listeners)) {
+      browser.webRequest[name].removeListener(listener);
+    }
     override.active = false;
     this._activeListeners.delete(override);
   }

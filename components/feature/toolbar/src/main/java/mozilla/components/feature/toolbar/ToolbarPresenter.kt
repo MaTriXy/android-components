@@ -5,15 +5,16 @@
 package mozilla.components.feature.toolbar
 
 import androidx.annotation.VisibleForTesting
-import androidx.annotation.VisibleForTesting.PRIVATE
+import androidx.annotation.VisibleForTesting.Companion.PRIVATE
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.map
 import mozilla.components.browser.state.selector.findCustomTabOrSelectedTab
+import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.browser.state.state.SessionState
 import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.concept.toolbar.Toolbar
+import mozilla.components.concept.toolbar.Toolbar.Highlight
 import mozilla.components.concept.toolbar.Toolbar.SiteTrackingProtection
 import mozilla.components.feature.toolbar.internal.URLRenderer
 import mozilla.components.lib.state.ext.flowScoped
@@ -21,14 +22,13 @@ import mozilla.components.support.ktx.kotlinx.coroutines.flow.ifChanged
 
 /**
  * Presenter implementation for a toolbar implementation in order to update the toolbar whenever
- * the state of the selected session changes.
+ * the state of the selected session.
  */
-@Suppress("TooManyFunctions")
 class ToolbarPresenter(
     private val toolbar: Toolbar,
     private val store: BrowserStore,
     private val customTabId: String? = null,
-    urlRenderConfiguration: ToolbarFeature.UrlRenderConfiguration? = null
+    urlRenderConfiguration: ToolbarFeature.UrlRenderConfiguration? = null,
 ) {
     @VisibleForTesting
     internal var renderer = URLRenderer(toolbar, urlRenderConfiguration)
@@ -42,44 +42,56 @@ class ToolbarPresenter(
         renderer.start()
 
         scope = store.flowScoped { flow ->
-            flow.map { state -> state.findCustomTabOrSelectedTab(customTabId) }
-                .ifChanged()
+            flow.ifChanged { it.findCustomTabOrSelectedTab(customTabId) }
                 .collect { state ->
-                    if (state == null) {
-                        clear()
-                    } else {
-                        render(state)
-                    }
+                    render(state)
                 }
         }
     }
 
     fun stop() {
         scope?.cancel()
-
         renderer.stop()
     }
 
     @VisibleForTesting(otherwise = PRIVATE)
-    internal fun render(tab: SessionState) {
-        renderer.post(tab.content.url)
+    internal fun render(state: BrowserState) {
+        val tab = state.findCustomTabOrSelectedTab(customTabId)
 
-        toolbar.setSearchTerms(tab.content.searchTerms)
-        toolbar.displayProgress(tab.content.progress)
+        if (tab != null) {
+            renderer.post(tab.content.url)
 
-        toolbar.siteSecure = if (tab.content.securityInfo.secure) {
-            Toolbar.SiteSecurity.SECURE
+            toolbar.setSearchTerms(tab.content.searchTerms)
+            toolbar.displayProgress(tab.content.progress)
+
+            toolbar.siteSecure = if (tab.content.securityInfo.secure) {
+                Toolbar.SiteSecurity.SECURE
+            } else {
+                Toolbar.SiteSecurity.INSECURE
+            }
+
+            toolbar.siteTrackingProtection = when {
+                tab.trackingProtection.ignoredOnTrackingProtection -> SiteTrackingProtection.OFF_FOR_A_SITE
+                tab.trackingProtection.enabled && tab.trackingProtection.blockedTrackers.isNotEmpty() ->
+                    SiteTrackingProtection.ON_TRACKERS_BLOCKED
+
+                tab.trackingProtection.enabled -> SiteTrackingProtection.ON_NO_TRACKERS_BLOCKED
+
+                else -> SiteTrackingProtection.OFF_GLOBALLY
+            }
+
+            updateHighlight(tab)
         } else {
-            Toolbar.SiteSecurity.INSECURE
+            clear()
         }
+    }
 
-        toolbar.siteTrackingProtection = when {
-            tab.trackingProtection.enabled && tab.trackingProtection.blockedTrackers.isNotEmpty() ->
-                SiteTrackingProtection.ON_TRACKERS_BLOCKED
-
-            tab.trackingProtection.enabled -> SiteTrackingProtection.ON_NO_TRACKERS_BLOCKED
-
-            else -> SiteTrackingProtection.OFF_GLOBALLY
+    private fun updateHighlight(tab: SessionState) {
+        toolbar.highlight = when {
+            tab.content.permissionHighlights.permissionsChanged ||
+                tab.trackingProtection.ignoredOnTrackingProtection
+            -> Highlight.PERMISSIONS_CHANGED
+            else -> Highlight.NONE
         }
     }
 
@@ -93,5 +105,6 @@ class ToolbarPresenter(
         toolbar.siteSecure = Toolbar.SiteSecurity.INSECURE
 
         toolbar.siteTrackingProtection = SiteTrackingProtection.OFF_GLOBALLY
+        toolbar.highlight = Highlight.NONE
     }
 }

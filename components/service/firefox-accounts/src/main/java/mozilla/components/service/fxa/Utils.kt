@@ -4,9 +4,10 @@
 
 package mozilla.components.service.fxa
 
-import mozilla.components.concept.sync.AuthException
-import mozilla.components.concept.sync.AuthExceptionType
-import mozilla.components.service.fxa.manager.authErrorRegistry
+import mozilla.components.concept.sync.AuthFlowUrl
+import mozilla.components.concept.sync.OAuthAccount
+import mozilla.components.concept.sync.ServiceResult
+import mozilla.components.service.fxa.manager.GlobalAccountManager
 import mozilla.components.support.base.log.logger.Logger
 
 /**
@@ -18,12 +19,12 @@ import mozilla.components.support.base.log.logger.Logger
  * @param handleErrorBlock A lambda to execute if [block] fails with a non-panic, non-auth [FxaException].
  * @return object of type T, as defined by [block].
  */
-fun <T> handleFxaExceptions(
+suspend fun <T> handleFxaExceptions(
     logger: Logger,
     operation: String,
-    block: () -> T,
+    block: suspend () -> T,
     postHandleAuthErrorBlock: (e: FxaUnauthorizedException) -> T,
-    handleErrorBlock: (e: FxaException) -> T
+    handleErrorBlock: (e: FxaException) -> T,
 ): T {
     return try {
         logger.info("Executing: $operation")
@@ -31,13 +32,14 @@ fun <T> handleFxaExceptions(
         logger.info("Successfully executed: $operation")
         res
     } catch (e: FxaException) {
+        // We'd like to simply crash in case of certain errors (e.g. panics).
+        if (e.shouldPropagate()) {
+            throw e
+        }
         when (e) {
-            is FxaPanicException -> {
-                throw e
-            }
             is FxaUnauthorizedException -> {
                 logger.warn("Auth error while running: $operation")
-                authErrorRegistry.notifyObservers { onAuthErrorAsync(AuthException(AuthExceptionType.UNAUTHORIZED, e)) }
+                GlobalAccountManager.authError(operation)
                 postHandleAuthErrorBlock(e)
             }
             else -> {
@@ -52,16 +54,95 @@ fun <T> handleFxaExceptions(
  * Helper method that handles [FxaException] and allows specifying a lazy default value via [default]
  * block for use in case of errors. Execution is wrapped in log statements.
  */
-fun <T> handleFxaExceptions(logger: Logger, operation: String, default: (error: FxaException) -> T, block: () -> T): T {
+suspend fun <T> handleFxaExceptions(
+    logger: Logger,
+    operation: String,
+    default: (error: FxaException) -> T,
+    block: suspend () -> T,
+): T {
     return handleFxaExceptions(logger, operation, block, { default(it) }, { default(it) })
 }
 
 /**
  * Helper method that handles [FxaException] and returns a [Boolean] success flag as a result.
  */
-fun handleFxaExceptions(logger: Logger, operation: String, block: () -> Unit): Boolean {
-    return handleFxaExceptions(logger, operation, { false }, {
-        block()
-        true
-    })
+suspend fun handleFxaExceptions(logger: Logger, operation: String, block: () -> Unit): Boolean {
+    return handleFxaExceptions(
+        logger,
+        operation,
+        { false },
+        {
+            block()
+            true
+        },
+    )
+}
+
+/**
+ * Simplified version of Kotlin's inline class version that can be used as a return value.
+ */
+internal sealed class Result<out T> {
+    data class Success<out T>(val value: T) : Result<T>()
+    object Failure : Result<Nothing>()
+}
+
+/**
+ * A helper function which allows retrying a [block] of suspend code for a few times in case it fails.
+ *
+ * @param logger [Logger] that will be used to log retry attempts/results
+ * @param retryCount How many retry attempts are allowed
+ * @param block A suspend function to execute
+ * @return A [Result.Success] wrapping result of execution of [block] on (eventual) success,
+ * or [Result.Failure] otherwise.
+ */
+internal suspend fun <T> withRetries(logger: Logger, retryCount: Int, block: suspend () -> T): Result<T> {
+    var attempt = 0
+    var res: T? = null
+    while (attempt < retryCount && (res == null || res == false)) {
+        attempt += 1
+        logger.info("withRetries: attempt $attempt/$retryCount")
+        res = block()
+    }
+    return if (res == null || res == false) {
+        logger.warn("withRetries: all attempts failed")
+        Result.Failure
+    } else {
+        Result.Success(res)
+    }
+}
+
+/**
+ * A helper function which allows retrying a [block] of suspend code for a few times in case it fails.
+ * Short-circuits execution if [block] returns [ServiceResult.AuthError] during any of its attempts.
+ *
+ * @param logger [Logger] that will be used to log retry attempts/results
+ * @param retryCount How many retry attempts are allowed
+ * @param block A suspend function to execute
+ * @return A [ServiceResult] representing result of [block] execution.
+ */
+internal suspend fun withServiceRetries(
+    logger: Logger,
+    retryCount: Int,
+    block: suspend () -> ServiceResult,
+): ServiceResult {
+    var attempt = 0
+    do {
+        attempt += 1
+        logger.info("withServiceRetries: attempt $attempt/$retryCount")
+        when (val res = block()) {
+            ServiceResult.Ok, ServiceResult.AuthError -> return res
+            ServiceResult.OtherError -> {}
+        }
+    } while (attempt < retryCount)
+
+    logger.warn("withServiceRetries: all attempts failed")
+    return ServiceResult.OtherError
+}
+
+internal suspend fun String?.asAuthFlowUrl(account: OAuthAccount, scopes: Set<String>): AuthFlowUrl? {
+    return if (this != null) {
+        account.beginPairingFlow(this, scopes)
+    } else {
+        account.beginOAuthFlow(scopes)
+    }
 }

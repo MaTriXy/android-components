@@ -15,20 +15,20 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.util.LinkedList
 
 /**
- * Provides functionality to process categorized URL black/white lists and match
+ * Provides functionality to process categorized URL block/safe lists and match
  * URLs against these lists.
  */
 class UrlMatcher {
     private val categories: MutableMap<String, Trie>
     internal val enabledCategories = HashSet<String>()
 
-    private val whiteList: WhiteList?
+    private val safelist: Safelist?
     private val previouslyMatched = HashSet<String>()
     private val previouslyUnmatched = HashSet<String>()
 
     constructor(patterns: Array<String>) {
         categories = HashMap()
-        whiteList = null
+        safelist = null
 
         val defaultCategory = Trie.createRootNode()
         patterns.forEach { defaultCategory.put(it.reverse()) }
@@ -40,14 +40,14 @@ class UrlMatcher {
         enabledCategories: Set<String>,
         supportedCategories: Set<String>,
         categoryMap: MutableMap<String, Trie>,
-        whiteList: WhiteList? = null
+        safelist: Safelist? = null,
     ) {
-        this.whiteList = whiteList
+        this.safelist = safelist
         this.categories = categoryMap
 
         for ((key) in categoryMap) {
             if (!supportedCategories.contains(key)) {
-                throw IllegalArgumentException("categoryMap contains undeclared category")
+                throw IllegalArgumentException("$key categoryMap contains undeclared category")
             }
         }
 
@@ -85,7 +85,7 @@ class UrlMatcher {
     }
 
     /**
-     * Checks if the given page URI is blacklisted for the given resource URI.
+     * Checks if the given page URI is blocklisted for the given resource URI.
      * Returns true if the site (page URI) is allowed to access
      * the resource URI, otherwise false.
      *
@@ -99,7 +99,7 @@ class UrlMatcher {
     }
 
     /**
-     * Checks if the given page URI is blacklisted for the given resource URI.
+     * Checks if the given page URI is blocklisted for the given resource URI.
      * Returns true if the site (page URI) is allowed to access
      * the resource URI, otherwise false.
      *
@@ -119,7 +119,7 @@ class UrlMatcher {
             return notMatchesFound
         }
 
-        if (whiteList?.contains(pageURI, resourceURI) == true) {
+        if (safelist?.contains(pageURI, resourceURI) == true) {
             return notMatchesFound
         }
 
@@ -150,89 +150,75 @@ class UrlMatcher {
         const val ADVERTISING = "Advertising"
         const val ANALYTICS = "Analytics"
         const val CONTENT = "Content"
-        const val DISCONNECT = "Disconnect"
         const val SOCIAL = "Social"
         const val DEFAULT = "default"
         const val CRYPTOMINING = "Cryptomining"
         const val FINGERPRINTING = "Fingerprinting"
 
         private val ignoredCategories = setOf("Legacy Disconnect", "Legacy Content")
-        private val disconnectMoved = setOf("Facebook", "Twitter")
         private val webfontExtensions = arrayOf(".woff2", ".woff", ".eot", ".ttf", ".otf")
         private val supportedCategories = setOf(
-                ADVERTISING,
-                ANALYTICS,
-                SOCIAL,
-                CONTENT,
-                CRYPTOMINING,
-                FINGERPRINTING
+            ADVERTISING,
+            ANALYTICS,
+            SOCIAL,
+            CONTENT,
+            CRYPTOMINING,
+            FINGERPRINTING,
         )
 
         /**
          * Creates a new matcher instance for the provided URL lists.
          *
          * @deprecated Pass resources directly
-         * @param blackListFile resource ID to a JSON file containing the black list
-         * @param overrides array of resource ID to JSON files containing black list overrides
-         * @param whiteListFile resource ID to a JSON file containing the white list
+         * @param blocklistFile resource ID to a JSON file containing the block list
+         * @param safelistFile resource ID to a JSON file containing the safe list
          */
         fun createMatcher(
             context: Context,
-            @RawRes blackListFile: Int,
-            overrides: IntArray?,
-            @RawRes whiteListFile: Int,
-            enabledCategories: Set<String> = supportedCategories
+            @RawRes blocklistFile: Int,
+            @RawRes safelistFile: Int,
+            enabledCategories: Set<String> = supportedCategories,
         ): UrlMatcher =
-            createMatcher(context.resources, blackListFile, overrides, whiteListFile, enabledCategories)
+            createMatcher(context.resources, blocklistFile, safelistFile, enabledCategories)
 
         /**
          * Creates a new matcher instance for the provided URL lists.
          *
-         * @param blackListFile resource ID to a JSON file containing the black list
-         * @param overrides array of resource ID to JSON files containing black list overrides
-         * @param whiteListFile resource ID to a JSON file containing the white list
+         * @param blocklistFile resource ID to a JSON file containing the block list
+         * @param safelistFile resource ID to a JSON file containing the safe list
          */
         fun createMatcher(
             resources: Resources,
-            @RawRes blackListFile: Int,
-            overrides: IntArray?,
-            @RawRes whiteListFile: Int,
-            enabledCategories: Set<String> = supportedCategories
+            @RawRes blocklistFile: Int,
+            @RawRes safelistFile: Int,
+            enabledCategories: Set<String> = supportedCategories,
         ): UrlMatcher {
-            val blackListReader = InputStreamReader(resources.openRawResource(blackListFile), UTF_8)
-            val whiteListReader = InputStreamReader(resources.openRawResource(whiteListFile), UTF_8)
-            val overrideReaders = overrides?.map { InputStreamReader(resources.openRawResource(it), UTF_8) }
-            return createMatcher(blackListReader, overrideReaders, whiteListReader, enabledCategories)
+            val blocklistReader = InputStreamReader(resources.openRawResource(blocklistFile), UTF_8)
+            val safelistReader = InputStreamReader(resources.openRawResource(safelistFile), UTF_8)
+            return createMatcher(blocklistReader, safelistReader, enabledCategories)
         }
 
         /**
          * Creates a new matcher instance for the provided URL lists.
          *
-         * @param black reader containing the black list
-         * @param overrides array of resource ID to JSON files containing black list overrides
-         * @param white resource ID to a JSON file containing the white list
+         * @param block reader containing the block list
+         * @param safe resource ID to a JSON file containing the safe list
          */
         fun createMatcher(
-            black: Reader,
-            overrides: List<Reader>?,
-            white: Reader,
-            enabledCategories: Set<String> = supportedCategories
+            block: Reader,
+            safe: Reader,
+            enabledCategories: Set<String> = supportedCategories,
         ): UrlMatcher {
             val categoryMap = HashMap<String, Trie>()
 
-            JsonReader(black).use {
-                jsonReader -> loadCategories(jsonReader, categoryMap)
+            JsonReader(block).use {
+                    jsonReader ->
+                loadCategories(jsonReader, categoryMap)
             }
 
-            overrides?.forEach {
-                JsonReader(it).use {
-                    jsonReader -> loadCategories(jsonReader, categoryMap, true)
-                }
-            }
-
-            var whiteList: WhiteList? = null
-            JsonReader(white).use { jsonReader -> whiteList = WhiteList.fromJson(jsonReader) }
-            return UrlMatcher(enabledCategories, supportedCategories, categoryMap, whiteList)
+            var safelist: Safelist?
+            JsonReader(safe).use { jsonReader -> safelist = Safelist.fromJson(jsonReader) }
+            return UrlMatcher(enabledCategories, supportedCategories, categoryMap, safelist)
         }
 
         /**
@@ -249,7 +235,7 @@ class UrlMatcher {
         private fun loadCategories(
             reader: JsonReader,
             categoryMap: MutableMap<String, Trie>,
-            override: Boolean = false
+            override: Boolean = false,
         ): Map<String, Trie> {
             reader.beginObject()
 
@@ -275,11 +261,6 @@ class UrlMatcher {
                 val categoryName = reader.nextName()
                 when {
                     ignoredCategories.contains(categoryName) -> reader.skipValue()
-                    categoryName == DISCONNECT -> {
-                        extractCategory(reader) { url, owner ->
-                            if (disconnectMoved.contains(owner)) socialOverrides.add(url)
-                        }
-                    }
                     else -> {
                         val categoryTrie: Trie?
                         if (!override) {

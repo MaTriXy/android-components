@@ -5,6 +5,8 @@
 package mozilla.components.support.utils
 
 import android.view.View
+import androidx.core.view.ViewCompat
+import mozilla.components.support.utils.ext.top
 
 object StatusBarUtils {
     private var statusBarSize = -1
@@ -17,11 +19,11 @@ object StatusBarUtils {
         if (statusBarSize > 0) {
             block(statusBarSize)
         } else {
-            view.setOnApplyWindowInsetsListener { _, insets ->
-                statusBarSize = insets.systemWindowInsetTop
+            ViewCompat.setOnApplyWindowInsetsListener(view) { _, insetsCompat ->
+                statusBarSize = insetsCompat.top()
                 block(statusBarSize)
                 view.setOnApplyWindowInsetsListener(null)
-                insets
+                insetsCompat
             }
         }
     }

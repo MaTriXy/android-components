@@ -5,10 +5,12 @@
 package mozilla.components.browser.state.store
 
 import mozilla.components.browser.state.action.BrowserAction
+import mozilla.components.browser.state.action.InitAction
 import mozilla.components.browser.state.reducer.BrowserStateReducer
 import mozilla.components.browser.state.selector.findTab
 import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.lib.state.Action
+import mozilla.components.lib.state.Middleware
 import mozilla.components.lib.state.Store
 import java.lang.IllegalArgumentException
 
@@ -18,10 +20,13 @@ import java.lang.IllegalArgumentException
  * The only way to change the [BrowserState] inside [BrowserStore] is to dispatch an [Action] on it.
  */
 class BrowserStore(
-    initialState: BrowserState = BrowserState()
+    initialState: BrowserState = BrowserState(),
+    middleware: List<Middleware<BrowserState, BrowserAction>> = emptyList(),
 ) : Store<BrowserState, BrowserAction>(
     initialState,
-    BrowserStateReducer::reduce
+    BrowserStateReducer::reduce,
+    middleware,
+    "BrowserStore",
 ) {
     init {
         initialState.selectedTabId?.let {
@@ -38,5 +43,7 @@ class BrowserStore(
         ) {
             throw IllegalArgumentException("Duplicate tabs found")
         }
+
+        dispatch(InitAction)
     }
 }

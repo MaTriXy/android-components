@@ -6,6 +6,7 @@ package mozilla.components.browser.icons.utils
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import androidx.annotation.VisibleForTesting
 import com.jakewharton.disklrucache.DiskLruCache
 import mozilla.components.browser.icons.Icon
@@ -25,8 +26,8 @@ import java.io.IOException
 private const val RESOURCES_DISK_CACHE_VERSION = 1
 private const val ICON_DATA_DISK_CACHE_VERSION = 1
 
-private const val MAXIMUM_CACHE_RESOURCES_BYTES: Long = 1024 * 1024 * 10 // 10 MB
-private const val MAXIMUM_CACHE_ICON_DATA_BYTES: Long = 1024 * 1024 * 100 // 100 MB
+private const val MAXIMUM_CACHE_RESOURCES_BYTES: Long = 1024L * 1024L * 10L // 10 MB
+private const val MAXIMUM_CACHE_ICON_DATA_BYTES: Long = 1024L * 1024L * 100L // 100 MB
 
 private const val WEBP_QUALITY = 90
 
@@ -34,10 +35,16 @@ private const val WEBP_QUALITY = 90
  * Caching bitmaps and resource URLs on disk.
  */
 class IconDiskCache :
-    DiskIconLoader.LoaderDiskCache, DiskIconPreparer.PreparerDiskCache, DiskIconProcessor.ProcessorDiskCache {
+    DiskIconLoader.LoaderDiskCache,
+    DiskIconPreparer.PreparerDiskCache,
+    DiskIconProcessor.ProcessorDiskCache {
     private val logger = Logger("Icons/IconDiskCache")
-    private var iconResourcesCache: DiskLruCache? = null
-    private var iconDataCache: DiskLruCache? = null
+
+    @VisibleForTesting
+    internal var iconResourcesCache: DiskLruCache? = null
+
+    @VisibleForTesting
+    internal var iconDataCache: DiskLruCache? = null
     private val iconResourcesCacheWriteLock = Any()
     private val iconDataCacheWriteLock = Any()
 
@@ -61,7 +68,7 @@ class IconDiskCache :
         return emptyList()
     }
 
-    internal fun putResources(context: Context, request: IconRequest) {
+    override fun putResources(context: Context, request: IconRequest) {
         try {
             synchronized(iconResourcesCacheWriteLock) {
                 val key = createKey(request.url)
@@ -80,8 +87,7 @@ class IconDiskCache :
         }
     }
 
-    override fun put(context: Context, request: IconRequest, resource: IconRequest.Resource, icon: Icon) {
-        putResources(context, request)
+    override fun putIcon(context: Context, resource: IconRequest.Resource, icon: Icon) {
         putIconBitmap(context, resource, icon.bitmap)
     }
 
@@ -102,13 +108,19 @@ class IconDiskCache :
     }
 
     internal fun putIconBitmap(context: Context, resource: IconRequest.Resource, bitmap: Bitmap) {
+        val compressFormat = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Bitmap.CompressFormat.WEBP_LOSSY
+        } else {
+            @Suppress("DEPRECATION")
+            Bitmap.CompressFormat.WEBP
+        }
         try {
             synchronized(iconDataCacheWriteLock) {
                 val editor = getIconDataCache(context)
                     .edit(createKey(resource.url)) ?: return
 
                 editor.newOutputStream(0).use { stream ->
-                    bitmap.compress(Bitmap.CompressFormat.WEBP, WEBP_QUALITY, stream)
+                    bitmap.compress(compressFormat, WEBP_QUALITY, stream)
                 }
 
                 editor.commit()
@@ -118,10 +130,18 @@ class IconDiskCache :
         }
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.NONE)
     internal fun clear(context: Context) {
-        getIconResourcesCache(context).delete()
-        getIconDataCache(context).delete()
+        try {
+            getIconResourcesCache(context).delete()
+        } catch (e: IOException) {
+            logger.warn("Icon resource cache could not be cleared. Perhaps there is none?")
+        }
+
+        try {
+            getIconDataCache(context).delete()
+        } catch (e: IOException) {
+            logger.warn("Icon data cache could not be cleared. Perhaps there is none?")
+        }
 
         iconResourcesCache = null
         iconDataCache = null
@@ -135,7 +155,7 @@ class IconDiskCache :
             getIconResourcesCacheDirectory(context),
             RESOURCES_DISK_CACHE_VERSION,
             1,
-            MAXIMUM_CACHE_RESOURCES_BYTES
+            MAXIMUM_CACHE_RESOURCES_BYTES,
         ).also { iconResourcesCache = it }
     }
 
@@ -152,7 +172,7 @@ class IconDiskCache :
             getIconDataCacheDirectory(context),
             ICON_DATA_DISK_CACHE_VERSION,
             1,
-            MAXIMUM_CACHE_ICON_DATA_BYTES
+            MAXIMUM_CACHE_ICON_DATA_BYTES,
         ).also { iconDataCache = it }
     }
 

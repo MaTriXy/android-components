@@ -19,25 +19,53 @@ class NativeCodeCrashTest {
         val intent = Intent("org.mozilla.gecko.ACTION_CRASHED")
         intent.component = ComponentName(
             "org.mozilla.samples.browser",
-            "mozilla.components.lib.crash.handler.CrashHandlerService")
-        intent.putExtra("minidumpPath",
-            "/data/data/org.mozilla.samples.browser/files/mozilla/Crash Reports/pending/3ba5f665-8422-dc8e-a88e-fc65c081d304.dmp")
-        intent.putExtra("fatal", false)
-        intent.putExtra("extrasPath",
-            "/data/data/org.mozilla.samples.browser/files/mozilla/Crash Reports/pending/3ba5f665-8422-dc8e-a88e-fc65c081d304.extra")
+            "mozilla.components.lib.crash.handler.CrashHandlerService",
+        )
+        intent.putExtra("uuid", "afc91225-93d7-4328-b3eb-d26ad5af4d86")
+        intent.putExtra(
+            "minidumpPath",
+            "/data/data/org.mozilla.samples.browser/files/mozilla/Crash Reports/pending/3ba5f665-8422-dc8e-a88e-fc65c081d304.dmp",
+        )
+        intent.putExtra("processType", "FOREGROUND_CHILD")
+        intent.putExtra(
+            "extrasPath",
+            "/data/data/org.mozilla.samples.browser/files/mozilla/Crash Reports/pending/3ba5f665-8422-dc8e-a88e-fc65c081d304.extra",
+        )
         intent.putExtra("minidumpSuccess", true)
 
         val crash = Crash.NativeCodeCrash.fromBundle(intent.extras!!)
 
+        assertEquals(
+            "afc91225-93d7-4328-b3eb-d26ad5af4d86",
+            crash.uuid,
+        )
         assertEquals(crash.minidumpSuccess, true)
         assertEquals(crash.isFatal, false)
+        assertEquals(crash.processType, Crash.NativeCodeCrash.PROCESS_TYPE_FOREGROUND_CHILD)
         assertEquals(
             "/data/data/org.mozilla.samples.browser/files/mozilla/Crash Reports/pending/3ba5f665-8422-dc8e-a88e-fc65c081d304.dmp",
-            crash.minidumpPath
+            crash.minidumpPath,
         )
         assertEquals(
             "/data/data/org.mozilla.samples.browser/files/mozilla/Crash Reports/pending/3ba5f665-8422-dc8e-a88e-fc65c081d304.extra",
-            crash.extrasPath
+            crash.extrasPath,
         )
+    }
+
+    @Test
+    fun `to and from bundle`() {
+        val crash = Crash.NativeCodeCrash(
+            0,
+            "minidumpPath",
+            true,
+            "extrasPath",
+            Crash.NativeCodeCrash.PROCESS_TYPE_MAIN,
+            arrayListOf(),
+        )
+
+        val bundle = crash.toBundle()
+        val otherCrash = Crash.NativeCodeCrash.fromBundle(bundle)
+
+        assertEquals(crash, otherCrash)
     }
 }

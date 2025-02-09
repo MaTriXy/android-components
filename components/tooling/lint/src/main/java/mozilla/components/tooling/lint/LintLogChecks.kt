@@ -35,10 +35,11 @@ class LintLogChecks : Detector(), Detector.UastScanner {
 
             if (inComponentPackage) {
                 context.report(
-                        ISSUE_LOG_USAGE,
-                        node,
-                        context.getLocation(node),
-                        ERROR_MESSAGE)
+                    ISSUE_LOG_USAGE,
+                    node,
+                    context.getLocation(node),
+                    ERROR_MESSAGE,
+                )
             }
         }
     }
@@ -49,15 +50,12 @@ class LintLogChecks : Detector(), Detector.UastScanner {
             "Log/Logger from base component should be used.",
             """The Log or Logger class from the base component should be used for logging instead of
             Android's Log class. This will allow the app to control what logs should be accepted
-            and how they should be processed.""".trimIndent(),
+            and how they should be processed.
+            """.trimIndent(),
             Category.MESSAGES,
             5,
             Severity.WARNING,
-            Implementation(LintLogChecks::class.java, EnumSet.of(Scope.JAVA_FILE))
-        )
-
-        val issues: List<Issue> = listOf(
-            ISSUE_LOG_USAGE
+            Implementation(LintLogChecks::class.java, EnumSet.of(Scope.JAVA_FILE)),
         )
     }
 }

@@ -19,6 +19,7 @@ import org.mockito.Mockito.spy
 class ToolbarInteractorTest {
 
     class TestToolbar : Toolbar {
+        override var highlight: Toolbar.Highlight = Toolbar.Highlight.NONE
         override var url: CharSequence = ""
         override var siteSecure: Toolbar.SiteSecurity = Toolbar.SiteSecurity.INSECURE
         override var private: Boolean = false
@@ -56,11 +57,23 @@ class ToolbarInteractorTest {
             fail()
         }
 
+        override fun removeBrowserAction(action: Toolbar.Action) {
+            fail()
+        }
+
+        override fun removePageAction(action: Toolbar.Action) {
+            fail()
+        }
+
         override fun addPageAction(action: Toolbar.Action) {
             fail()
         }
 
         override fun addNavigationAction(action: Toolbar.Action) {
+            fail()
+        }
+
+        override fun removeNavigationAction(action: Toolbar.Action) {
             fail()
         }
 
@@ -76,7 +89,39 @@ class ToolbarInteractorTest {
             fail()
         }
 
-        override fun addEditAction(action: Toolbar.Action) {
+        override fun addEditActionStart(action: Toolbar.Action) {
+            fail()
+        }
+
+        override fun addEditActionEnd(action: Toolbar.Action) {
+            fail()
+        }
+
+        override fun removeEditActionEnd(action: Toolbar.Action) {
+            fail()
+        }
+
+        override fun invalidateActions() {
+            fail()
+        }
+
+        override fun dismissMenu() {
+            fail()
+        }
+
+        override fun enableScrolling() {
+            fail()
+        }
+
+        override fun disableScrolling() {
+            fail()
+        }
+
+        override fun collapse() {
+            fail()
+        }
+
+        override fun expand() {
             fail()
         }
     }
@@ -85,7 +130,11 @@ class ToolbarInteractorTest {
     fun `provide custom use case for loading url`() {
         var useCaseInvokedWithUrl = ""
         val loadUrlUseCase = object : SessionUseCases.LoadUrlUseCase {
-            override fun invoke(url: String, flags: EngineSession.LoadUrlFlags) {
+            override fun invoke(
+                url: String,
+                flags: EngineSession.LoadUrlFlags,
+                additionalHeaders: Map<String, String>?,
+            ) {
                 useCaseInvokedWithUrl = url
             }
         }

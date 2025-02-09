@@ -4,9 +4,14 @@
 
 package mozilla.components.feature.pwa
 
+import android.app.PendingIntent
+import android.app.PendingIntent.FLAG_UPDATE_CURRENT
 import android.content.Context
 import android.content.Intent
+import android.content.Intent.ACTION_MAIN
+import android.content.Intent.CATEGORY_HOME
 import android.content.Intent.FLAG_ACTIVITY_NEW_DOCUMENT
+import android.content.Intent.FLAG_ACTIVITY_NEW_TASK
 import android.content.pm.ShortcutManager
 import android.os.Build.VERSION.SDK_INT
 import android.os.Build.VERSION_CODES
@@ -17,46 +22,49 @@ import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 import androidx.core.net.toUri
 import mozilla.components.browser.icons.BrowserIcons
-import mozilla.components.browser.icons.decoder.AndroidIconDecoder
 import mozilla.components.browser.icons.decoder.ICOIconDecoder
 import mozilla.components.browser.icons.extension.toIconRequest
 import mozilla.components.browser.icons.generator.DefaultIconGenerator
 import mozilla.components.browser.icons.loader.DataUriIconLoader
-import mozilla.components.browser.icons.loader.DiskIconLoader
 import mozilla.components.browser.icons.loader.HttpIconLoader
 import mozilla.components.browser.icons.loader.MemoryIconLoader
-import mozilla.components.browser.icons.preparer.DiskIconPreparer
 import mozilla.components.browser.icons.preparer.MemoryIconPreparer
-import mozilla.components.browser.icons.preparer.TippyTopIconPreparer
 import mozilla.components.browser.icons.processor.AdaptiveIconProcessor
 import mozilla.components.browser.icons.processor.ColorProcessor
-import mozilla.components.browser.icons.processor.DiskIconProcessor
 import mozilla.components.browser.icons.processor.MemoryIconProcessor
 import mozilla.components.browser.icons.processor.ResizingProcessor
-import mozilla.components.browser.icons.utils.IconDiskCache
 import mozilla.components.browser.icons.utils.IconMemoryCache
-import mozilla.components.browser.session.Session
+import mozilla.components.browser.state.state.SessionState
 import mozilla.components.concept.engine.manifest.WebAppManifest
 import mozilla.components.concept.fetch.Client
 import mozilla.components.feature.pwa.WebAppLauncherActivity.Companion.ACTION_PWA_LAUNCHER
+import mozilla.components.feature.pwa.ext.hasLargeIcons
 import mozilla.components.feature.pwa.ext.installableManifest
+import mozilla.components.support.images.decoder.AndroidImageDecoder
+import mozilla.components.support.utils.PendingIntentUtils
 
 private val pwaIconMemoryCache = IconMemoryCache()
-private val pwaIconDiskCache = IconDiskCache()
 
+const val SHORTCUT_CATEGORY = mozilla.components.feature.customtabs.SHORTCUT_CATEGORY
+
+/**
+ * Helper to manage pinned shortcuts for websites.
+ *
+ * @param httpClient Fetch client used to load website icons.
+ * @param storage Storage used to save web app manifests to disk.
+ * @param supportWebApps If true, Progressive Web Apps will be pinnable.
+ * If false, all web sites will be bookmark shortcuts even if they have a manifest.
+ */
 class WebAppShortcutManager(
     context: Context,
     httpClient: Client,
-    private val storage: ManifestStorage = ManifestStorage(context),
-    private val supportWebApps: Boolean = true
+    private val storage: ManifestStorage,
+    internal val supportWebApps: Boolean = true,
 ) {
 
-    @VisibleForTesting
     internal val icons = webAppIcons(context, httpClient)
 
-    private val fallbackLabel = {
-        context.getString(R.string.mozac_feature_pwa_default_shortcut_label)
-    }
+    private val fallbackLabel = context.getString(R.string.mozac_feature_pwa_default_shortcut_label)
 
     /**
      * Request to create a new shortcut on the home screen.
@@ -66,19 +74,32 @@ class WebAppShortcutManager(
      */
     suspend fun requestPinShortcut(
         context: Context,
-        session: Session,
-        overrideShortcutName: String? = null
+        session: SessionState,
+        overrideShortcutName: String? = null,
     ) {
         if (ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
             val manifest = session.installableManifest()
             val shortcut = if (supportWebApps && manifest != null) {
+                emitPwaInstallFact()
                 buildWebAppShortcut(context, manifest)
             } else {
                 buildBasicShortcut(context, session, overrideShortcutName)
             }
 
             if (shortcut != null) {
-                ShortcutManagerCompat.requestPinShortcut(context, shortcut, null)
+                val intent = Intent(ACTION_MAIN).apply {
+                    addCategory(CATEGORY_HOME)
+                    flags = FLAG_ACTIVITY_NEW_TASK
+                }
+                val pendingIntent = PendingIntent.getActivity(
+                    context,
+                    0,
+                    intent,
+                    PendingIntentUtils.defaultFlags or FLAG_UPDATE_CURRENT,
+                )
+                val intentSender = pendingIntent.intentSender
+
+                ShortcutManagerCompat.requestPinShortcut(context, shortcut, intentSender)
             }
         }
     }
@@ -100,22 +121,38 @@ class WebAppShortcutManager(
 
     /**
      * Create a new basic pinned website shortcut using info from the session.
+     * Consuming `SHORTCUT_CATEGORY` in `AndroidManifest` is required for the package to be launched
      */
-    fun buildBasicShortcut(
+    suspend fun buildBasicShortcut(
         context: Context,
-        session: Session,
-        overrideShortcutName: String? = null
+        session: SessionState,
+        overrideShortcutName: String? = null,
     ): ShortcutInfoCompat {
-        val shortcutIntent = Intent(Intent.ACTION_VIEW, session.url.toUri()).apply {
+        val shortcutIntent = Intent(Intent.ACTION_VIEW, session.content.url.toUri()).apply {
+            addCategory(SHORTCUT_CATEGORY)
             `package` = context.packageName
         }
 
-        val builder = ShortcutInfoCompat.Builder(context, session.url)
-            .setShortLabel((overrideShortcutName ?: session.title).ifBlank(fallbackLabel))
+        val manifest = session.content.webAppManifest
+        val shortLabel = overrideShortcutName
+            ?: manifest?.shortName
+            ?: manifest?.name
+            ?: session.content.title
+
+        val fallback = fallbackLabel
+        val fixedLabel = shortLabel.ifBlank { fallback }
+
+        val builder = ShortcutInfoCompat.Builder(context, session.content.url)
+            .setShortLabel(fixedLabel)
             .setIntent(shortcutIntent)
 
-        session.icon?.let {
-            builder.setIcon(IconCompat.createWithBitmap(it))
+        val icon = if (manifest != null && manifest.hasLargeIcons()) {
+            buildIconFromManifest(manifest)
+        } else {
+            session.content.icon?.let { IconCompat.createWithBitmap(it) }
+        }
+        icon?.let {
+            builder.setIcon(it)
         }
 
         return builder.build()
@@ -126,7 +163,7 @@ class WebAppShortcutManager(
      */
     suspend fun buildWebAppShortcut(
         context: Context,
-        manifest: WebAppManifest
+        manifest: WebAppManifest,
     ): ShortcutInfoCompat? {
         val shortcutIntent = Intent(context, WebAppLauncherActivity::class.java).apply {
             action = ACTION_PWA_LAUNCHER
@@ -140,7 +177,7 @@ class WebAppShortcutManager(
 
         return ShortcutInfoCompat.Builder(context, manifest.startUrl)
             .setLongLabel(manifest.name)
-            .setShortLabel(shortLabel.ifBlank(fallbackLabel))
+            .setShortLabel(shortLabel.ifBlank { fallbackLabel })
             .setIcon(buildIconFromManifest(manifest))
             .setIntent(shortcutIntent)
             .build()
@@ -169,17 +206,50 @@ class WebAppShortcutManager(
         }
 
     /**
-     * Uninstalls a set of PWAs from the user's device by disabling their
-     * shortcuts and removing the associated manifest data.
+     * Checks if there is a currently installed web app to which this URL belongs.
      *
-     * @param startUrls List of manifest startUrls to remove.
-     * @param disabledMessage Message to display when a disable shortcut is tapped.
+     * @param url url that is covered by the scope of a web app installed by the user
+     * @param currentTimeMs the current time in milliseconds, exposed for testing
      */
-    suspend fun uninstallShortcuts(context: Context, startUrls: List<String>, disabledMessage: String? = null) {
-        if (SDK_INT >= VERSION_CODES.N_MR1) {
-            context.getSystemService<ShortcutManager>()?.disableShortcuts(startUrls, disabledMessage)
+    suspend fun getWebAppInstallState(
+        url: String,
+        @VisibleForTesting currentTimeMs: Long = System.currentTimeMillis(),
+    ): WebAppInstallState {
+        if (storage.hasRecentManifest(url, currentTimeMs = currentTimeMs)) {
+            return WebAppInstallState.Installed
         }
-        storage.removeManifests(startUrls)
+
+        return WebAppInstallState.NotInstalled
+    }
+
+    /**
+     * Counts number of recently used web apps. See [ManifestStorage.activeThresholdMs].
+     *
+     * @param activeThresholdMs defines a time window within which a web app is considered recently used.
+     * Defaults to [ManifestStorage.ACTIVE_THRESHOLD_MS].
+     * @return count of recently used web apps
+     */
+    suspend fun recentlyUsedWebAppsCount(
+        activeThresholdMs: Long = ManifestStorage.ACTIVE_THRESHOLD_MS,
+    ): Int {
+        return storage.recentManifestsCount(activeThresholdMs = activeThresholdMs)
+    }
+
+    /**
+     * Updates the usedAt timestamp of the web app this url is associated with.
+     *
+     * @param manifest the manifest to update
+     */
+    suspend fun reportWebAppUsed(manifest: WebAppManifest): Unit? {
+        return storage.updateManifestUsedAt(manifest)
+    }
+
+    /**
+     * Possible install states of a Web App.
+     */
+    enum class WebAppInstallState {
+        NotInstalled,
+        Installed,
     }
 }
 
@@ -190,31 +260,27 @@ class WebAppShortcutManager(
  */
 private fun webAppIcons(
     context: Context,
-    httpClient: Client
+    httpClient: Client,
 ) = BrowserIcons(
     context = context,
     httpClient = httpClient,
     generator = DefaultIconGenerator(cornerRadiusDimen = null),
     preparers = listOf(
-        TippyTopIconPreparer(context.assets),
         MemoryIconPreparer(pwaIconMemoryCache),
-        DiskIconPreparer(pwaIconDiskCache)
     ),
     loaders = listOf(
         MemoryIconLoader(pwaIconMemoryCache),
-        DiskIconLoader(pwaIconDiskCache),
         HttpIconLoader(httpClient),
-        DataUriIconLoader()
+        DataUriIconLoader(),
     ),
     decoders = listOf(
-        AndroidIconDecoder(),
-        ICOIconDecoder()
+        AndroidImageDecoder(),
+        ICOIconDecoder(),
     ),
     processors = listOf(
         MemoryIconProcessor(pwaIconMemoryCache),
         ResizingProcessor(),
-        DiskIconProcessor(pwaIconDiskCache),
         ColorProcessor(),
-        AdaptiveIconProcessor()
-    )
+        AdaptiveIconProcessor(),
+    ),
 )

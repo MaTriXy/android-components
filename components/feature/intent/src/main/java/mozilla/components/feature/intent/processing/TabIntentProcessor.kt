@@ -4,36 +4,37 @@
 
 package mozilla.components.feature.intent.processing
 
+import android.app.SearchManager
 import android.content.Intent
+import android.content.Intent.ACTION_MAIN
+import android.content.Intent.ACTION_SEARCH
 import android.content.Intent.ACTION_SEND
 import android.content.Intent.ACTION_VIEW
+import android.content.Intent.ACTION_WEB_SEARCH
 import android.content.Intent.EXTRA_TEXT
-import mozilla.components.browser.session.Session
-import mozilla.components.browser.session.Session.Source
-import mozilla.components.browser.session.SessionManager
+import android.nfc.NfcAdapter.ACTION_NDEF_DISCOVERED
+import mozilla.components.browser.state.state.SessionState
+import mozilla.components.browser.state.state.externalPackage
 import mozilla.components.concept.engine.EngineSession.LoadUrlFlags
 import mozilla.components.feature.search.SearchUseCases
-import mozilla.components.feature.session.SessionUseCases
+import mozilla.components.feature.tabs.TabsUseCases
+import mozilla.components.support.ktx.kotlin.isUrl
+import mozilla.components.support.ktx.kotlin.toNormalizedUrl
 import mozilla.components.support.utils.SafeIntent
 import mozilla.components.support.utils.WebURLFinder
 
 /**
  * Processor for intents which should trigger session-related actions.
  *
- * @property sessionManager The application's [SessionManager].
- * @property loadUrlUseCase A reference to [SessionUseCases.DefaultLoadUrlUseCase] used to load URLs.
+ * @property tabsUseCases An instance of [TabsUseCases] used to open new tabs.
  * @property newTabSearchUseCase A reference to [SearchUseCases.NewTabSearchUseCase] to be used for
  * ACTION_SEND intents if the provided text is not a URL.
- * @property openNewTab Whether a processed intent should open a new tab or
- * open URLs in the currently selected tab.
  * @property isPrivate Whether a processed intent should open a new tab as private
  */
 class TabIntentProcessor(
-    private val sessionManager: SessionManager,
-    private val loadUrlUseCase: SessionUseCases.DefaultLoadUrlUseCase,
+    private val tabsUseCases: TabsUseCases,
     private val newTabSearchUseCase: SearchUseCases.NewTabSearchUseCase,
-    private val openNewTab: Boolean = true,
-    private val isPrivate: Boolean = false
+    private val isPrivate: Boolean = false,
 ) : IntentProcessor {
 
     /**
@@ -45,15 +46,20 @@ class TabIntentProcessor(
         return if (url.isNullOrEmpty()) {
             false
         } else {
-            val session = createSession(url, private = isPrivate, source = Source.ACTION_VIEW)
-            loadUrlUseCase(url, session, LoadUrlFlags.external())
+            val caller = intent.externalPackage()
+            tabsUseCases.selectOrAddTab(
+                url.toNormalizedUrl(),
+                private = isPrivate,
+                source = SessionState.Source.External.ActionView(caller),
+                flags = LoadUrlFlags.external(),
+            )
             true
         }
     }
 
     /**
      * Processes a send intent and tries to load [EXTRA_TEXT] as a URL.
-     * If its not a URL, a search is run instead.
+     * If it's not a URL, a search is run instead.
      */
     private fun processSendIntent(intent: SafeIntent): Boolean {
         val extraText = intent.getStringExtra(EXTRA_TEXT)
@@ -62,27 +68,39 @@ class TabIntentProcessor(
             false
         } else {
             val url = WebURLFinder(extraText).bestWebURL()
+            val source = SessionState.Source.External.ActionSend(intent.externalPackage())
             if (url != null) {
-                val session = createSession(url, private = isPrivate, source = Source.ACTION_SEND)
-                loadUrlUseCase(url, session, LoadUrlFlags.external())
+                addNewTab(url, source)
             } else {
-                newTabSearchUseCase(extraText, Source.ACTION_SEND, openNewTab)
+                newTabSearchUseCase(extraText, source)
             }
             true
         }
     }
 
-    private fun createSession(url: String, private: Boolean = false, source: Source): Session {
-        return if (openNewTab) {
-            Session(url, private, source).also { sessionManager.add(it, selected = true) }
+    private fun processSearchIntent(intent: SafeIntent): Boolean {
+        val searchQuery = intent.getStringExtra(SearchManager.QUERY)
+
+        return if (searchQuery.isNullOrBlank()) {
+            false
         } else {
-            sessionManager.selectedSession ?: Session(url, private, source)
+            val source = SessionState.Source.External.ActionSearch(intent.externalPackage())
+            if (searchQuery.isUrl()) {
+                addNewTab(searchQuery, source)
+            } else {
+                newTabSearchUseCase(searchQuery, source)
+            }
+            true
         }
     }
 
-    override fun matches(intent: Intent): Boolean {
-        val safeIntent = SafeIntent(intent)
-        return safeIntent.action == ACTION_VIEW || safeIntent.action == ACTION_SEND
+    private fun addNewTab(url: String, source: SessionState.Source) {
+        tabsUseCases.addTab(
+            url.toNormalizedUrl(),
+            source = source,
+            flags = LoadUrlFlags.external(),
+            private = isPrivate,
+        )
     }
 
     /**
@@ -91,11 +109,12 @@ class TabIntentProcessor(
      * @param intent the intent to process
      * @return true if the intent was processed, otherwise false.
      */
-    override suspend fun process(intent: Intent): Boolean {
+    override fun process(intent: Intent): Boolean {
         val safeIntent = SafeIntent(intent)
         return when (safeIntent.action) {
-            ACTION_VIEW -> processViewIntent(safeIntent)
+            ACTION_VIEW, ACTION_MAIN, ACTION_NDEF_DISCOVERED -> processViewIntent(safeIntent)
             ACTION_SEND -> processSendIntent(safeIntent)
+            ACTION_SEARCH, ACTION_WEB_SEARCH -> processSearchIntent(safeIntent)
             else -> false
         }
     }

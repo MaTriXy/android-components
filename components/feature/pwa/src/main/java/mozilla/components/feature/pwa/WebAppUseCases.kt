@@ -6,8 +6,8 @@ package mozilla.components.feature.pwa
 
 import android.content.Context
 import androidx.core.content.pm.ShortcutManagerCompat
-import mozilla.components.browser.session.SessionManager
-import mozilla.components.concept.fetch.Client
+import mozilla.components.browser.state.selector.selectedTab
+import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.feature.pwa.ext.installableManifest
 
 /**
@@ -15,19 +15,9 @@ import mozilla.components.feature.pwa.ext.installableManifest
  */
 class WebAppUseCases(
     private val applicationContext: Context,
-    private val sessionManager: SessionManager,
-    httpClient: Client,
-    private val supportWebApps: Boolean = true
+    private val store: BrowserStore,
+    private val shortcutManager: WebAppShortcutManager,
 ) {
-
-    private val shortcutManager by lazy {
-        WebAppShortcutManager(
-            applicationContext,
-            httpClient,
-            supportWebApps = supportWebApps
-        )
-    }
-
     /**
      * Checks if the launcher supports adding shortcuts.
      */
@@ -38,7 +28,7 @@ class WebAppUseCases(
      * Checks to see if the current session can be installed as a Progressive Web App.
      */
     fun isInstallable() =
-        sessionManager.selectedSession?.installableManifest() != null && supportWebApps
+        store.state.selectedTab?.installableManifest() != null && shortcutManager.supportWebApps
 
     /**
      * Let the user add the selected session to the homescreen.
@@ -51,8 +41,8 @@ class WebAppUseCases(
      */
     class AddToHomescreenUseCase internal constructor(
         private val applicationContext: Context,
-        private val sessionManager: SessionManager,
-        private val shortcutManager: WebAppShortcutManager
+        private val store: BrowserStore,
+        private val shortcutManager: WebAppShortcutManager,
     ) {
 
         /**
@@ -60,12 +50,39 @@ class WebAppUseCases(
          * is NOT a Progressive Web App
          */
         suspend operator fun invoke(overrideBasicShortcutName: String? = null) {
-            val session = sessionManager.selectedSession ?: return
+            val session = store.state.selectedTab ?: return
             shortcutManager.requestPinShortcut(applicationContext, session, overrideBasicShortcutName)
         }
     }
 
     val addToHomescreen by lazy {
-        AddToHomescreenUseCase(applicationContext, sessionManager, shortcutManager)
+        AddToHomescreenUseCase(applicationContext, store, shortcutManager)
+    }
+
+    /**
+     * Checks the current install state of a Web App.
+     *
+     * Returns WebAppShortcutManager.InstallState.Installed if the user has installed
+     * or used the web app in the past 30 days.
+     *
+     * Otherwise, WebAppShortcutManager.InstallState.NotInstalled is returned.
+     */
+    class GetInstallStateUseCase internal constructor(
+        private val store: BrowserStore,
+        private val shortcutManager: WebAppShortcutManager,
+    ) {
+        /**
+         * @param currentTimeMs the current time against which manifest usage timeouts will be validated
+         */
+        suspend operator fun invoke(
+            currentTimeMs: Long = System.currentTimeMillis(),
+        ): WebAppShortcutManager.WebAppInstallState? {
+            val session = store.state.selectedTab ?: return null
+            return shortcutManager.getWebAppInstallState(session.content.url, currentTimeMs)
+        }
+    }
+
+    val getInstallState by lazy {
+        GetInstallStateUseCase(store, shortcutManager)
     }
 }

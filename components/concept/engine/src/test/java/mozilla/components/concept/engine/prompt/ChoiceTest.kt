@@ -5,17 +5,16 @@
 package mozilla.components.concept.engine.prompt
 
 import mozilla.components.support.test.mock
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChoiceTest {
 
     @Test
     fun `Create a choice`() {
-
         val choice = Choice(id = "id", label = "label", children = arrayOf())
         choice.selected = true
         choice.enable = true

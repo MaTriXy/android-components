@@ -31,7 +31,7 @@ internal class MockStoreWrapper : KeyStoreWrapper() {
     }
 
     override fun getKeyFor(label: String): Key? =
-            getKeyStore().getKey(label, DEFAULTPASS)
+        getKeyStore().getKey(label, DEFAULTPASS)
     override fun makeKeyFor(label: String): SecretKey {
         val gen = KeyGenerator.getInstance("AES")
         gen.init(256)
@@ -126,7 +126,7 @@ class KeystoreTest {
         Assert.assertNotNull(cipher)
     }
 
-    @Ignore("troubleshooting test-env crypto errors")
+    @Ignore("https://github.com/mozilla-mobile/android-components/issues/4956")
     @Test
     fun cryptoRoundTrip() {
         val keystore = Keystore("test-roundtrip", wrapper = wrapper)

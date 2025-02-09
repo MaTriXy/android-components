@@ -5,26 +5,22 @@
 package mozilla.components.browser.storage.sync
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.withContext
-import mozilla.appservices.places.BookmarkFolder
-import mozilla.appservices.places.BookmarkItem
-import mozilla.appservices.places.BookmarkSeparator
-import mozilla.appservices.places.BookmarkTreeNode
-import mozilla.appservices.places.BookmarkUpdateInfo
 import mozilla.appservices.places.PlacesApi
+import mozilla.appservices.places.uniffi.PlacesException
 import mozilla.components.concept.storage.BookmarkInfo
 import mozilla.components.concept.storage.BookmarkNode
-import mozilla.components.concept.storage.BookmarkNodeType
 import mozilla.components.concept.storage.BookmarksStorage
 import mozilla.components.concept.sync.SyncAuthInfo
 import mozilla.components.concept.sync.SyncStatus
 import mozilla.components.concept.sync.SyncableStore
 import mozilla.components.support.base.log.logger.Logger
+import org.json.JSONObject
 
 /**
  * Implementation of the [BookmarksStorage] which is backed by a Rust Places lib via [PlacesApi].
  */
-@Suppress("TooManyFunctions")
 open class PlacesBookmarksStorage(context: Context) : PlacesStorage(context), BookmarksStorage, SyncableStore {
 
     override val logger = Logger("PlacesBookmarksStorage")
@@ -37,9 +33,9 @@ open class PlacesBookmarksStorage(context: Context) : PlacesStorage(context), Bo
      * @return The populated root starting from the guid.
      */
     override suspend fun getTree(guid: String, recursive: Boolean): BookmarkNode? {
-        return withContext(scope.coroutineContext) {
-            reader.getBookmarksTree(guid, recursive)?.let {
-                asBookmarkNode(it)
+        return withContext(readScope.coroutineContext) {
+            handlePlacesExceptions("getTree", default = null) {
+                reader.getBookmarksTree(guid, recursive)?.asBookmarkNode()
             }
         }
     }
@@ -51,8 +47,10 @@ open class PlacesBookmarksStorage(context: Context) : PlacesStorage(context), Bo
      * @return The bookmark node or null if it does not exist.
      */
     override suspend fun getBookmark(guid: String): BookmarkNode? {
-        return withContext(scope.coroutineContext) {
-            asBookmarkNode(reader.getBookmark(guid))
+        return withContext(readScope.coroutineContext) {
+            handlePlacesExceptions("getBookmark", default = null) {
+                reader.getBookmark(guid)?.asBookmarkNode()
+            }
         }
     }
 
@@ -63,8 +61,10 @@ open class PlacesBookmarksStorage(context: Context) : PlacesStorage(context), Bo
      * @return The list of bookmarks that match the URL
      */
     override suspend fun getBookmarksWithUrl(url: String): List<BookmarkNode> {
-        return withContext(scope.coroutineContext) {
-            reader.getBookmarksWithURL(url).mapNotNull(::asBookmarkNode)
+        return withContext(readScope.coroutineContext) {
+            handlePlacesExceptions("getBookmarkWithUrl", default = emptyList()) {
+                reader.getBookmarksWithURL(url).map { it.asBookmarkNode() }
+            }
         }
     }
 
@@ -76,8 +76,37 @@ open class PlacesBookmarksStorage(context: Context) : PlacesStorage(context), Bo
      * @return The list of matching bookmark nodes up to the limit number of items.
      */
     override suspend fun searchBookmarks(query: String, limit: Int): List<BookmarkNode> {
-        return withContext(scope.coroutineContext) {
-            reader.searchBookmarks(query, limit).mapNotNull(::asBookmarkNode)
+        return withContext(readScope.coroutineContext) {
+            handlePlacesExceptions("searchBookmarks", default = emptyList()) {
+                reader.searchBookmarks(query, limit).map { it.asBookmarkNode() }
+            }
+        }
+    }
+
+    /**
+     * Retrieves a list of recently added bookmarks.
+     *
+     * @param limit The maximum number of entries to return.
+     * @param maxAge Optional parameter used to filter out entries older than this number of milliseconds.
+     * @param currentTime Optional parameter for current time. Defaults toSystem.currentTimeMillis()
+     * @return The list of matching bookmark nodes up to the limit number of items.
+     */
+    override suspend fun getRecentBookmarks(
+        limit: Int,
+        maxAge: Long?,
+        @VisibleForTesting currentTime: Long,
+    ): List<BookmarkNode> {
+        return withContext(readScope.coroutineContext) {
+            val threshold = if (maxAge != null) {
+                currentTime - maxAge
+            } else {
+                0
+            }
+            handlePlacesExceptions("getRecentBookmarks", default = emptyList()) {
+                reader.getRecentBookmarks(limit)
+                    .map { it.asBookmarkNode() }
+                    .filter { it.dateAdded >= threshold }
+            }
         }
     }
 
@@ -92,9 +121,23 @@ open class PlacesBookmarksStorage(context: Context) : PlacesStorage(context), Bo
      * @param position The optional position to add the new node or null to append.
      * @return The guid of the newly inserted bookmark item.
      */
-    override suspend fun addItem(parentGuid: String, url: String, title: String, position: Int?): String {
-        return withContext(scope.coroutineContext) {
-            writer.createBookmarkItem(parentGuid, url, title, position)
+    override suspend fun addItem(parentGuid: String, url: String, title: String, position: UInt?): String {
+        return withContext(writeScope.coroutineContext) {
+            try {
+                writer.createBookmarkItem(parentGuid, url, title, position)
+            } catch (e: PlacesException.UrlParseFailed) {
+                // We re-throw this exception, it should be handled by the caller
+                throw e
+            } catch (e: PlacesException.UnexpectedPlacesException) {
+                // this is a fatal error, and should be rethrown
+                throw e
+            } catch (e: PlacesException) {
+                crashReporter?.submitCaughtException(e)
+                logger.warn("Ignoring PlacesException while running addItem", e)
+                // Should not return an empty string here. The function should be nullable
+                // however, it is better than the app crashing.
+                ""
+            }
         }
     }
 
@@ -108,9 +151,11 @@ open class PlacesBookmarksStorage(context: Context) : PlacesStorage(context), Bo
      * @param position The optional position to add the new node or null to append.
      * @return The guid of the newly inserted bookmark item.
      */
-    override suspend fun addFolder(parentGuid: String, title: String, position: Int?): String {
-        return withContext(scope.coroutineContext) {
-            writer.createFolder(parentGuid, title, position)
+    override suspend fun addFolder(parentGuid: String, title: String, position: UInt?): String {
+        return withContext(writeScope.coroutineContext) {
+            handlePlacesExceptions("addFolder", default = "") {
+                writer.createFolder(parentGuid, title, position)
+            }
         }
     }
 
@@ -123,9 +168,11 @@ open class PlacesBookmarksStorage(context: Context) : PlacesStorage(context), Bo
      * @param position The optional position to add the new node or null to append.
      * @return The guid of the newly inserted bookmark item.
      */
-    override suspend fun addSeparator(parentGuid: String, position: Int?): String {
-        return withContext(scope.coroutineContext) {
-            writer.createSeparator(parentGuid, position)
+    override suspend fun addSeparator(parentGuid: String, position: UInt?): String {
+        return withContext(writeScope.coroutineContext) {
+            handlePlacesExceptions("addSeparator", default = "") {
+                writer.createSeparator(parentGuid, position)
+            }
         }
     }
 
@@ -138,8 +185,19 @@ open class PlacesBookmarksStorage(context: Context) : PlacesStorage(context), Bo
      * @param info The info to change in the bookmark.
      */
     override suspend fun updateNode(guid: String, info: BookmarkInfo) {
-        return withContext(scope.coroutineContext) {
-            writer.updateBookmark(guid, BookmarkUpdateInfo(info.parentGuid, info.position, info.title, info.url))
+        return withContext(writeScope.coroutineContext) {
+            try {
+                writer.updateBookmark(guid, info.parentGuid, info.position, info.title, info.url)
+            } catch (e: PlacesException.CannotUpdateRoot) {
+                // We re-throw this exception, it should be handled by the caller
+                throw e
+            } catch (e: PlacesException.UnexpectedPlacesException) {
+                // this is a fatal error, and should be rethrown
+                throw e
+            } catch (e: PlacesException) {
+                crashReporter?.submitCaughtException(e)
+                logger.warn("Ignoring PlacesException while running updateNode", e)
+            }
         }
     }
 
@@ -150,24 +208,19 @@ open class PlacesBookmarksStorage(context: Context) : PlacesStorage(context), Bo
      *
      * @return Whether the bookmark existed or not.
      */
-    override suspend fun deleteNode(guid: String): Boolean = withContext(scope.coroutineContext) {
-        writer.deleteBookmarkNode(guid)
-    }
-
-    private fun asBookmarkNode(node: BookmarkTreeNode?): BookmarkNode? {
-        return node?.let {
-            when (it) {
-                is BookmarkItem -> {
-                    BookmarkNode(BookmarkNodeType.ITEM, it.guid, it.parentGUID, it.position, it.title, it.url, null)
-                }
-                is BookmarkFolder -> {
-                    BookmarkNode(BookmarkNodeType.FOLDER, it.guid, it.parentGUID, it.position, it.title, null,
-                            it.children?.mapNotNull(::asBookmarkNode))
-                }
-                is BookmarkSeparator -> {
-                    BookmarkNode(BookmarkNodeType.SEPARATOR, it.guid, it.parentGUID, it.position, null, null, null)
-                }
-            }
+    override suspend fun deleteNode(guid: String): Boolean = withContext(writeScope.coroutineContext) {
+        try {
+            writer.deleteBookmarkNode(guid)
+        } catch (e: PlacesException.CannotUpdateRoot) {
+            // We re-throw this exception, it should be handled by the caller
+            throw e
+        } catch (e: PlacesException.UnexpectedPlacesException) {
+            // this is a fatal error, and should be rethrown
+            throw e
+        } catch (e: PlacesException) {
+            crashReporter?.submitCaughtException(e)
+            logger.warn("Ignoring PlacesException while running deleteNode", e)
+            false
         }
     }
 
@@ -177,11 +230,37 @@ open class PlacesBookmarksStorage(context: Context) : PlacesStorage(context), Bo
      * @param authInfo The authentication information to sync with.
      * @return Sync status of OK or Error
      */
-    override suspend fun sync(authInfo: SyncAuthInfo): SyncStatus {
-        return withContext(scope.coroutineContext) {
+    suspend fun sync(authInfo: SyncAuthInfo): SyncStatus {
+        return withContext(writeScope.coroutineContext) {
             syncAndHandleExceptions {
                 places.syncBookmarks(authInfo)
             }
         }
+    }
+
+    /**
+     * Import bookmarks data from Fennec's browser.db file.
+     * Before running this, first run [PlacesHistoryStorage.importFromFennec] to import history and visits data.
+     *
+     * @param dbPath Absolute path to Fennec's browser.db file.
+     * @return Migration metrics wrapped in a JSON object. See libplaces for schema details.
+     */
+    @Throws(PlacesException::class)
+    fun importFromFennec(dbPath: String): JSONObject {
+        return places.importBookmarksFromFennec(dbPath)
+    }
+
+    /**
+     * Read pinned sites from Fennec's browser.db file.
+     *
+     * @param dbPath Absolute path to Fennec's browser.db file.
+     * @return A list of [BookmarkNode] which represent pinned sites.
+     */
+    fun readPinnedSitesFromFennec(dbPath: String): List<BookmarkNode> {
+        return places.readPinnedSitesFromFennec(dbPath)
+    }
+
+    override fun registerWithSyncManager() {
+        places.registerWithSyncManager()
     }
 }

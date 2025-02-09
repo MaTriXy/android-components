@@ -10,16 +10,14 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsService.RELATION_HANDLE_ALL_URLS
 import androidx.browser.customtabs.CustomTabsSessionToken
+import androidx.browser.trusted.TrustedWebActivityIntentBuilder.EXTRA_ADDITIONAL_TRUSTED_ORIGINS
 import androidx.core.net.toUri
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
-import mozilla.components.browser.session.Session
-import mozilla.components.browser.session.SessionManager
-import mozilla.components.browser.state.state.CustomTabConfig.Companion.EXTRA_ADDITIONAL_TRUSTED_ORIGINS
-import mozilla.components.concept.engine.EngineSession
-import mozilla.components.concept.fetch.Client
+import mozilla.components.browser.state.state.ExternalAppType
+import mozilla.components.browser.state.state.SessionState
 import mozilla.components.feature.customtabs.createCustomTabConfigFromIntent
 import mozilla.components.feature.customtabs.feature.OriginVerifierFeature
 import mozilla.components.feature.customtabs.isTrustedWebActivityIntent
@@ -27,42 +25,46 @@ import mozilla.components.feature.customtabs.store.CustomTabsServiceStore
 import mozilla.components.feature.intent.ext.putSessionId
 import mozilla.components.feature.intent.processing.IntentProcessor
 import mozilla.components.feature.pwa.ext.toOrigin
-import mozilla.components.feature.session.SessionUseCases
+import mozilla.components.feature.tabs.CustomTabsUseCases
+import mozilla.components.service.digitalassetlinks.RelationChecker
 import mozilla.components.support.utils.SafeIntent
 import mozilla.components.support.utils.toSafeIntent
 
 /**
  * Processor for intents which open Trusted Web Activities.
  */
+@Deprecated("TWAs are not supported. See https://github.com/mozilla-mobile/android-components/issues/12024")
 class TrustedWebActivityIntentProcessor(
-    private val sessionManager: SessionManager,
-    private val loadUrlUseCase: SessionUseCases.DefaultLoadUrlUseCase,
-    httpClient: Client,
+    private val addNewTabUseCase: CustomTabsUseCases.AddCustomTabUseCase,
     packageManager: PackageManager,
-    apiKey: String?,
-    private val store: CustomTabsServiceStore
+    relationChecker: RelationChecker,
+    private val store: CustomTabsServiceStore,
 ) : IntentProcessor {
 
-    private val verifier = OriginVerifierFeature(httpClient, packageManager, apiKey) { store.dispatch(it) }
+    private val verifier = OriginVerifierFeature(packageManager, relationChecker) { store.dispatch(it) }
     private val scope = MainScope()
 
-    override fun matches(intent: Intent): Boolean {
+    private fun matches(intent: Intent): Boolean {
         val safeIntent = intent.toSafeIntent()
         return safeIntent.action == ACTION_VIEW && isTrustedWebActivityIntent(safeIntent)
     }
 
-    override suspend fun process(intent: Intent): Boolean {
+    override fun process(intent: Intent): Boolean {
         val safeIntent = SafeIntent(intent)
         val url = safeIntent.dataString
 
         return if (!url.isNullOrEmpty() && matches(intent)) {
-            val session = Session(url, private = false, source = Session.Source.HOME_SCREEN)
-            val customTabConfig = createCustomTabConfigFromIntent(intent, null)
-            session.customTabConfig = customTabConfig
+            val customTabConfig = createCustomTabConfigFromIntent(intent, null).copy(
+                externalAppType = ExternalAppType.TRUSTED_WEB_ACTIVITY,
+            )
 
-            sessionManager.add(session)
-            loadUrlUseCase(url, session, EngineSession.LoadUrlFlags.external())
-            intent.putSessionId(session.id)
+            val tabId = addNewTabUseCase.invoke(
+                url,
+                source = SessionState.Source.Internal.HomeScreen,
+                customTabConfig = customTabConfig,
+            )
+
+            intent.putSessionId(tabId)
 
             customTabConfig.sessionToken?.let { token ->
                 val origin = listOfNotNull(safeIntent.data?.toOrigin())

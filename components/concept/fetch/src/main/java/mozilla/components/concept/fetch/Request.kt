@@ -33,7 +33,8 @@ import java.util.concurrent.TimeUnit
  * sent with the request, defaults to [CookiePolicy.INCLUDE]
  * @property useCaches Whether caches should be used or a network request
  * should be forced, defaults to true (use caches).
- *
+* @property private Whether the request should be performed in a private context, defaults to false.
+ * The feature is not support in all [Client]s, check support before using.
  * @see [Headers.Names]
  * @see [Headers.Values]
  */
@@ -46,7 +47,8 @@ data class Request(
     val body: Body? = null,
     val redirect: Redirect = Redirect.FOLLOW,
     val cookiePolicy: CookiePolicy = CookiePolicy.INCLUDE,
-    val useCaches: Boolean = true
+    val useCaches: Boolean = true,
+    val private: Boolean = false,
 ) {
     /**
      * A [Body] to be send with the [Request].
@@ -54,7 +56,7 @@ data class Request(
      * @param stream A stream that will be read and send to the resource.
      */
     class Body(
-        private val stream: InputStream
+        private val stream: InputStream,
     ) : Closeable {
         companion object {
             /**
@@ -122,7 +124,7 @@ data class Request(
         DELETE,
         CONNECT,
         OPTIONS,
-        TRACE
+        TRACE,
     }
 
     enum class Redirect {
@@ -134,7 +136,7 @@ data class Request(
         /**
          * Do not follow redirects and let caller handle them manually.
          */
-        MANUAL
+        MANUAL,
     }
 
     enum class CookiePolicy {
@@ -146,6 +148,16 @@ data class Request(
         /**
          * Do not send cookies with the request.
          */
-        OMIT
+        OMIT,
     }
 }
+
+/**
+ * Checks whether or not the request is for a data URI.
+ */
+fun Request.isDataUri() = url.startsWith("data:")
+
+/**
+ * Checks whether or not the request is for a data blob.
+ */
+fun Request.isBlobUri() = url.startsWith("blob:")

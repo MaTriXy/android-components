@@ -10,10 +10,22 @@ sourceCompatibility = JavaVersion.VERSION_1_8
 
 dependencies {
   compileOnly Dependencies.tools_lintapi
+  compileOnly Dependencies.tools_lintchecks
+
+  // Force the usage of /our/ Kotlin version and not what we get transitively from the lint
+  // dependencies. Otherwise we end up with a warning that there are multiple versions on the
+  // classpath.
   compileOnly Dependencies.kotlin_stdlib
+  compileOnly "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${Versions.kotlin}"
+  compileOnly Dependencies.kotlin_reflect
+  testImplementation Dependencies.kotlin_stdlib
+  testImplementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${Versions.kotlin}"
+  testImplementation Dependencies.kotlin_reflect
 
   testImplementation Dependencies.tools_lint
   testImplementation Dependencies.tools_linttests
+  testImplementation Dependencies.testing_junit
+  testImplementation Dependencies.testing_mockito
 }
 
 jar {
@@ -22,7 +34,7 @@ jar {
   }
 }
 
-task lint {
+tasks.register("lint") {
   doLast {
     // Do nothing. We execute the same set of tasks for all our modules in parallel on taskcluster.
     // This project doesn't have a lint task. To avoid special casing our automation I just added
@@ -30,7 +42,7 @@ task lint {
   }
 }
 
-task assembleAndroidTest {
+tasks.register("assembleAndroidTest") {
   doLast {
     // Do nothing. Like the `lint` task above this is just a dummy task so that this module
     // behaves like our others and we do not need to special case it in automation.

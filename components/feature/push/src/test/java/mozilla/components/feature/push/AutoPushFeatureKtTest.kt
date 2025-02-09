@@ -4,26 +4,24 @@
 
 package mozilla.components.feature.push
 
-import mozilla.appservices.push.KeyInfo
-import mozilla.appservices.push.SubscriptionInfo
-import mozilla.appservices.push.SubscriptionResponse
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import mozilla.appservices.push.PushException.CommunicationException
+import mozilla.appservices.push.PushException.CommunicationServerException
+import mozilla.appservices.push.PushException.CryptoException
+import mozilla.appservices.push.PushException.GeneralException
+import mozilla.appservices.push.PushException.MissingRegistrationTokenException
+import mozilla.components.concept.push.PushError
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@ExperimentalCoroutinesApi
 class AutoPushFeatureKtTest {
-    @Test
-    fun `transform response to PushSubscription`() {
-        val response = SubscriptionResponse(
-            "992a0f0542383f1ea5ef51b7cf4ae6c4",
-            SubscriptionInfo("https://mozilla.com", KeyInfo("123", "456"))
-        )
-        val sub = response.toPushSubscription()
-
-        assertEquals(PushType.Services, sub.type)
-        assertEquals(response.subscriptionInfo.endpoint, sub.endpoint)
-        assertEquals(response.subscriptionInfo.keys.auth, sub.authKey)
-        assertEquals(response.subscriptionInfo.keys.p256dh, sub.publicKey)
-    }
 
     @Test
     fun `asserts PushConfig's default values`() {
@@ -32,11 +30,31 @@ class AutoPushFeatureKtTest {
         assertEquals("updates.push.services.mozilla.com", config.serverHost)
         assertEquals(Protocol.HTTPS, config.protocol)
         assertEquals(ServiceType.FCM, config.serviceType)
+    }
 
-        val config2 = PushConfig("sample-browser", "push.test.mozilla.com", Protocol.HTTP, ServiceType.ADM)
-        assertEquals("sample-browser", config2.senderId)
-        assertEquals("push.test.mozilla.com", config2.serverHost)
-        assertEquals(Protocol.HTTP, config2.protocol)
-        assertEquals(ServiceType.ADM, config2.serviceType)
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `exception handler handles exceptions`() = runTest {
+        var invoked = false
+        val handler = exceptionHandler { invoked = true }
+
+        GlobalScope.launch(handler) { throw PushError.MalformedMessage("test") }.join()
+        assertFalse(invoked)
+
+        GlobalScope.launch(handler) { throw GeneralException("test") }.join()
+        assertFalse(invoked)
+
+        GlobalScope.launch(handler) { throw CryptoException("test") }.join()
+        assertFalse(invoked)
+
+        GlobalScope.launch(handler) { throw CommunicationException("test") }.join()
+        assertFalse(invoked)
+
+        GlobalScope.launch(handler) { throw CommunicationServerException("test") }.join()
+        assertFalse(invoked)
+
+        // An exception where we should invoke our callback.
+        GlobalScope.launch(handler) { throw MissingRegistrationTokenException("") }.join()
+        assertTrue(invoked)
     }
 }

@@ -12,7 +12,7 @@ import java.net.IDN
  */
 internal class PublicSuffixListData(
     private val rules: ByteArray,
-    private val exceptions: ByteArray
+    private val exceptions: ByteArray,
 ) {
     private fun binarySearchRules(labels: List<ByteArray>, labelIndex: Int): String? {
         return rules.binarySearch(labels, labelIndex)
@@ -144,7 +144,7 @@ internal class PublicSuffixListData(
     }
 
     companion object {
-        val WILDCARD_LABEL = byteArrayOf('*'.toByte())
+        val WILDCARD_LABEL = byteArrayOf('*'.code.toByte())
         val PREVAILING_RULE = listOf("*")
         val EMPTY_RULE = listOf<String>()
         const val EXCEPTION_MARKER = '!'

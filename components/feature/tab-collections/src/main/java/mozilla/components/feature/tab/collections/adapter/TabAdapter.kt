@@ -5,15 +5,14 @@
 package mozilla.components.feature.tab.collections.adapter
 
 import android.content.Context
-import mozilla.components.browser.session.Session
-import mozilla.components.browser.session.SessionManager
-import mozilla.components.browser.session.ext.readSnapshotItem
+import mozilla.components.browser.session.storage.serialize.BrowserStateReader
+import mozilla.components.browser.state.state.recover.RecoverableTab
 import mozilla.components.concept.engine.Engine
 import mozilla.components.feature.tab.collections.Tab
 import mozilla.components.feature.tab.collections.db.TabEntity
 
 internal class TabAdapter(
-    val entity: TabEntity
+    val entity: TabEntity,
 ) : Tab {
     override val id: Long
         get() = entity.id!!
@@ -24,18 +23,14 @@ internal class TabAdapter(
     override val url: String
         get() = entity.url
 
-    /**
-     * Restores a single tab from this collection and returns a matching [SessionManager.Snapshot].
-     */
     override fun restore(
         context: Context,
         engine: Engine,
-        tab: Tab,
-        restoreSessionId: Boolean
-    ): Session? {
-        return entity.getStateFile(context.filesDir)
-            .readSnapshotItem(engine, restoreSessionId, false)
-            ?.session
+        restoreSessionId: Boolean,
+    ): RecoverableTab? {
+        val reader = BrowserStateReader()
+        val file = entity.getStateFile(context.filesDir)
+        return reader.readTab(engine, file, restoreSessionId, restoreParentId = false)
     }
 
     override fun equals(other: Any?): Boolean {

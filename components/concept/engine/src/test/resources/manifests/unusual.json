@@ -6,7 +6,7 @@
       "src": "/images/icon/favicon.ico",
       "type": "image/png",
       "sizes": "48x48 96x96 128x128",
-      "purpose": "badge"
+      "purpose": "monochrome"
     },
     {
       "src": "/images/icon/512-512.png",
@@ -19,5 +19,17 @@
   "scope": "/",
   "display": "minimal-ui",
   "dir": "rtl",
-  "orientation": "portrait"
+  "orientation": "portrait",
+  "share_target": {
+    "action": "/",
+    "method": "get",
+    "params": {
+      "title": "title",
+      "url": "uri"
+    },
+    "files": {
+      "name": "file",
+      "accept": "image/*"
+    }
+  }
 }

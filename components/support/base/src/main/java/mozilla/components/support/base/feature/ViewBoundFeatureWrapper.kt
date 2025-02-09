@@ -4,12 +4,13 @@
 
 package mozilla.components.support.base.feature
 
+import android.content.Intent
 import android.view.View
 import androidx.annotation.VisibleForTesting
+import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleObserver
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.OnLifecycleEvent
 
 /**
  * Wrapper for [LifecycleAwareFeature] instances that keep a strong references to a [View]. This wrapper is helpful
@@ -55,7 +56,7 @@ import androidx.lifecycle.OnLifecycleEvent
  */
 class ViewBoundFeatureWrapper<T : LifecycleAwareFeature>() {
     private var feature: T? = null
-    private var owner: LifecycleOwner? = null
+    internal var owner: LifecycleOwner? = null
     private var view: View? = null
 
     private var viewBinding: ViewBinding<T>? = null
@@ -138,18 +139,39 @@ class ViewBoundFeatureWrapper<T : LifecycleAwareFeature>() {
     }
 
     /**
-     * Convenient method for invoking [BackHandler.onBackPressed] on a wrapped [LifecycleAwareFeature] that implements
-     * [BackHandler]. Returns false if the [LifecycleAwareFeature] was cleared already.
+     * Convenience method for invoking [UserInteractionHandler.onBackPressed] on a wrapped
+     * [LifecycleAwareFeature] that implements [UserInteractionHandler]. Returns false if
+     * the [LifecycleAwareFeature] was cleared already.
      */
     @Synchronized
     fun onBackPressed(): Boolean {
         val feature = feature ?: return false
 
-        if (feature !is BackHandler) {
-            throw IllegalAccessError("Feature does not implement BackHandler interface")
+        if (feature !is UserInteractionHandler) {
+            throw IllegalAccessError(
+                "Feature does not implement ${UserInteractionHandler::class.java.simpleName} interface",
+            )
         }
 
         return feature.onBackPressed()
+    }
+
+    /**
+     * Convenience method for invoking [ActivityResultHandler.onActivityResult] on a wrapped
+     * [LifecycleAwareFeature] that implements [ActivityResultHandler]. Returns false if
+     * the [LifecycleAwareFeature] was cleared already.
+     */
+    @Synchronized
+    fun onActivityResult(requestCode: Int, data: Intent?, resultCode: Int): Boolean {
+        val feature = feature ?: return false
+
+        if (feature !is ActivityResultHandler) {
+            throw IllegalAccessError(
+                "Feature does not implement ${ActivityResultHandler::class.java.simpleName} interface",
+            )
+        }
+
+        return feature.onActivityResult(requestCode, data, resultCode)
     }
 
     @Synchronized
@@ -171,7 +193,7 @@ class ViewBoundFeatureWrapper<T : LifecycleAwareFeature>() {
  */
 @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
 internal class ViewBinding<T : LifecycleAwareFeature>(
-    private val wrapper: ViewBoundFeatureWrapper<T>
+    private val wrapper: ViewBoundFeatureWrapper<T>,
 ) : View.OnAttachStateChangeListener {
     override fun onViewDetachedFromWindow(v: View?) {
         wrapper.clear()
@@ -186,20 +208,17 @@ internal class ViewBinding<T : LifecycleAwareFeature>(
  */
 @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
 internal class LifecycleBinding<T : LifecycleAwareFeature>(
-    private val wrapper: ViewBoundFeatureWrapper<T>
-) : LifecycleObserver {
-    @OnLifecycleEvent(Lifecycle.Event.ON_START)
-    fun start() {
+    private val wrapper: ViewBoundFeatureWrapper<T>,
+) : DefaultLifecycleObserver {
+    override fun onStart(owner: LifecycleOwner) {
         wrapper.start()
     }
 
-    @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
-    fun stop() {
+    override fun onStop(owner: LifecycleOwner) {
         wrapper.stop()
     }
 
-    @OnLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-    fun destroy() {
+    override fun onDestroy(owner: LifecycleOwner) {
         wrapper.clear()
     }
 }

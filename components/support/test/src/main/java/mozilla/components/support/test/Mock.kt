@@ -11,13 +11,22 @@ import org.mockito.Mockito
  * Dynamically create a mock object. This method is helpful when creating mocks of classes
  * using generics.
  *
+ * Optional @param setup will be called on the mock after init.
+ *
  * Instead of:
  * <code>val foo = Mockito.mock(....Class of Bar<Baz>?...)<code>
  *
  * You can just use:
  * <code>val foo: Bar<Baz> = mock()</code>
  */
-inline fun <reified T : Any> mock(): T = Mockito.mock(T::class.java)!!
+inline fun <reified T : Any> mock(noinline setup: (T.() -> Unit)? = null): T = Mockito.mock(T::class.java)!!
+    .apply { setup?.invoke(this) }
+
+/**
+ * Equivalent to [mock] but allows inline setup of suspending functions.
+ */
+suspend inline fun <reified T : Any> coMock(noinline setup: (suspend T.() -> Unit)? = null): T = Mockito.mock(T::class.java)!!
+    .apply { setup?.invoke(this) }
 
 /**
  * Enables stubbing methods. Use it when you want the mock to return particular value when particular method is called.
@@ -39,7 +48,7 @@ fun mockMotionEvent(
     eventTime: Long = System.currentTimeMillis(),
     x: Float = 0f,
     y: Float = 0f,
-    metaState: Int = 0
+    metaState: Int = 0,
 ): MotionEvent {
     return MotionEvent.obtain(downTime, eventTime, action, x, y, metaState)
 }

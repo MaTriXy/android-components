@@ -14,7 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.sendBlocking
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.launch
 import mozilla.components.concept.toolbar.Toolbar
 import mozilla.components.feature.toolbar.ToolbarFeature
@@ -26,10 +26,12 @@ import mozilla.components.feature.toolbar.ToolbarFeature
  */
 internal class URLRenderer(
     private val toolbar: Toolbar,
-    private val configuration: ToolbarFeature.UrlRenderConfiguration?
+    private val configuration: ToolbarFeature.UrlRenderConfiguration?,
 ) {
     private val scope = CoroutineScope(Dispatchers.Main)
+
     @VisibleForTesting internal var job: Job? = null
+
     @VisibleForTesting internal val channel = Channel<String>(capacity = Channel.CONFLATED)
 
     /**
@@ -54,7 +56,11 @@ internal class URLRenderer(
      * Posts this [url] to the renderer.
      */
     fun post(url: String) {
-        channel.sendBlocking(url)
+        try {
+            channel.trySendBlocking(url)
+        } catch (e: InterruptedException) {
+            // Ignore
+        }
     }
 
     @VisibleForTesting
@@ -85,7 +91,7 @@ private suspend fun getRegistrableDomain(host: String, configuration: ToolbarFea
     configuration.publicSuffixList.getPublicSuffixPlusOne(host).await()
 
 private suspend fun SpannableStringBuilder.colorRegistrableDomain(
-    configuration: ToolbarFeature.UrlRenderConfiguration
+    configuration: ToolbarFeature.UrlRenderConfiguration,
 ) {
     val url = toString()
     val host = url.toUri().host ?: return
@@ -104,7 +110,8 @@ private suspend fun SpannableStringBuilder.colorRegistrableDomain(
         ForegroundColorSpan(configuration.registrableDomainColor),
         index,
         index + registrableDomain.length,
-        SPAN_INCLUSIVE_INCLUSIVE)
+        SPAN_INCLUSIVE_INCLUSIVE,
+    )
 }
 
 private fun SpannableStringBuilder.color(@ColorInt urlColor: Int?) {
@@ -114,5 +121,6 @@ private fun SpannableStringBuilder.color(@ColorInt urlColor: Int?) {
         ForegroundColorSpan(urlColor),
         0,
         length,
-        SPAN_INCLUSIVE_INCLUSIVE)
+        SPAN_INCLUSIVE_INCLUSIVE,
+    )
 }

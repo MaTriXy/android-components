@@ -19,7 +19,7 @@ interface PreferencesHolder {
 
 private class BooleanPreference(
     private val key: String,
-    private val default: Boolean
+    private val default: Boolean,
 ) : ReadWriteProperty<PreferencesHolder, Boolean> {
 
     override fun getValue(thisRef: PreferencesHolder, property: KProperty<*>): Boolean =
@@ -31,7 +31,7 @@ private class BooleanPreference(
 
 private class FloatPreference(
     private val key: String,
-    private val default: Float
+    private val default: Float,
 ) : ReadWriteProperty<PreferencesHolder, Float> {
 
     override fun getValue(thisRef: PreferencesHolder, property: KProperty<*>): Float =
@@ -43,7 +43,7 @@ private class FloatPreference(
 
 private class IntPreference(
     private val key: String,
-    private val default: Int
+    private val default: Int,
 ) : ReadWriteProperty<PreferencesHolder, Int> {
 
     override fun getValue(thisRef: PreferencesHolder, property: KProperty<*>): Int =
@@ -55,7 +55,7 @@ private class IntPreference(
 
 private class LongPreference(
     private val key: String,
-    private val default: Long
+    private val default: Long,
 ) : ReadWriteProperty<PreferencesHolder, Long> {
 
     override fun getValue(thisRef: PreferencesHolder, property: KProperty<*>): Long =
@@ -67,11 +67,21 @@ private class LongPreference(
 
 private class StringPreference(
     private val key: String,
-    private val default: String
+    private val default: String,
+    private val persistDefaultIfNotExists: Boolean = false,
 ) : ReadWriteProperty<PreferencesHolder, String> {
 
-    override fun getValue(thisRef: PreferencesHolder, property: KProperty<*>): String =
-        thisRef.preferences.getString(key, default) ?: default
+    override fun getValue(thisRef: PreferencesHolder, property: KProperty<*>): String {
+        return thisRef.preferences.getString(key, null) ?: run {
+            when (persistDefaultIfNotExists) {
+                true -> {
+                    thisRef.preferences.edit().putString(key, default).apply()
+                    thisRef.preferences.getString(key, null)!!
+                }
+                false -> default
+            }
+        }
+    }
 
     override fun setValue(thisRef: PreferencesHolder, property: KProperty<*>, value: String) =
         thisRef.preferences.edit().putString(key, value).apply()
@@ -79,7 +89,7 @@ private class StringPreference(
 
 private class StringSetPreference(
     private val key: String,
-    private val default: Set<String>
+    private val default: Set<String>,
 ) : ReadWriteProperty<PreferencesHolder, Set<String>> {
 
     override fun getValue(thisRef: PreferencesHolder, property: KProperty<*>): Set<String> =
@@ -147,17 +157,26 @@ fun longPreference(key: String, default: Long): ReadWriteProperty<PreferencesHol
 
 /**
  * Property delegate for getting and setting a string shared preference.
+ * Optionally this will persist the default value if one is not already persisted.
  *
  * Example usage:
  * ```
  * class Settings : PreferenceHolder {
  *     ...
- *     var permissionsEnabledEnum by stringPreference("permissions_enabled", default = "blocked")
+ *     var permissionsEnabledEnum by stringPreference(
+ *          "permissions_enabled",
+ *          default = "blocked",
+ *          persistDefaultIfNotExists = true,
+ *     )
  * }
  * ```
  */
-fun stringPreference(key: String, default: String): ReadWriteProperty<PreferencesHolder, String> =
-    StringPreference(key, default)
+fun stringPreference(
+    key: String,
+    default: String,
+    persistDefaultIfNotExists: Boolean = false,
+): ReadWriteProperty<PreferencesHolder, String> =
+    StringPreference(key, default, persistDefaultIfNotExists)
 
 /**
  * Property delegate for getting and setting a string set shared preference.

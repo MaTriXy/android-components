@@ -7,9 +7,9 @@ package mozilla.components.browser.icons.processor
 import android.content.Context
 import android.graphics.Color
 import androidx.palette.graphics.Palette
-import mozilla.components.browser.icons.DesiredSize
 import mozilla.components.browser.icons.Icon
 import mozilla.components.browser.icons.IconRequest
+import mozilla.components.support.images.DesiredSize
 
 /**
  * [IconProcessor] implementation to extract the dominant color from the icon.
@@ -21,7 +21,7 @@ class ColorProcessor : IconProcessor {
         request: IconRequest,
         resource: IconRequest.Resource?,
         icon: Icon,
-        desiredSize: DesiredSize
+        desiredSize: DesiredSize,
     ): Icon {
         // If the icon already has a color set, just return
         if (icon.color != null) return icon

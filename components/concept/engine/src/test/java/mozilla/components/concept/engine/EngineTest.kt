@@ -6,6 +6,8 @@ package mozilla.components.concept.engine
 
 import android.content.Context
 import android.util.AttributeSet
+import android.util.JsonReader
+import mozilla.components.concept.base.profiler.Profiler
 import mozilla.components.concept.engine.Engine.BrowsingData
 import mozilla.components.concept.engine.utils.EngineVersion
 import org.json.JSONObject
@@ -26,11 +28,15 @@ class EngineTest {
             throw NotImplementedError("Not needed for test")
         }
 
-        override fun createSession(private: Boolean): EngineSession {
+        override fun createSession(private: Boolean, contextId: String?): EngineSession {
             throw NotImplementedError("Not needed for test")
         }
 
         override fun createSessionState(json: JSONObject): EngineSessionState {
+            throw NotImplementedError("Not needed for test")
+        }
+
+        override fun createSessionStateFrom(reader: JsonReader): EngineSessionState {
             throw NotImplementedError("Not needed for test")
         }
 
@@ -42,14 +48,33 @@ class EngineTest {
             throw NotImplementedError("Not needed for test")
         }
 
+        override val profiler: Profiler?
+            get() = throw NotImplementedError("Not needed for test")
+
         override val settings: Settings
             get() = throw NotImplementedError("Not needed for test")
+    }
+
+    @Test
+    fun `invokes default functions on trackingProtectionExceptionStore`() {
+        var wasExecuted = false
+        try {
+            testEngine.trackingProtectionExceptionStore
+        } catch (_: Exception) {
+            wasExecuted = true
+        }
+        assertTrue(wasExecuted)
     }
 
     @Test
     fun `invokes error callback if webextensions not supported`() {
         var exception: Throwable? = null
         testEngine.installWebExtension("my-ext", "resource://path", onError = { _, e -> exception = e })
+        assertNotNull(exception)
+        assertTrue(exception is UnsupportedOperationException)
+
+        exception = null
+        testEngine.listInstalledWebExtensions(onSuccess = { }, onError = { e -> exception = e })
         assertNotNull(exception)
         assertTrue(exception is UnsupportedOperationException)
     }

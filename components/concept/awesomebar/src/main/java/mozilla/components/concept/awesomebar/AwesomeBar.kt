@@ -5,6 +5,7 @@
 package mozilla.components.concept.awesomebar
 
 import android.graphics.Bitmap
+import android.graphics.drawable.Drawable
 import android.view.View
 import java.util.UUID
 
@@ -32,6 +33,11 @@ interface AwesomeBar {
      * Removes all [SuggestionProvider]s
      */
     fun removeAllProviders()
+
+    /**
+     * Returns whether or not this awesome bar contains the following [SuggestionProvider]
+     */
+    fun containsProvider(provider: SuggestionProvider): Boolean
 
     /**
      * Fired when the user starts interacting with the awesome bar by entering text in the toolbar.
@@ -62,6 +68,11 @@ interface AwesomeBar {
     fun setOnStopListener(listener: () -> Unit)
 
     /**
+     * Adds a lambda to be invoked when the user selected a suggestion to be edited further.
+     */
+    fun setOnEditSuggestionListener(listener: (String) -> Unit)
+
+    /**
      * A [Suggestion] to be displayed by an [AwesomeBar] implementation.
      *
      * @property provider The provider this suggestion came from.
@@ -70,8 +81,10 @@ interface AwesomeBar {
      * animates showing the new suggestion.
      * @property title A user-readable title for the [Suggestion].
      * @property description A user-readable description for the [Suggestion].
+     * @property editSuggestion The string that will be set to the url bar when using the edit suggestion arrow.
      * @property icon A lambda that can be invoked by the [AwesomeBar] implementation to receive an icon [Bitmap] for
      * this [Suggestion]. The [AwesomeBar] will pass in its desired width and height for the Bitmap.
+     * @property indicatorIcon A drawable for indicating different types of [Suggestion].
      * @property chips A list of [Chip] instances to be displayed.
      * @property flags A set of [Flag] values for this [Suggestion].
      * @property onSuggestionClicked A callback to be executed when the [Suggestion] was clicked by the user.
@@ -84,19 +97,21 @@ interface AwesomeBar {
         val id: String = UUID.randomUUID().toString(),
         val title: String? = null,
         val description: String? = null,
-        val icon: (suspend (width: Int, height: Int) -> Bitmap?)? = null,
+        val editSuggestion: String? = null,
+        val icon: Bitmap? = null,
+        val indicatorIcon: Drawable? = null,
         val chips: List<Chip> = emptyList(),
         val flags: Set<Flag> = emptySet(),
         val onSuggestionClicked: (() -> Unit)? = null,
         val onChipClicked: ((Chip) -> Unit)? = null,
-        val score: Int = 0
+        val score: Int = 0,
     ) {
         /**
          * Chips are compact actions that are shown as part of a suggestion. For example a [Suggestion] from a search
          * engine may offer multiple search suggestion chips for different search terms.
          */
         data class Chip(
-            val title: String
+            val title: String,
         )
 
         /**
@@ -107,7 +122,8 @@ interface AwesomeBar {
         enum class Flag {
             BOOKMARK,
             OPEN_TAB,
-            CLIPBOARD
+            CLIPBOARD,
+            SYNC_TAB,
         }
 
         /**
@@ -137,6 +153,11 @@ interface AwesomeBar {
         val id: String
 
         /**
+         * A header title for grouping the suggestions.
+         **/
+        fun groupTitle(): String? = null
+
+        /**
          * Fired when the user starts interacting with the awesome bar by entering text in the toolbar.
          *
          * The provider has the option to return an initial list of suggestions that will be displayed before the
@@ -163,13 +184,21 @@ interface AwesomeBar {
          * Fired when the user has cancelled their interaction with the awesome bar.
          */
         fun onInputCancelled() = Unit
-
-        /**
-         * If true an [AwesomeBar] implementation can clear the previous suggestions of this provider as soon as the
-         * user continues to type. If this is false an [AwesomeBar] implementation is allowed to keep the previous
-         * suggestions around until the provider returns a new list of suggestions for the updated text.
-         */
-        val shouldClearSuggestions
-            get() = true
     }
+
+    /**
+     * A group of [SuggestionProvider]s.
+     *
+     * @property providers The list of [SuggestionProvider]s in this group.
+     * @property title An optional title for this group. The title may be rendered by an AwesomeBar
+     * implementation.
+     * @property limit The maximum number of suggestions that will be shown in this group.
+     * @property id A unique ID for this group (uses a generated UUID by default)
+     */
+    data class SuggestionProviderGroup(
+        val providers: List<SuggestionProvider>,
+        val title: String? = null,
+        val limit: Int = Integer.MAX_VALUE,
+        val id: String = UUID.randomUUID().toString(),
+    )
 }

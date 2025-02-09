@@ -19,6 +19,12 @@ android {
                 arg("room.schemaLocation", "$projectDir/schemas".toString())
             }
         }
+
+        javaCompileOptions {
+            annotationProcessorOptions {
+                arguments += ["room.incremental": "true"]
+            }
+        }
     }
 
     buildTypes {
@@ -38,9 +44,12 @@ android {
 }
 
 dependencies {
+    implementation project(':feature-tabs')
+
     implementation project(':concept-engine')
 
-    implementation project(':browser-session')
+    implementation project(':browser-state')
+    implementation project(':browser-session-storage')
 
     implementation project(':support-ktx')
     implementation project(':support-base')
@@ -49,27 +58,30 @@ dependencies {
     implementation Dependencies.kotlin_coroutines
 
     implementation Dependencies.androidx_paging
-    implementation Dependencies.androidx_lifecycle_extensions
-    kapt Dependencies.androidx_lifecycle_compiler
+    implementation Dependencies.androidx_lifecycle_livedata
 
     implementation Dependencies.androidx_room_runtime
     kapt Dependencies.androidx_room_compiler
 
     testImplementation project(':support-test')
+    testImplementation project(':support-test-libstate')
 
     testImplementation Dependencies.androidx_test_core
+    testImplementation Dependencies.testing_coroutines
     testImplementation Dependencies.testing_junit
     testImplementation Dependencies.testing_mockito
     testImplementation Dependencies.testing_robolectric
     testImplementation Dependencies.kotlin_coroutines
 
     androidTestImplementation project(':support-android-test')
+    androidTestImplementation project(':support-test-fakes')
 
     androidTestImplementation Dependencies.androidx_room_testing
     androidTestImplementation Dependencies.androidx_arch_core_testing
     androidTestImplementation Dependencies.androidx_test_core
     androidTestImplementation Dependencies.androidx_test_runner
     androidTestImplementation Dependencies.androidx_test_rules
+    androidTestImplementation Dependencies.testing_coroutines
 }
 
 apply from: '../../../publish.gradle'

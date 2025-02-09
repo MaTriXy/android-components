@@ -13,6 +13,7 @@ import android.graphics.Canvas
 import android.net.Uri
 import android.net.http.SslError
 import android.os.Build
+import android.os.Build.VERSION.SDK_INT
 import android.os.Handler
 import android.os.Message
 import android.util.AttributeSet
@@ -41,7 +42,7 @@ import android.webkit.WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.annotation.VisibleForTesting
-import androidx.annotation.VisibleForTesting.PRIVATE
+import androidx.annotation.VisibleForTesting.Companion.PRIVATE
 import androidx.core.net.toUri
 import kotlinx.coroutines.runBlocking
 import mozilla.components.browser.engine.system.matcher.UrlMatcher
@@ -52,11 +53,16 @@ import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineSession.TrackingProtectionPolicy
 import mozilla.components.concept.engine.EngineView
 import mozilla.components.concept.engine.HitResult
+import mozilla.components.concept.engine.InputResultDetail
 import mozilla.components.concept.engine.content.blocking.Tracker
 import mozilla.components.concept.engine.prompt.PromptRequest
 import mozilla.components.concept.engine.request.RequestInterceptor.InterceptionResponse
+import mozilla.components.concept.engine.selection.SelectionActionDelegate
+import mozilla.components.concept.engine.window.WindowRequest
+import mozilla.components.concept.storage.PageVisit
 import mozilla.components.concept.storage.VisitType
 import mozilla.components.support.ktx.android.view.getRectWithViewLocation
+import mozilla.components.support.ktx.kotlin.tryGetHostFromUrl
 import mozilla.components.support.utils.DownloadUtils
 
 /**
@@ -66,10 +72,12 @@ import mozilla.components.support.utils.DownloadUtils
 class SystemEngineView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
-    defStyleAttr: Int = 0
+    defStyleAttr: Int = 0,
 ) : FrameLayout(context, attrs, defStyleAttr), EngineView, View.OnLongClickListener {
     @VisibleForTesting(otherwise = PRIVATE)
     internal var session: SystemEngineSession? = null
+
+    override var selectionActionDelegate: SelectionActionDelegate? = null
 
     /**
      * Render the content of the given session.
@@ -152,7 +160,7 @@ class SystemEngineView @JvmOverloads constructor(
             }
 
             runBlocking {
-                session?.settings?.historyTrackingDelegate?.onVisited(url, visitType)
+                session?.settings?.historyTrackingDelegate?.onVisited(url, PageVisit(visitType))
             }
         }
 
@@ -174,14 +182,15 @@ class SystemEngineView @JvmOverloads constructor(
                     onLocationChange(it)
                     onLoadingStateChange(false)
                     onSecurityChange(
-                            secure = cert != null,
-                            host = cert?.let { Uri.parse(url).host },
-                            issuer = cert?.issuedBy?.oName)
+                        secure = cert != null,
+                        host = cert?.let { Uri.parse(url).host },
+                        issuer = cert?.issuedBy?.oName,
+                    )
                 }
             }
         }
 
-        @Suppress("ReturnCount", "NestedBlockDepth")
+        @Suppress("ReturnCount", "NestedBlockDepth", "LongMethod")
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
             if (session?.webFontsEnabled == false && UrlMatcher.isWebFont(request.url)) {
                 return WebResourceResponse(null, null, null)
@@ -210,7 +219,7 @@ class SystemEngineView @JvmOverloads constructor(
 
                 val (matches, stringCategory) = getOrCreateUrlMatcher(resources, it).matches(
                     resourceUri,
-                    Uri.parse(session?.currentUrl)
+                    Uri.parse(session?.currentUrl),
                 )
 
                 if (!request.isForMainFrame && matches) {
@@ -219,18 +228,31 @@ class SystemEngineView @JvmOverloads constructor(
                         onTrackerBlocked(
                             Tracker(
                                 resourceUri.toString(),
-                                matchedCategories
-                            )
+                                matchedCategories,
+                            ),
                         )
                     }
                     return WebResourceResponse(null, null, null)
                 }
             }
 
+            val isRedirect = if (SDK_INT >= Build.VERSION_CODES.N) {
+                request.isRedirect
+            } else {
+                false
+            }
+
             session?.let { session ->
                 session.settings.requestInterceptor?.let { interceptor ->
                     interceptor.onLoadRequest(
-                        session, request.url.toString()
+                        session,
+                        request.url.toString(),
+                        session.currentUrl,
+                        request.hasGesture(),
+                        session.currentUrl.tryGetHostFromUrl() == request.url.host,
+                        isRedirect,
+                        false,
+                        request.isForMainFrame,
                     )?.apply {
                         return when (this) {
                             is InterceptionResponse.Content ->
@@ -239,6 +261,17 @@ class SystemEngineView @JvmOverloads constructor(
                                 view.post { view.loadUrl(url) }
                                 super.shouldInterceptRequest(view, request)
                             }
+                            is InterceptionResponse.AppIntent -> {
+                                if (request.isForMainFrame) {
+                                    session.notifyObservers {
+                                        onLaunchIntentRequest(url = url, appIntent = appIntent)
+                                    }
+                                }
+
+                                super.shouldInterceptRequest(view, request)
+                            }
+
+                            is InterceptionResponse.Deny -> super.shouldInterceptRequest(view, request)
                         }
                     }
                 }
@@ -261,22 +294,23 @@ class SystemEngineView @JvmOverloads constructor(
                 session.settings.requestInterceptor?.onErrorRequest(
                     session,
                     ErrorType.ERROR_SECURITY_SSL,
-                    error.url
+                    error.url,
                 )?.apply {
-                    view.loadDataWithBaseURL(url, data, mimeType, encoding, null)
+                    view.loadUrl(this.uri)
                 }
             }
         }
 
+        @Deprecated("Deprecated in Java")
         override fun onReceivedError(view: WebView, errorCode: Int, description: String?, failingUrl: String?) {
             session?.let { session ->
                 val errorType = SystemEngineSession.webViewErrorToErrorType(errorCode)
                 session.settings.requestInterceptor?.onErrorRequest(
                     session,
                     errorType,
-                    failingUrl
+                    failingUrl,
                 )?.apply {
-                    view.loadDataWithBaseURL(url ?: failingUrl, data, mimeType, encoding, null)
+                    view.loadUrl(this.uri)
                 }
             }
         }
@@ -291,9 +325,9 @@ class SystemEngineView @JvmOverloads constructor(
                 session.settings.requestInterceptor?.onErrorRequest(
                     session,
                     errorType,
-                    request.url.toString()
+                    request.url.toString(),
                 )?.apply {
-                    view.loadDataWithBaseURL(url ?: request.url.toString(), data, mimeType, encoding, null)
+                    view.loadUrl(this.uri)
                 }
             }
         }
@@ -325,6 +359,7 @@ class SystemEngineView @JvmOverloads constructor(
             session.notifyObservers {
                 onPromptRequest(
                     PromptRequest.Authentication(
+                        formattedUrl,
                         "",
                         message,
                         userName,
@@ -332,8 +367,8 @@ class SystemEngineView @JvmOverloads constructor(
                         PromptRequest.Authentication.Method.HOST,
                         PromptRequest.Authentication.Level.NONE,
                         onConfirm = { user, pass -> handler.proceed(user, pass) },
-                        onDismiss = { handler.cancel() }
-                    )
+                        onDismiss = { handler.cancel() },
+                    ),
                 )
             }
         }
@@ -406,16 +441,18 @@ class SystemEngineView @JvmOverloads constructor(
                 result.cancel()
             }
 
+            val onConfirm: (Boolean) -> Unit = { _ -> result.confirm() }
+
             session.notifyObservers {
                 onPromptRequest(
                     PromptRequest.Alert(
                         title,
                         message ?: "",
                         false,
-                        onDismiss
-                    ) { _ ->
-                        result.confirm()
-                    })
+                        onConfirm,
+                        onDismiss,
+                    ),
+                )
             }
             return true
         }
@@ -425,7 +462,7 @@ class SystemEngineView @JvmOverloads constructor(
             url: String?,
             message: String?,
             defaultValue: String?,
-            result: JsPromptResult
+            result: JsPromptResult,
         ): Boolean {
             val session = session ?: return applyDefaultJsDialogBehavior(result)
 
@@ -446,9 +483,9 @@ class SystemEngineView @JvmOverloads constructor(
                         message ?: "",
                         defaultValue ?: "",
                         false,
+                        onConfirm,
                         onDismiss,
-                        onConfirm
-                    )
+                    ),
                 )
             }
             return true
@@ -482,8 +519,8 @@ class SystemEngineView @JvmOverloads constructor(
                         onConfirmPositiveButton,
                         onConfirmNegativeButton,
                         {},
-                        onDismiss
-                    )
+                        onDismiss,
+                    ),
                 )
             }
             return true
@@ -492,9 +529,8 @@ class SystemEngineView @JvmOverloads constructor(
         override fun onShowFileChooser(
             webView: WebView?,
             filePathCallback: ValueCallback<Array<Uri>>?,
-            fileChooserParams: FileChooserParams?
+            fileChooserParams: FileChooserParams?,
         ): Boolean {
-
             var mimeTypes = fileChooserParams?.acceptTypes ?: arrayOf()
 
             if (mimeTypes.isNotEmpty() && mimeTypes.first().isNullOrEmpty()) {
@@ -529,8 +565,8 @@ class SystemEngineView @JvmOverloads constructor(
                         captureMode,
                         onSelectSingle,
                         onSelectMultiple,
-                        onDismiss
-                    )
+                        onDismiss,
+                    ),
                 )
             }
 
@@ -541,26 +577,35 @@ class SystemEngineView @JvmOverloads constructor(
             view: WebView,
             isDialog: Boolean,
             isUserGesture: Boolean,
-            resultMsg: Message?
+            resultMsg: Message?,
         ): Boolean {
             session?.internalNotifyObservers {
                 val newEngineSession = SystemEngineSession(context, session?.settings)
-                onOpenWindowRequest(SystemWindowRequest(
-                    view, newEngineSession, NestedWebView(context), isDialog, isUserGesture, resultMsg
-                ))
+                onWindowRequest(
+                    SystemWindowRequest(
+                        view,
+                        newEngineSession,
+                        NestedWebView(context),
+                        isDialog,
+                        isUserGesture,
+                        resultMsg,
+                    ),
+                )
             }
             return true
         }
 
         override fun onCloseWindow(window: WebView) {
-            session?.internalNotifyObservers { onCloseWindowRequest(SystemWindowRequest(window)) }
+            session?.internalNotifyObservers {
+                onWindowRequest(SystemWindowRequest(window, type = WindowRequest.Type.CLOSE))
+            }
         }
     }
 
     internal fun createDownloadListener(): DownloadListener {
         return DownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
             session?.internalNotifyObservers {
-                val fileName = DownloadUtils.guessFileName(contentDisposition, url, mimetype)
+                val fileName = DownloadUtils.guessFileName(contentDisposition, null, url, mimetype)
                 val cookie = CookieManager.getInstance().getCookie(url)
                 onExternalResource(url, fileName, contentLength, mimetype, cookie, userAgent)
             }
@@ -613,7 +658,9 @@ class SystemEngineView @JvmOverloads constructor(
     internal fun addFullScreenView(view: View, callback: WebChromeClient.CustomViewCallback) {
         val webView = findViewWithTag<WebView>("mozac_system_engine_webview")
         val layoutParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+        )
         webView?.apply { this.visibility = View.INVISIBLE }
 
         session?.fullScreenCallback = callback
@@ -631,6 +678,8 @@ class SystemEngineView @JvmOverloads constructor(
         }
     }
 
+    // Deprecation will be handled in https://github.com/mozilla-mobile/android-components/issues/8514
+    @Suppress("DEPRECATION")
     class ImageHandler(val session: SystemEngineSession?) : Handler() {
         override fun handleMessage(msg: Message) {
             val url = msg.data.getString("url")
@@ -648,9 +697,18 @@ class SystemEngineView @JvmOverloads constructor(
         // no-op
     }
 
+    override fun setDynamicToolbarMaxHeight(height: Int) {
+        // no-op
+    }
+
     override fun canScrollVerticallyUp() = session?.webView?.canScrollVertically(-1) ?: false
 
     override fun canScrollVerticallyDown() = session?.webView?.canScrollVertically(1) ?: false
+
+    override fun getInputResultDetail(): InputResultDetail {
+        return (session?.webView as? NestedWebView)?.inputResultDetail
+            ?: InputResultDetail.newInstance()
+    }
 
     override fun captureThumbnail(onFinish: (Bitmap?) -> Unit) {
         val webView = session?.webView
@@ -666,6 +724,10 @@ class SystemEngineView @JvmOverloads constructor(
         }
     }
 
+    override fun clearSelection() {
+        // no-op
+    }
+
     private fun createThumbnailUsingDrawingView(view: View, onFinish: (Bitmap?) -> Unit) {
         val outBitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(outBitmap)
@@ -679,10 +741,16 @@ class SystemEngineView @JvmOverloads constructor(
         val viewRect = view.getRectWithViewLocation()
         val window = (context as Activity).window
 
-        PixelCopy.request(window, viewRect, out, { copyResult ->
-            val result = if (copyResult == PixelCopy.SUCCESS) out else null
-            onFinish(result)
-        }, handler)
+        PixelCopy.request(
+            window,
+            viewRect,
+            out,
+            { copyResult ->
+                val result = if (copyResult == PixelCopy.SUCCESS) out else null
+                onFinish(result)
+            },
+            handler,
+        )
     }
 
     private fun applyDefaultJsDialogBehavior(result: JsResult?): Boolean {
@@ -701,7 +769,6 @@ class SystemEngineView @JvmOverloads constructor(
         var credentialsPair = "" to ""
 
         if (!credentials.isNullOrEmpty() && credentials.size == 2) {
-
             val user = credentials[0] ?: ""
             val pass = credentials[1] ?: ""
 
@@ -728,12 +795,12 @@ class SystemEngineView @JvmOverloads constructor(
         internal var URL_MATCHER: UrlMatcher? = null
 
         private val urlMatcherCategoryMap = mapOf(
-                UrlMatcher.ADVERTISING to TrackingProtectionPolicy.TrackingCategory.AD,
-                UrlMatcher.ANALYTICS to TrackingProtectionPolicy.TrackingCategory.ANALYTICS,
-                UrlMatcher.CONTENT to TrackingProtectionPolicy.TrackingCategory.CONTENT,
-                UrlMatcher.SOCIAL to TrackingProtectionPolicy.TrackingCategory.SOCIAL,
-                UrlMatcher.CRYPTOMINING to TrackingProtectionPolicy.TrackingCategory.CRYPTOMINING,
-                UrlMatcher.FINGERPRINTING to TrackingProtectionPolicy.TrackingCategory.FINGERPRINTING
+            UrlMatcher.ADVERTISING to TrackingProtectionPolicy.TrackingCategory.AD,
+            UrlMatcher.ANALYTICS to TrackingProtectionPolicy.TrackingCategory.ANALYTICS,
+            UrlMatcher.CONTENT to TrackingProtectionPolicy.TrackingCategory.CONTENT,
+            UrlMatcher.SOCIAL to TrackingProtectionPolicy.TrackingCategory.SOCIAL,
+            UrlMatcher.CRYPTOMINING to TrackingProtectionPolicy.TrackingCategory.CRYPTOMINING,
+            UrlMatcher.FINGERPRINTING to TrackingProtectionPolicy.TrackingCategory.FINGERPRINTING,
         )
 
         private fun String?.toTrackingProtectionCategories(): List<TrackingProtectionPolicy.TrackingCategory> {
@@ -751,12 +818,12 @@ class SystemEngineView @JvmOverloads constructor(
 
             URL_MATCHER?.setCategoriesEnabled(categories) ?: run {
                 URL_MATCHER = UrlMatcher.createMatcher(
-                        resources,
-                        R.raw.domain_blacklist,
-                        intArrayOf(R.raw.domain_overrides),
-                        R.raw.domain_whitelist,
-                        categories)
-                }
+                    resources,
+                    R.raw.domain_blocklist,
+                    R.raw.domain_safelist,
+                    categories,
+                )
+            }
 
             return URL_MATCHER as UrlMatcher
         }

@@ -25,7 +25,7 @@ internal class Lexer(private val grammar: Grammar) {
         Token.Type.OPEN_PAREN,
         Token.Type.OPEN_BRACKET,
         Token.Type.QUESTION,
-        Token.Type.COLON
+        Token.Type.COLON,
     )
 
     /**
@@ -55,16 +55,16 @@ internal class Lexer(private val grammar: Grammar) {
                     Token(
                         Token.Type.LITERAL,
                         "true",
-                        true
-                    )
+                        true,
+                    ),
                 )
 
                 input.peekEquals("false") -> tokens.add(
                     Token(
                         Token.Type.LITERAL,
                         "false",
-                        false
-                    )
+                        false,
+                    ),
                 )
 
                 input.character() == '#' -> discardComment(input)
@@ -100,7 +100,7 @@ internal class Lexer(private val grammar: Grammar) {
 
     @Suppress("ReturnCount")
     private fun isElement(input: LexerInput, elements: Map<String, GrammarElement>): Boolean {
-        val max = elements.keys.map { it.length }.max() ?: return false
+        val max = elements.keys.map { it.length }.maxOrNull() ?: return false
 
         for (steps in max downTo 1) {
             val candidate = input.peekRange(steps)
@@ -166,8 +166,8 @@ internal class Lexer(private val grammar: Grammar) {
         }
 
         val value = raw.substring(1, raw.length - 1)
-                .replace("\\" + quote, quote.toString())
-                .replace("\\\\", "\\")
+            .replace("\\" + quote, quote.toString())
+            .replace("\\\\", "\\")
 
         return Token(Token.Type.LITERAL, raw, value)
     }

@@ -1,8 +1,32 @@
-componentsVersion: 15.0.0
+# Please add a treeherder group in taskcluster/ci/config.yml if you add a new project here.
 projects:
+  compose-awesomebar:
+    path: components/compose/awesomebar
+    description: 'An awesomebar component showing search results matching text entered into the toolbar.'
+    publish: true
+  compose-browser-toolbar:
+    path: components/compose/browser-toolbar
+    description: 'A customizable toolbar for browsers using Jetpack Compose.'
+    publish: true
+  compose-cfr:
+    path: components/compose/cfr
+    description: 'A standard Contextual Feature Recommendation popup using Jetpack Compose.'
+    publish: true
+  compose-engine:
+    path: components/compose/engine
+    description: 'A component for integrating a concept-engine implementation into Jetpack Compose UI.'
+    publish: true
+  compose-tabstray:
+    path: components/compose/tabstray
+    description: 'A customizable tabs tray using Jetpack Compose.'
+    publish: true
   concept-awesomebar:
     path: components/concept/awesomebar
     description: 'An abstract definition of an awesomebar component.'
+    publish: true
+  concept-base:
+    path: components/concept/base
+    description: 'A component for basic interfaces needed by multiple components and that do not warrant a standalone component.'
     publish: true
   concept-fetch:
     path: components/concept/fetch
@@ -20,6 +44,10 @@ projects:
     path: components/concept/engine
     description: 'An abstract layer hiding the actual browser engine implementation.'
     publish: true
+  concept-menu:
+    path: components/concept/menu
+    description: 'An abstract definition of a browser menu component.'
+    publish: true
   concept-push:
     path: components/concept/push
     description: 'An abstract definition of a push service component.'
@@ -32,6 +60,10 @@ projects:
     path: components/concept/sync
     description: 'An abstract definition of a browser data synchronization layer.'
     publish: true
+  feature-autofill:
+    path: components/feature/autofill
+    description: 'Component adding support for Android`s Autofill framework.'
+    publish: true
   feature-awesomebar:
     path: components/feature/awesomebar
     description: 'Component connecting a concept-toolbar with a concept-awesomebar.'
@@ -40,9 +72,17 @@ projects:
     path: components/feature/accounts
     description: 'Component for tying an account manager with the tabs feature to facilitate auth flows.'
     publish: true
+  feature-accounts-push:
+    path: components/feature/accounts-push
+    description: 'Feature of use cases for FxA Account that work with push support.'
+    publish: true
   feature-app-links:
     path: components/feature/app-links
     description: 'Component opening URLs in other non-browser apps.'
+    publish: true
+  feature-containers:
+    path: components/feature/containers
+    description: 'Feature component for working with contextual identities also known as containers.'
     publish: true
   feature-contextmenu:
     path: components/feature/contextmenu
@@ -60,6 +100,10 @@ projects:
     path: components/feature/media
     description: 'Feature component for website media related features.'
     publish: true
+  feature-logins:
+    path: components/feature/logins
+    description: 'Feature component for logins related features.'
+    publish: true
   feature-webnotifications:
     path: components/feature/webnotifications
     description: 'Feature component for Web Notifications.'
@@ -72,9 +116,9 @@ projects:
     path: components/feature/search
     description: 'Feature implementation connecting an engine implementation with the search module.'
     publish: true
-  feature-sendtab:
-    path: components/feature/sendtab
-    description: 'Feature of use cases for sending tabs between devices in an FxA Account.'
+  feature-serviceworker:
+    path: components/feature/serviceworker
+    description: 'Feature that adds support for service workers when using GeckoEngine.'
     publish: true
   feature-session:
     path: components/feature/session
@@ -88,9 +132,21 @@ projects:
     path: components/feature/tab-collections
     description: 'Feature implementation for saving, restoring and organizing collections of tabs.'
     publish: true
+  feature-recentlyclosed:
+    path: components/feature/recentlyclosed
+    description: 'Feature implementation for saving and restoring recently closed tabs'
+    publish: true
   feature-toolbar:
     path: components/feature/toolbar
     description: 'Feature implementation connecting a toolbar implementation with the session module.'
+    publish: true
+  feature-top-sites:
+    path: components/feature/top-sites
+    description: 'Feature implementation for saving and removing top sites.'
+    publish: true
+  feature-share:
+    path: components/feature/share
+    description: 'Feature implementation for saving and sorting recent apps used for sharing.'
     publish: true
   feature-downloads:
     path: components/feature/downloads
@@ -116,6 +172,10 @@ projects:
     path: components/feature/findinpage
     description: 'Feature that will subscribe to the selected session and show an UI for results of find in page.'
     publish: true
+  feature-syncedtabs:
+    path: components/feature/syncedtabs
+    description: 'Feature that provides access to other devices'' tabs in the same account.'
+    publish: true
   feature-sitepermissions:
     path: components/feature/sitepermissions
     description: 'A feature for showing site permission request prompts.'
@@ -124,13 +184,21 @@ projects:
     path: components/feature/qr
     description: 'A feature that provides functionality for scanning QR codes.'
     publish: true
+  feature-webauthn:
+    path: components/feature/webauthn
+    description: 'A feature that provides WebAuthn functionality for supported engines.'
+    publish: true
   feature-webcompat:
     path: components/feature/webcompat
-    description: 'Feature that provides hotfixes for websites from Mozillas Web Compatibility team'
+    description: 'Feature that provides hotfixes for websites from Mozilla''s Web Compatibility team'
     publish: true
-  browser-awesomebar:
-    path: components/browser/awesomebar
-    description: 'A customizable awesomebar component for browsers.'
+  feature-webcompat-reporter:
+    path: components/feature/webcompat-reporter
+    description: 'Feature that enables users to report site issues to Mozilla''s Web Compatibility team.'
+    publish: true
+  feature-addons:
+    path: components/feature/addons
+    description: 'A feature that provides for managing add-ons.'
     publish: true
   browser-domains:
     path: components/browser/domains
@@ -139,14 +207,6 @@ projects:
   browser-engine-gecko:
     path: components/browser/engine-gecko
     description: 'Engine implementation based on GeckoView.'
-    publish: true
-  browser-engine-gecko-beta:
-    path: components/browser/engine-gecko-beta
-    description: 'Engine implementation based on GeckoView (Beta channel).'
-    publish: true
-  browser-engine-gecko-nightly:
-    path: components/browser/engine-gecko-nightly
-    description: 'Engine implementation based on GeckoView (Nightly).'
     publish: true
   browser-engine-system:
     path: components/browser/engine-system
@@ -164,21 +224,17 @@ projects:
     path: components/browser/menu
     description: 'A customizable menu for browsers.'
     publish: true
-  browser-search:
-    path: components/browser/search
-    description: 'Search plugins and companion code to load, parse and use them.'
+  browser-menu2:
+    path: components/browser/menu2
+    description: 'An immutable customizable menu for browsers.'
     publish: true
-  browser-session:
-    path: components/browser/session
-    description: 'An abstract layer hiding the actual browser engine implementation.'
+  browser-session-storage:
+    path: components/browser/session-storage
+    description: 'Component for saving and restoring the browser state.'
     publish: true
   browser-state:
     path: components/browser/state
     description: 'Component responsible for maintaining the centralized state of a browser engine.'
-    publish: true
-  browser-storage-memory:
-    path: components/browser/storage-memory
-    description: 'A memory-backed implementation of core data storage.'
     publish: true
   browser-storage-sync:
     path: components/browser/storage-sync
@@ -187,6 +243,10 @@ projects:
   browser-tabstray:
     path: components/browser/tabstray
     description: 'A tabs tray component for browsers.'
+    publish: true
+  browser-thumbnails:
+    path: components/browser/thumbnails
+    description: 'A component for loading and storing website thumbnails.'
     publish: true
   browser-toolbar:
     path: components/browser/toolbar
@@ -199,6 +259,10 @@ projects:
   ui-colors:
     path: components/ui/colors
     description: 'The standard set of Photon colors.'
+    publish: true
+  ui-widgets:
+    path: components/ui/widgets
+    description: 'The standard set of Mozilla widgets.'
     publish: true
   ui-fonts:
     path: components/ui/fonts
@@ -220,49 +284,65 @@ projects:
     path: components/service/location
     description: 'A library for providing location-based services.'
     publish: true
+  service-sync-autofill:
+    path: components/service/sync-autofill
+    description: 'A library for autofilling addresses and credit cards.'
+    publish: true
   service-sync-logins:
     path: components/service/sync-logins
     description: 'A library for integrating with Firefox Sync - Logins.'
     publish: true
-  service-fretboard:
-    path: components/service/fretboard
-    description: 'An Android framework for segmenting users in order to run A/B tests and rollout features gradually.'
-    publish: true
-  service-experiments:
-    path: components/service/experiments
-    description: 'An Android SDK for running experiments on user segments in multiple branches.'
+  service-digitalassetlinks:
+    path: components/service/digitalassetlinks
+    description: 'A library for communicating with the Digital Asset Links API.'
     publish: true
   service-glean:
     path: components/service/glean
     description: 'A client-side telemetry SDK for collecting metrics and sending them to the Mozilla telemetry service'
     publish: true
+  service-nimbus:
+    path: components/service/nimbus
+    description: 'A client-side experiment SDK'
+    publish: true
   service-pocket:
     path: components/service/pocket
     description: 'A library to communicate with the Pocket API'
     publish: true
-  service-telemetry:
-    path: components/service/telemetry
-    description: 'A generic library for generating and sending telemetry pings from Android applications to the Mozilla telemetry service.'
+  service-contile:
+    path: components/service/contile
+    description: 'A library to communicate with the Contile services API'
     publish: true
   support-base:
     path: components/support/base
     description: 'Base component containing building blocks for components.'
     publish: true
+  support-images:
+    path: components/support/images
+    description: 'A collection of helpers for handling images such as icons and thumbnails.'
+    publish: true
   support-ktx:
     path: components/support/ktx
     description: 'A set of Kotlin extensions.'
-    publish: true
-  support-migration:
-    path: components/support/migration
-    description: 'Helper code to migrate from a Fennec-based (Firefox for Android) app to an Android Components based app.'
     publish: true
   support-test:
     path: components/support/test
     description: 'A collection of helpers for testing components (local unit tests).'
     publish: true
+  support-test-fakes:
+    path: components/support/test-fakes
+    description: 'A collection of fake implementations for testing purposes.'
+    publish: true
+  support-test-libstate:
+    path: components/support/test-libstate
+    description: 'A collection of helpers for testing functionality that relies on the lib-state component (local unit tests).'
+    publish: true
   support-android-test:
     path: components/support/android-test
     description: 'A collection of helpers for testing components from instrumented (on device) tests.'
+    publish: true
+  support-rusterrors:
+    path: components/support/rusterrors
+    description: 'A bridge for reporting Rust errors to Sentry/Glean'
     publish: true
   support-test-appservices:
     path: components/support/test-appservices
@@ -271,6 +351,10 @@ projects:
   support-utils:
     path: components/support/utils
     description: 'A collection of generic helper classes.'
+    publish: true
+  support-sync-telemetry:
+    path: components/support/sync-telemetry
+    description: 'A collection of sync-related telemetry helper classes and ping descriptions.'
     publish: true
   support-rustlog:
     path: components/support/rustlog
@@ -288,9 +372,21 @@ projects:
     path: components/support/webextensions
     description: 'A component containing building blocks for features implemented as web extensions.'
     publish: true
+  lib-auth:
+    path: components/lib/auth
+    description: 'A component for various kinds of authentication mechanisms.'
+    publish: true
   lib-crash:
     path: components/lib/crash
     description: 'A generic crash reporter library that can report crashes to multiple services.'
+    publish: true
+  lib-crash-sentry:
+    path: components/lib/crash-sentry
+    description: 'A crash reporter for Sentry.io that that uses lib-crash.'
+    publish: true
+  lib-crash-sentry-legacy:
+    path: components/lib/crash-sentry-legacy
+    description: 'A crash reporter for a hosted version of Sentry that uses lib-crash.'
     publish: true
   lib-dataprotect:
     path: components/lib/dataprotect
@@ -312,10 +408,6 @@ projects:
     path: components/lib/publicsuffixlist
     description: 'A library for reading and using the public suffix list.'
     publish: true
-  lib-push-amazon:
-    path: components/lib/push-amazon
-    description: 'An implementation of concept-push for the Amazon Device Messaging.'
-    publish: true
   lib-push-firebase:
     path: components/lib/push-firebase
     description: 'An implementation of concept-push for the Firebase Message Service.'
@@ -326,7 +418,7 @@ projects:
     publish: true
   tooling-detekt:
     path: components/tooling/detekt
-    description: 'Custom Detekt rules.'
+    description: 'Custom Detekt rules for internal use.'
     publish: false
   tooling-lint:
     path: components/tooling/lint
@@ -339,6 +431,10 @@ projects:
   samples-browser:
     path: samples/browser
     description: 'A simple browser composed from browser components.'
+    publish: false
+  samples-compose-browser:
+    path: samples/compose-browser
+    description: 'A simple browser composed from browser components using Jetpack Compose.'
     publish: false
   samples-crash:
     path: samples/crash
@@ -372,3 +468,13 @@ projects:
     path: samples/dataprotect
     description: 'An app demoing how to use the Dataprotect component to load and store encrypted data in SharedPreferences.'
     publish: false
+  tooling-glean-gradle:
+    path: components/tooling/glean-gradle-plugin
+    description: 'A Gradle plugin to generate code for Glean metrics.'
+    publish: true
+    artifact-type: jar
+  tooling-nimbus-gradle:
+    path: components/tooling/nimbus-gradle-plugin
+    description: 'A Gradle plugin to generate code for the Nimbus Feature API.'
+    publish: true
+    artifact-type: jar

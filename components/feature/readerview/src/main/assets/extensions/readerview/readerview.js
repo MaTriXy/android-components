@@ -2,23 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* Avoid adding ID selector rules in this style sheet, since they could
- * inadvertently match elements in the article content. */
-
-const supportedProtocols = ["http:", "https:"];
-
-// Prevent false positives for these sites. This list is taken from Fennec:
-// https://dxr.mozilla.org/mozilla-central/rev/7d47e7fa2489550ffa83aae67715c5497048923f/toolkit/components/reader/Readerable.js#45
-const blockedHosts = [
-  "amazon.com",
-  "github.com",
-  "mail.google.com",
-  "pinterest.com",
-  "reddit.com",
-  "twitter.com",
-  "youtube.com"
-];
-
 // Class names to preserve in the readerized output. We preserve these class
 // names so that rules in readerview.css can match them. This list is taken from Fennec:
 // https://dxr.mozilla.org/mozilla-central/rev/7d47e7fa2489550ffa83aae67715c5497048923f/toolkit/components/reader/ReaderMode.jsm#21
@@ -26,7 +9,7 @@ const preservedClasses = [
   "caption",
   "emoji",
   "hidden",
-  "invisble",
+  "invisible",
   "sr-only",
   "visually-hidden",
   "visuallyhidden",
@@ -37,22 +20,6 @@ const preservedClasses = [
 
 class ReaderView {
 
-  static isReaderable() {
-    if (!supportedProtocols.includes(location.protocol)) {
-      return false;
-    }
-
-    if (blockedHosts.some(blockedHost => location.hostname.endsWith(blockedHost))) {
-      return false;
-    }
-
-    if (location.pathname == "/") {
-      return false;
-    }
-
-    return isProbablyReaderable(document, ReaderView._isNodeVisible);
-  }
-
   static get MIN_FONT_SIZE() {
     return 1;
   }
@@ -61,31 +28,34 @@ class ReaderView {
     return 9;
   }
 
-  static _isNodeVisible(node) {
-    return node.clientHeight > 0 && node.clientWidth > 0;
-  }
-
-  show({fontSize = 4, fontType = "sans-serif", colorScheme = "light"} = {}) {
-    let result = new Readability(document, {classesToPreserve: preservedClasses}).parse();
-    result.language = document.documentElement.lang;
+  /**
+   * Shows a reader view for the provided document. This method is used when activating
+   * reader view on the original page. In this case, we already have the DOM (passed
+   * through in the message from the background script) and can parse it directly.
+   *
+   * @param doc the document to make readerable.
+   * @param url the url of the article.
+   * @param options the fontSize, fontType and colorScheme to use.
+   */
+  show(doc, url, options = {fontSize: 4, fontType: "sans-serif", colorScheme: "light"}) {
+    let result = new Readability(doc, {classesToPreserve: preservedClasses}).parse();
+    result.language = doc.documentElement.lang;
+    document.title = result.title;
 
     let article = Object.assign(
       result,
-      {url: location.hostname},
+      {url: new URL(url)},
       {readingTime: this.getReadingTime(result.length, result.language)},
-      {byline: this.getByline()},
-      {dir: this.getTextDirection(result)}
+      {byline: this.getByline(result)},
+      {dir: this.getTextDirection(result)},
+      {title: this.getTitle(result)}
     );
 
-    document.documentElement.innerHTML = this.createHtml(article);
+    document.body.outerHTML = this.createHtmlBody(article);
 
-    this.setFontSize(fontSize);
-    this.setFontType(fontType);
-    this.setColorScheme(colorScheme);
-  }
-
-  hide() {
-    location.reload(false)
+    this.setFontSize(options.fontSize);
+    this.setFontType(options.fontType);
+    this.setColorScheme(options.colorScheme);
   }
 
   /**
@@ -121,15 +91,15 @@ class ReaderView {
     let bodyClasses = document.body.classList;
 
     if (this.fontType) {
-      bodyClasses.remove(this.fontType)
+      bodyClasses.remove(this.fontType);
     }
 
-    this.fontType = fontType
-    bodyClasses.add(this.fontType)
+    this.fontType = fontType;
+    bodyClasses.add(this.fontType);
   }
 
   /**
-   * Sets the color scheme
+   * Sets the color scheme.
    *
    * @param colorScheme the color scheme to use, must be either light, dark
    * or sepia.
@@ -143,29 +113,33 @@ class ReaderView {
     let bodyClasses = document.body.classList;
 
     if (this.colorScheme) {
-      bodyClasses.remove(this.colorScheme)
+      bodyClasses.remove(this.colorScheme);
     }
 
-    this.colorScheme = colorScheme
-    bodyClasses.add(this.colorScheme)
+    this.colorScheme = colorScheme;
+    bodyClasses.add(this.colorScheme);
   }
 
-  createHtml(article) {
+  /**
+   * Create the reader view HTML body.
+   *
+   * @param article a JSONObject representing the article to show.
+   */
+  createHtmlBody(article) {
+    const safeDir = this.escapeHTML(article.dir);
+    const safeTitle = this.escapeHTML(article.title);
+    const safeByline = this.escapeHTML(article.byline);
+    const safeReadingTime = this.escapeHTML(article.readingTime);
     return `
-      <head>
-        <meta content="text/html; charset=UTF-8" http-equiv="content-type">
-        <meta name="viewport" content="width=device-width; user-scalable=0">
-        <title>${article.title}</title>
-      </head>
       <body class="mozac-readerview-body">
-        <div id="mozac-readerview-container" class="container" dir=${article.dir}>
+        <div id="mozac-readerview-container" class="container" dir="${safeDir}">
           <div class="header">
-            <a class="domain">${article.url}</a>
+            <a class="domain" href="${article.url.href}">${article.url.hostname}</a>
             <div class="domain-border"></div>
-            <h1>${article.title}</h1>
-            <div class="credits">${article.byline}</div>
+            <h1>${safeTitle}</h1>
+            <div class="credits">${safeByline}</div>
             <div>
-              <div>${article.readingTime}</div>
+              <div>${safeReadingTime}</div>
             </div>
           </div>
           <hr>
@@ -191,15 +165,27 @@ class ReaderView {
     const readingTimeMinsSlow = Math.ceil(length / charactersPerMinuteLow);
     const readingTimeMinsFast  = Math.ceil(length / charactersPerMinuteHigh);
 
-    // TODO remove moment.js: https://github.com/mozilla-mobile/android-components/issues/2923
-    // We only want to show minutes and not have it converted to hours.
-    moment.relativeTimeThreshold('m', Number.MAX_SAFE_INTEGER);
-
-    if (readingTimeMinsSlow == readingTimeMinsFast) {
-      return moment.duration(readingTimeMinsFast, 'minutes').locale(lang).humanize();
+    // Construct a localized and "humanized" reading time in minutes.
+    // If we have both a fast and slow reading time we'll show both e.g.
+    // "2 - 4 minutes", otherwise we'll just show "4 minutes".
+    try {
+      var parts = new Intl.RelativeTimeFormat(lang).formatToParts(readingTimeMinsSlow, 'minute');
+      if (parts.length == 3) {
+        // No need to use part[0] which represents the literal "in".
+        var readingTime = parts[1].value; // reading time in minutes
+        var minutesLiteral = parts[2].value; // localized singular or plural literal of 'minute'
+        var readingTimeString = `${readingTime} ${minutesLiteral}`;
+        if (readingTimeMinsSlow != readingTimeMinsFast) {
+          readingTimeString = `${readingTimeMinsFast} - ${readingTimeString}`;
+        }
+        return readingTimeString;
+      }
+    }
+    catch(error) {
+      console.error(`Failed to format reading time: ${error}`);
     }
 
-    return `${readingTimeMinsFast} - ${moment.duration(readingTimeMinsSlow, 'minutes').locale(lang).humanize()}`;
+    return "";
   }
 
   /**
@@ -235,55 +221,8 @@ class ReaderView {
     return readingSpeed.get(lang) || readingSpeed.get("en");
    }
 
-   /**
-    * Attempts to find author information in the meta elements of the current page.
-    */
-   getByline() {
-     var metadata = {};
-     var values = {};
-     var metaElements = [...document.getElementsByTagName("meta")];
-
-     // property is a space-separated list of values
-     var propertyPattern = /\s*(dc|dcterm|og|twitter)\s*:\s*(author|creator|description|title|site_name)\s*/gi;
-
-     // name is a single value
-     var namePattern = /^\s*(?:(dc|dcterm|og|twitter|weibo:(article|webpage))\s*[\.:]\s*)?(author|creator|description|title|site_name)\s*$/i;
-
-     // Find description tags.
-     metaElements.forEach((element) => {
-       var elementName = element.getAttribute("name");
-       var elementProperty = element.getAttribute("property");
-       var content = element.getAttribute("content");
-       if (!content) {
-         return;
-       }
-       var matches = null;
-       var name = null;
-
-       if (elementProperty) {
-         matches = elementProperty.match(propertyPattern);
-         if (matches) {
-           for (var i = matches.length - 1; i >= 0; i--) {
-             // Convert to lowercase, and remove any whitespace
-             // so we can match below.
-             name = matches[i].toLowerCase().replace(/\s/g, "");
-             // multiple authors
-             values[name] = content.trim();
-           }
-         }
-       }
-       if (!matches && elementName && namePattern.test(elementName)) {
-         name = elementName;
-         if (content) {
-           // Convert to lowercase, remove any whitespace, and convert dots
-           // to colons so we can match below.
-           name = name.toLowerCase().replace(/\s/g, "").replace(/\./g, ":");
-           values[name] = content.trim();
-         }
-       }
-     });
-
-     return values["dc:creator"] || values["dcterm:creator"] || values["author"] || "";
+   getByline(article) {
+     return article.byline || "";
    }
 
    /**
@@ -292,7 +231,7 @@ class ReaderView {
     */
    getTextDirection(article) {
      if (article.dir) {
-       return article.dir
+       return article.dir;
      }
 
      if (["ar", "fa", "he", "ug", "ur"].includes(article.language)) {
@@ -301,19 +240,97 @@ class ReaderView {
 
      return "ltr";
    }
+
+   getTitle(article) {
+     return article.title || "";
+   }
+
+   escapeHTML(text) {
+     return text
+       .replace(/\&/g, "&amp;")
+       .replace(/\</g, "&lt;")
+       .replace(/\>/g, "&gt;")
+       .replace(/\"/g, "&quot;")
+       .replace(/\'/g, "&#039;");
+   }
+}
+
+function fetchDocument(url) {
+  return new Promise((resolve, reject) => {
+    let xhr = new XMLHttpRequest();
+    xhr.open("GET", url, true);
+    xhr.onerror = evt => reject(evt.error);
+    xhr.responseType = "document";
+    xhr.onload = evt => {
+      if (xhr.status !== 200) {
+        reject("Reader mode XHR failed with status: " + xhr.status);
+        return;
+      }
+      let doc = xhr.responseXML;
+      if (!doc) {
+        reject("Reader mode XHR didn't return a document");
+        return;
+      }
+      resolve(doc);
+    };
+    xhr.send();
+  });
+}
+
+function getPreparedDocument(id, url) {
+  return new Promise((resolve, reject) => {
+
+    browser.runtime.sendMessage({action: "getSerializedDoc", id: id}).then((serializedDoc) => {
+        if (serializedDoc) {
+          let doc = new JSDOMParser().parse(serializedDoc, url);
+          resolve(doc);
+        } else {
+          reject();
+        }
+      }
+    );
+  });
 }
 
 let readerView = new ReaderView();
+connectNativePort();
+prepareBody();
 
-let port = browser.runtime.connectNative("mozacReaderview");
-port.onMessage.addListener((message) => {
+function connectNativePort() {
+  let url = new URL(window.location.href);
+  let articleUrl = url.searchParams.get("url");
+  let id = url.searchParams.get("id");
+  let baseUrl = browser.runtime.getURL("/");
+
+  let port = browser.runtime.connectNative("mozacReaderviewActive");
+  port.onMessage.addListener((message) => {
     switch (message.action) {
       case 'show':
-        readerView.show(message.value);
+        async function showAsync(options) {
+          try {
+            let doc;
+            if (typeof Promise.any === "function") {
+              doc = await Promise.any([fetchDocument(articleUrl), getPreparedDocument(id, articleUrl)]);
+            } else {
+              try {
+                doc = await getPreparedDocument(id, articleUrl);
+              } catch(e) {
+                doc = await fetchDocument(articleUrl);
+              }
+            }
+            readerView.show(doc, articleUrl, options);
+          } catch(e) {
+            console.log(e);
+            // We weren't able to find the prepared document and also
+            // failed to fetch it. Let's load the original page which
+            // will make sure we show an appropriate error page.
+            window.location.href = articleUrl;
+          }
+        }
+        showAsync(message.value);
         break;
       case 'hide':
-        readerView.hide();
-        break;
+        window.location.href = articleUrl;
       case 'setColorScheme':
         readerView.setColorScheme(message.value.toLowerCase());
         break;
@@ -323,12 +340,24 @@ port.onMessage.addListener((message) => {
       case 'setFontType':
         readerView.setFontType(message.value.toLowerCase());
         break;
-      case 'checkReaderable':
-        port.postMessage({readerable: ReaderView.isReaderable()});
+      case 'checkReaderState':
+        port.postMessage({baseUrl: baseUrl, activeUrl: articleUrl, readerable: true});
         break;
       default:
         console.error(`Received invalid action ${message.action}`);
     }
-});
+  });
+}
 
-window.addEventListener("unload", (event) => { port.disconnect() }, false);
+/**
+ * Applies the configured color scheme to the HTML body while reader view is loading. This is to
+ * prevent "flashes" caused by having to change the color later.
+ */
+function prepareBody() {
+  let url = new URL(window.location.href);
+  let colorScheme = url.searchParams.get("colorScheme");
+  let body = document.createElement("body");
+  body.classList.add("mozac-readerview-body");
+  body.classList.add(colorScheme);
+  document.body = body;
+}

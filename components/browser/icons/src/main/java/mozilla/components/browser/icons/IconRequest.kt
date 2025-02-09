@@ -15,13 +15,17 @@ import mozilla.components.concept.engine.manifest.Size as HtmlSize
  * @property size The preferred size of the icon that should be loaded.
  * @property resources An optional list of icon resources to load the icon from.
  * @property color The suggested dominant color of the icon.
+ * @property isPrivate Whether this request for this icon came from a private session.
+ * @property waitOnNetworkLoad Whether client code should wait on the resource being loaded or
+ * loading can continue in background.
  */
 data class IconRequest(
     val url: String,
     val size: Size = Size.DEFAULT,
     val resources: List<Resource> = emptyList(),
     @ColorInt val color: Int? = null,
-    val isPrivate: Boolean = false
+    val isPrivate: Boolean = false,
+    val waitOnNetworkLoad: Boolean = true,
 ) {
 
     /**
@@ -32,7 +36,7 @@ data class IconRequest(
     enum class Size(@DimenRes val dimen: Int) {
         DEFAULT(R.dimen.mozac_browser_icons_size_default),
         LAUNCHER(R.dimen.mozac_browser_icons_size_launcher),
-        LAUNCHER_ADAPTIVE(R.dimen.mozac_browser_icons_size_launcher_adaptive)
+        LAUNCHER_ADAPTIVE(R.dimen.mozac_browser_icons_size_launcher_adaptive),
     }
 
     /**
@@ -49,7 +53,7 @@ data class IconRequest(
         val type: Type,
         val sizes: List<HtmlSize> = emptyList(),
         val mimeType: String? = null,
-        val maskable: Boolean = false
+        val maskable: Boolean = false,
     ) {
         /**
          * An icon resource type.
@@ -130,7 +134,7 @@ data class IconRequest(
              *
              * https://developer.mozilla.org/en-US/docs/Web/Manifest/icons
              */
-            MANIFEST_ICON
+            MANIFEST_ICON,
         }
     }
 }

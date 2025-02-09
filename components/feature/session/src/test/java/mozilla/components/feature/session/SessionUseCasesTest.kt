@@ -4,287 +4,512 @@
 
 package mozilla.components.feature.session
 
-import mozilla.components.browser.session.Session
-import mozilla.components.browser.session.SessionManager
-import mozilla.components.concept.engine.Engine
-import mozilla.components.concept.engine.Engine.BrowsingData
+import kotlinx.coroutines.test.runTest
+import mozilla.components.browser.state.action.BrowserAction
+import mozilla.components.browser.state.action.CrashAction
+import mozilla.components.browser.state.action.EngineAction
+import mozilla.components.browser.state.action.TabListAction
+import mozilla.components.browser.state.engine.EngineMiddleware
+import mozilla.components.browser.state.selector.findTab
+import mozilla.components.browser.state.state.BrowserState
+import mozilla.components.browser.state.state.TabSessionState
+import mozilla.components.browser.state.state.createCustomTab
+import mozilla.components.browser.state.state.createTab
+import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineSession.LoadUrlFlags
-import mozilla.components.support.test.any
-import mozilla.components.support.test.eq
+import mozilla.components.support.test.ext.joinBlocking
+import mozilla.components.support.test.libstate.ext.waitUntilIdle
+import mozilla.components.support.test.middleware.CaptureActionsMiddleware
 import mozilla.components.support.test.mock
-import mozilla.components.support.test.whenever
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.doReturn
-import org.mockito.Mockito.never
+import org.junit.runner.RunWith
+import org.mockito.Mockito.spy
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class SessionUseCasesTest {
-
-    private val sessionManager = mock<SessionManager>()
-    private val selectedEngineSession = mock<EngineSession>()
-    private val selectedSession = mock<Session>()
-    private val useCases = SessionUseCases(sessionManager)
+    private lateinit var middleware: CaptureActionsMiddleware<BrowserState, BrowserAction>
+    private lateinit var store: BrowserStore
+    private lateinit var useCases: SessionUseCases
+    private lateinit var engineSession: EngineSession
+    private lateinit var childEngineSession: EngineSession
 
     @Before
-    fun setup() {
-        whenever(sessionManager.selectedSessionOrThrow).thenReturn(selectedSession)
-        whenever(sessionManager.selectedSession).thenReturn(selectedSession)
-        whenever(sessionManager.getOrCreateEngineSession()).thenReturn(selectedEngineSession)
+    fun setUp() {
+        engineSession = mock()
+        childEngineSession = mock()
+        middleware = CaptureActionsMiddleware()
+        store = BrowserStore(
+            initialState = BrowserState(
+                tabs = listOf(
+                    createTab(
+                        url = "https://mozilla.org",
+                        id = "mozilla",
+                        engineSession = engineSession,
+                    ),
+                    createTab(
+                        url = "https://bugzilla.com",
+                        id = "bugzilla",
+                        engineSession = childEngineSession,
+                        parentId = "mozilla",
+                    ),
+                ),
+                selectedTabId = "mozilla",
+            ),
+            middleware = listOf(middleware) + EngineMiddleware.create(engine = mock()),
+        )
+        useCases = SessionUseCases(store)
     }
 
     @Test
-    fun loadUrl() {
-        useCases.loadUrl("http://mozilla.org")
-        verify(selectedEngineSession).loadUrl("http://mozilla.org")
+    fun loadUrlWithEngineSession() {
+        useCases.loadUrl("https://getpocket.com")
+        store.waitUntilIdle()
+        middleware.assertNotDispatched(EngineAction.LoadUrlAction::class)
+        verify(engineSession).loadUrl(url = "https://getpocket.com")
+        middleware.assertLastAction(EngineAction.OptimizedLoadUrlTriggeredAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals("https://getpocket.com", action.url)
+        }
 
-        useCases.loadUrl("http://www.mozilla.org", LoadUrlFlags.select(LoadUrlFlags.EXTERNAL))
-        verify(selectedEngineSession).loadUrl("http://www.mozilla.org", LoadUrlFlags.select(LoadUrlFlags.EXTERNAL))
+        useCases.loadUrl("https://www.mozilla.org", LoadUrlFlags.select(LoadUrlFlags.EXTERNAL))
+        store.waitUntilIdle()
+        middleware.assertNotDispatched(EngineAction.LoadUrlAction::class)
+        verify(engineSession).loadUrl(
+            url = "https://www.mozilla.org",
+            flags = LoadUrlFlags.select(LoadUrlFlags.EXTERNAL),
+        )
+        middleware.assertLastAction(EngineAction.OptimizedLoadUrlTriggeredAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals("https://www.mozilla.org", action.url)
+            assertEquals(LoadUrlFlags.select(LoadUrlFlags.EXTERNAL), action.flags)
+        }
 
-        useCases.loadUrl("http://getpocket.com", selectedSession)
-        verify(selectedEngineSession).loadUrl("http://getpocket.com")
+        useCases.loadUrl("https://firefox.com", store.state.selectedTabId)
+        store.waitUntilIdle()
+        middleware.assertNotDispatched(EngineAction.LoadUrlAction::class)
+        verify(engineSession).loadUrl(url = "https://firefox.com")
+        middleware.assertLastAction(EngineAction.OptimizedLoadUrlTriggeredAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals("https://firefox.com", action.url)
+        }
 
-        useCases.loadUrl.invoke("http://www.getpocket.com", selectedSession,
-                LoadUrlFlags.select(LoadUrlFlags.BYPASS_PROXY))
-        verify(selectedEngineSession).loadUrl("http://www.getpocket.com",
-                LoadUrlFlags.select(LoadUrlFlags.BYPASS_PROXY))
+        useCases.loadUrl.invoke(
+            "https://developer.mozilla.org",
+            store.state.selectedTabId,
+            LoadUrlFlags.select(LoadUrlFlags.BYPASS_PROXY),
+        )
+        store.waitUntilIdle()
+        middleware.assertNotDispatched(EngineAction.LoadUrlAction::class)
+        verify(engineSession).loadUrl(
+            url = "https://developer.mozilla.org",
+            flags = LoadUrlFlags.select(LoadUrlFlags.BYPASS_PROXY),
+        )
+        middleware.assertLastAction(EngineAction.OptimizedLoadUrlTriggeredAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals("https://developer.mozilla.org", action.url)
+            assertEquals(LoadUrlFlags.select(LoadUrlFlags.BYPASS_PROXY), action.flags)
+        }
+
+        useCases.loadUrl.invoke(
+            "https://www.mozilla.org/en-CA/firefox/browsers/mobile/",
+            "bugzilla",
+        )
+        store.waitUntilIdle()
+        middleware.assertNotDispatched(EngineAction.LoadUrlAction::class)
+        verify(childEngineSession).loadUrl(
+            url = "https://www.mozilla.org/en-CA/firefox/browsers/mobile/",
+            parent = engineSession,
+        )
+        middleware.assertLastAction(EngineAction.OptimizedLoadUrlTriggeredAction::class) { action ->
+            assertEquals("bugzilla", action.tabId)
+            assertEquals("https://www.mozilla.org/en-CA/firefox/browsers/mobile/", action.url)
+        }
+    }
+
+    @Test
+    fun loadUrlWithoutEngineSession() {
+        store.dispatch(EngineAction.UnlinkEngineSessionAction("mozilla")).joinBlocking()
+
+        useCases.loadUrl("https://getpocket.com")
+        store.waitUntilIdle()
+
+        middleware.assertLastAction(EngineAction.LoadUrlAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals("https://getpocket.com", action.url)
+        }
+
+        useCases.loadUrl("https://www.mozilla.org", LoadUrlFlags.select(LoadUrlFlags.EXTERNAL))
+        store.waitUntilIdle()
+
+        middleware.assertLastAction(EngineAction.LoadUrlAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals("https://www.mozilla.org", action.url)
+            assertEquals(LoadUrlFlags.select(LoadUrlFlags.EXTERNAL), action.flags)
+        }
+
+        useCases.loadUrl("https://firefox.com", store.state.selectedTabId)
+        store.waitUntilIdle()
+
+        middleware.assertLastAction(EngineAction.LoadUrlAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals("https://firefox.com", action.url)
+        }
+
+        useCases.loadUrl.invoke(
+            "https://developer.mozilla.org",
+            store.state.selectedTabId,
+            LoadUrlFlags.select(LoadUrlFlags.BYPASS_PROXY),
+        )
+        store.waitUntilIdle()
+
+        middleware.assertLastAction(EngineAction.LoadUrlAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals("https://developer.mozilla.org", action.url)
+            assertEquals(LoadUrlFlags.select(LoadUrlFlags.BYPASS_PROXY), action.flags)
+        }
     }
 
     @Test
     fun loadData() {
         useCases.loadData("<html><body></body></html>", "text/html")
-        verify(selectedEngineSession).loadData("<html><body></body></html>", "text/html", "UTF-8")
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.LoadDataAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals("<html><body></body></html>", action.data)
+            assertEquals("text/html", action.mimeType)
+            assertEquals("UTF-8", action.encoding)
+        }
 
-        useCases.loadData("Should load in WebView", "text/plain", session = selectedSession)
-        verify(selectedEngineSession).loadData("Should load in WebView", "text/plain", "UTF-8")
+        useCases.loadData(
+            "Should load in WebView",
+            "text/plain",
+            tabId = store.state.selectedTabId,
+        )
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.LoadDataAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals("Should load in WebView", action.data)
+            assertEquals("text/plain", action.mimeType)
+            assertEquals("UTF-8", action.encoding)
+        }
 
-        useCases.loadData("ahr0cdovl21vemlsbgeub3jn==", "text/plain", "base64", selectedSession)
-        verify(selectedEngineSession).loadData("ahr0cdovl21vemlsbgeub3jn==", "text/plain", "base64")
+        useCases.loadData(
+            "Should also load in WebView",
+            "text/plain",
+            "base64",
+            store.state.selectedTabId,
+        )
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.LoadDataAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals("Should also load in WebView", action.data)
+            assertEquals("text/plain", action.mimeType)
+            assertEquals("base64", action.encoding)
+        }
     }
 
     @Test
     fun reload() {
-        val engineSession = mock<EngineSession>()
-        val session = mock<Session>()
-        whenever(sessionManager.getOrCreateEngineSession(session)).thenReturn(engineSession)
-
-        useCases.reload(session)
-        verify(engineSession).reload()
-
-        whenever(sessionManager.getOrCreateEngineSession(selectedSession)).thenReturn(selectedEngineSession)
         useCases.reload()
-        verify(selectedEngineSession).reload()
+        store.waitUntilIdle()
+
+        middleware.assertLastAction(EngineAction.ReloadAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+        }
+
+        useCases.reload(store.state.selectedTabId, LoadUrlFlags.select(LoadUrlFlags.EXTERNAL))
+        store.waitUntilIdle()
+
+        middleware.assertLastAction(EngineAction.ReloadAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals(LoadUrlFlags.select(LoadUrlFlags.EXTERNAL), action.flags)
+        }
     }
 
     @Test
-    fun stopLoading() {
-        val engineSession = mock<EngineSession>()
-        val session = mock<Session>()
-        whenever(sessionManager.getOrCreateEngineSession(session)).thenReturn(engineSession)
+    fun reloadBypassCache() {
+        val flags = LoadUrlFlags.select(LoadUrlFlags.BYPASS_CACHE)
+        useCases.reload(store.state.selectedTabId, flags = flags)
+        store.waitUntilIdle()
 
-        useCases.stopLoading(session)
+        middleware.assertLastAction(EngineAction.ReloadAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals(flags, action.flags)
+        }
+    }
+
+    @Test
+    fun stopLoading() = runTest {
+        useCases.stopLoading()
+        store.waitUntilIdle()
         verify(engineSession).stopLoading()
 
-        whenever(sessionManager.getOrCreateEngineSession(selectedSession)).thenReturn(selectedEngineSession)
-        useCases.stopLoading()
-        verify(selectedEngineSession).stopLoading()
+        useCases.stopLoading(store.state.selectedTabId)
+        store.waitUntilIdle()
+        verify(engineSession, times(2)).stopLoading()
     }
 
     @Test
     fun goBack() {
-        val engineSession = mock<EngineSession>()
-        val session = mock<Session>()
-
         useCases.goBack(null)
-        verify(engineSession, never()).goBack()
-        verify(selectedEngineSession, never()).goBack()
+        store.waitUntilIdle()
+        middleware.assertNotDispatched(EngineAction.GoBackAction::class)
 
-        whenever(sessionManager.getOrCreateEngineSession(session)).thenReturn(engineSession)
+        useCases.goBack(store.state.selectedTabId)
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.GoBackAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertTrue(action.userInteraction)
+        }
+        middleware.reset()
 
-        useCases.goBack(session)
-        verify(engineSession).goBack()
-
-        whenever(sessionManager.getOrCreateEngineSession(selectedSession)).thenReturn(selectedEngineSession)
-        useCases.goBack()
-        verify(selectedEngineSession).goBack()
+        useCases.goBack(userInteraction = false)
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.GoBackAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertFalse(action.userInteraction)
+        }
     }
 
     @Test
     fun goForward() {
-        val engineSession = mock<EngineSession>()
-        val session = mock<Session>()
-
         useCases.goForward(null)
-        verify(engineSession, never()).goForward()
-        verify(selectedEngineSession, never()).goForward()
+        store.waitUntilIdle()
+        middleware.assertNotDispatched(EngineAction.GoForwardAction::class)
 
-        whenever(sessionManager.getOrCreateEngineSession(session)).thenReturn(engineSession)
+        useCases.goForward(store.state.selectedTabId)
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.GoForwardAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertTrue(action.userInteraction)
+        }
+        middleware.reset()
 
-        useCases.goForward(session)
-        verify(engineSession).goForward()
+        useCases.goForward(userInteraction = false)
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.GoForwardAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertFalse(action.userInteraction)
+        }
+    }
 
-        whenever(sessionManager.getOrCreateEngineSession(selectedSession)).thenReturn(selectedEngineSession)
-        useCases.goForward()
-        verify(selectedEngineSession).goForward()
+    @Test
+    fun goToHistoryIndex() {
+        useCases.goToHistoryIndex(tabId = null, index = 0)
+        store.waitUntilIdle()
+        middleware.assertNotDispatched(EngineAction.GoToHistoryIndexAction::class)
+
+        useCases.goToHistoryIndex(tabId = "test", index = 5)
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.GoToHistoryIndexAction::class) { action ->
+            assertEquals("test", action.tabId)
+            assertEquals(5, action.index)
+        }
+
+        useCases.goToHistoryIndex(index = 10)
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.GoToHistoryIndexAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertEquals(10, action.index)
+        }
     }
 
     @Test
     fun requestDesktopSite() {
-        val engineSession = mock<EngineSession>()
-        val session = mock<Session>()
-        whenever(sessionManager.getOrCreateEngineSession(session)).thenReturn(engineSession)
+        useCases.requestDesktopSite(true, store.state.selectedTabId)
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.ToggleDesktopModeAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertTrue(action.enable)
+        }
 
-        useCases.requestDesktopSite(true, session)
-        verify(engineSession).toggleDesktopMode(true, reload = true)
-
-        whenever(sessionManager.getOrCreateEngineSession(selectedSession)).thenReturn(selectedEngineSession)
-        useCases.requestDesktopSite(true)
-        verify(selectedEngineSession).toggleDesktopMode(true, reload = true)
+        useCases.requestDesktopSite(false)
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.ToggleDesktopModeAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertFalse(action.enable)
+        }
+        useCases.requestDesktopSite(true, store.state.selectedTabId)
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.ToggleDesktopModeAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertTrue(action.enable)
+        }
+        useCases.requestDesktopSite(false, store.state.selectedTabId)
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.ToggleDesktopModeAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+            assertFalse(action.enable)
+        }
     }
 
     @Test
     fun exitFullscreen() {
-        val engineSession = mock<EngineSession>()
-        val session = mock<Session>()
-        whenever(sessionManager.getOrCreateEngineSession(session)).thenReturn(engineSession)
+        useCases.exitFullscreen(store.state.selectedTabId)
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.ExitFullScreenModeAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+        }
+        middleware.reset()
 
-        useCases.exitFullscreen(session)
-        verify(engineSession).exitFullScreenMode()
-
-        whenever(sessionManager.getOrCreateEngineSession(selectedSession)).thenReturn(selectedEngineSession)
         useCases.exitFullscreen()
-        verify(selectedEngineSession).exitFullScreenMode()
-    }
-
-    @Test
-    fun clearData() {
-        val engineSession = mock<EngineSession>()
-        val session = mock<Session>()
-        val engine = mock<Engine>()
-        whenever(sessionManager.engine).thenReturn(engine)
-        whenever(sessionManager.getOrCreateEngineSession(session)).thenReturn(engineSession)
-
-        useCases.clearData(session)
-        verify(engine).clearData()
-        verify(engineSession).clearData()
-
-        useCases.clearData(data = BrowsingData.select(BrowsingData.COOKIES))
-        verify(engine).clearData(eq(BrowsingData.select(BrowsingData.COOKIES)), eq(null), any(), any())
-
-        useCases.clearData(session, data = BrowsingData.select(BrowsingData.COOKIES))
-        verify(engineSession).clearData(eq(BrowsingData.select(BrowsingData.COOKIES)), eq(null), any(), any())
-
-        whenever(sessionManager.getOrCreateEngineSession(selectedSession)).thenReturn(selectedEngineSession)
-        useCases.clearData()
-        verify(selectedEngineSession).clearData()
+        store.waitUntilIdle()
+        middleware.assertLastAction(EngineAction.ExitFullScreenModeAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+        }
     }
 
     @Test
     fun `LoadUrlUseCase will invoke onNoSession lambda if no selected session exists`() {
-        var createdSession: Session? = null
-        var sessionCreatedForUrl: String? = null
+        var createdTab: TabSessionState? = null
+        var tabCreatedForUrl: String? = null
 
-        whenever(sessionManager.selectedSession).thenReturn(null)
-        whenever(sessionManager.getOrCreateEngineSession(any())).thenReturn(mock())
+        store.dispatch(TabListAction.RemoveAllTabsAction()).joinBlocking()
 
-        val loadUseCase = SessionUseCases.DefaultLoadUrlUseCase(sessionManager) { url ->
-            sessionCreatedForUrl = url
-            Session(url).also { createdSession = it }
+        val loadUseCase = SessionUseCases.DefaultLoadUrlUseCase(store) { url ->
+            tabCreatedForUrl = url
+            createTab(url).also { createdTab = it }
         }
 
         loadUseCase("https://www.example.com")
+        store.waitUntilIdle()
 
-        assertEquals("https://www.example.com", sessionCreatedForUrl)
-        assertNotNull(createdSession)
-        verify(sessionManager).getOrCreateEngineSession(createdSession!!)
+        assertEquals("https://www.example.com", tabCreatedForUrl)
+        assertNotNull(createdTab)
+
+        middleware.assertLastAction(EngineAction.LoadUrlAction::class) { action ->
+            assertEquals(createdTab!!.id, action.tabId)
+            assertEquals(tabCreatedForUrl, action.url)
+        }
     }
 
     @Test
     fun `LoadDataUseCase will invoke onNoSession lambda if no selected session exists`() {
-        var createdSession: Session? = null
-        var sessionCreatedForUrl: String? = null
+        var createdTab: TabSessionState? = null
+        var tabCreatedForUrl: String? = null
 
-        val engineSession: EngineSession = mock()
+        store.dispatch(TabListAction.RemoveAllTabsAction()).joinBlocking()
+        store.waitUntilIdle()
 
-        whenever(sessionManager.selectedSession).thenReturn(null)
-        whenever(sessionManager.getOrCreateEngineSession(any())).thenReturn(engineSession)
-
-        val loadUseCase = SessionUseCases.LoadDataUseCase(sessionManager) { url ->
-            sessionCreatedForUrl = url
-            Session(url).also { createdSession = it }
+        val loadUseCase = SessionUseCases.LoadDataUseCase(store) { url ->
+            tabCreatedForUrl = url
+            createTab(url).also { createdTab = it }
         }
 
-        loadUseCase("Hello", mimeType = "plain/text", encoding = "UTF-8")
+        loadUseCase("Hello", mimeType = "text/plain", encoding = "UTF-8")
+        store.waitUntilIdle()
 
-        assertEquals("about:blank", sessionCreatedForUrl)
-        assertNotNull(createdSession)
-        verify(sessionManager).getOrCreateEngineSession(createdSession!!)
-        verify(engineSession).loadData("Hello", mimeType = "plain/text", encoding = "UTF-8")
+        assertEquals("about:blank", tabCreatedForUrl)
+        assertNotNull(createdTab)
+
+        middleware.assertLastAction(EngineAction.LoadDataAction::class) { action ->
+            assertEquals(createdTab!!.id, action.tabId)
+            assertEquals("Hello", action.data)
+            assertEquals("text/plain", action.mimeType)
+            assertEquals("UTF-8", action.encoding)
+        }
     }
 
     @Test
-    fun `CrashRecoveryUseCase will invoke recoverFromCrash on engine session and reset flag`() {
-        val engineSession = mock<EngineSession>()
-        doReturn(true).`when`(engineSession).recoverFromCrash()
+    fun `CrashRecoveryUseCase will restore specified session`() {
+        useCases.crashRecovery.invoke(listOf("mozilla"))
+        store.waitUntilIdle()
 
-        val session = mock<Session>()
-        whenever(sessionManager.getOrCreateEngineSession(session)).thenReturn(engineSession)
-
-        assertTrue(useCases.crashRecovery.invoke(session))
-
-        verify(engineSession).recoverFromCrash()
-        verify(session).crashed = false
+        middleware.assertLastAction(CrashAction.RestoreCrashedSessionAction::class) { action ->
+            assertEquals("mozilla", action.tabId)
+        }
     }
 
     @Test
     fun `CrashRecoveryUseCase will restore list of crashed sessions`() {
-        val engineSession1 = mock<EngineSession>()
-        doReturn(true).`when`(engineSession1).recoverFromCrash()
+        val store = spy(
+            BrowserStore(
+                middleware = listOf(middleware),
+                initialState = BrowserState(
+                    tabs = listOf(
+                        createTab(url = "https://wwww.mozilla.org", id = "tab1", crashed = true),
+                    ),
+                    customTabs = listOf(
+                        createCustomTab(
+                            "https://wwww.mozilla.org",
+                            id = "customTab1",
+                            crashed = true,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val useCases = SessionUseCases(store)
 
-        val engineSession2 = mock<EngineSession>()
-        doReturn(true).`when`(engineSession2).recoverFromCrash()
+        useCases.crashRecovery.invoke()
+        store.waitUntilIdle()
 
-        val session1 = mock<Session>()
-        whenever(sessionManager.getOrCreateEngineSession(session1)).thenReturn(engineSession1)
+        middleware.assertFirstAction(CrashAction.RestoreCrashedSessionAction::class) { action ->
+            assertEquals("tab1", action.tabId)
+        }
 
-        val session2 = mock<Session>()
-        whenever(sessionManager.getOrCreateEngineSession(session2)).thenReturn(engineSession2)
-
-        assertTrue(useCases.crashRecovery.invoke(listOf(session1, session2)))
-
-        verify(engineSession1).recoverFromCrash()
-        verify(engineSession2).recoverFromCrash()
-        verify(session1).crashed = false
-        verify(session2).crashed = false
+        middleware.assertLastAction(CrashAction.RestoreCrashedSessionAction::class) { action ->
+            assertEquals("customTab1", action.tabId)
+        }
     }
 
     @Test
-    fun `CrashRecoveryUseCase will restore crashed sessions`() {
-        val engineSession1 = mock<EngineSession>()
-        doReturn(true).`when`(engineSession1).recoverFromCrash()
+    fun `PurgeHistoryUseCase dispatches PurgeHistory action`() {
+        useCases.purgeHistory()
+        store.waitUntilIdle()
 
-        val engineSession2 = mock<EngineSession>()
-        doReturn(true).`when`(engineSession2).recoverFromCrash()
+        middleware.findFirstAction(EngineAction.PurgeHistoryAction::class)
+    }
 
-        val session1 = mock<Session>()
-        whenever(sessionManager.getOrCreateEngineSession(session1)).thenReturn(engineSession1)
-        doReturn(true).`when`(session1).crashed
+    @Test
+    fun `UpdateLastAccessUseCase sets timestamp`() {
+        val tab = createTab("https://firefox.com")
+        val otherTab = createTab("https://example.com")
+        val customTab = createCustomTab("https://getpocket.com")
+        store = BrowserStore(
+            initialState = BrowserState(
+                tabs = listOf(tab, otherTab),
+                customTabs = listOf(customTab),
+            ),
+        )
+        useCases = SessionUseCases(store)
 
-        val session2 = mock<Session>()
-        doReturn(false).`when`(session2).crashed
-        whenever(sessionManager.getOrCreateEngineSession(session2)).thenReturn(engineSession2)
+        // Make sure use case doesn't crash for custom tab and non-existent tab
+        useCases.updateLastAccess(customTab.id)
+        store.waitUntilIdle()
+        assertEquals(0L, store.state.findTab(tab.id)?.lastAccess)
 
-        doReturn(listOf(session1, session2)).`when`(sessionManager).sessions
+        // Update last access for a specific tab with default value
+        useCases.updateLastAccess(tab.id)
+        store.waitUntilIdle()
+        assertNotEquals(0L, store.state.findTab(tab.id)?.lastAccess)
 
-        assertTrue(useCases.crashRecovery.invoke())
+        // Update last access for a specific tab with specific value
+        useCases.updateLastAccess(tab.id, 123L)
+        store.waitUntilIdle()
+        assertEquals(123L, store.state.findTab(tab.id)?.lastAccess)
 
-        verify(engineSession1).recoverFromCrash()
-        verify(engineSession2, never()).recoverFromCrash()
-        verify(session1).crashed = false
-        verify(session2, never()).crashed = false
+        // Update last access for currently selected tab
+        store.dispatch(TabListAction.SelectTabAction(otherTab.id)).joinBlocking()
+        assertEquals(0L, store.state.findTab(otherTab.id)?.lastAccess)
+        useCases.updateLastAccess()
+        store.waitUntilIdle()
+        assertNotEquals(0L, store.state.findTab(otherTab.id)?.lastAccess)
+
+        // Update last access for currently selected tab with specific value
+        store.dispatch(TabListAction.SelectTabAction(otherTab.id)).joinBlocking()
+        useCases.updateLastAccess(lastAccess = 345L)
+        store.waitUntilIdle()
+        assertEquals(345L, store.state.findTab(otherTab.id)?.lastAccess)
     }
 }

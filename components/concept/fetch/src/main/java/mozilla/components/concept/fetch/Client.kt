@@ -4,7 +4,11 @@
 
 package mozilla.components.concept.fetch
 
+import android.util.Base64
+import java.io.ByteArrayInputStream
 import java.io.IOException
+import java.net.URLDecoder
+import java.nio.charset.Charset
 
 /**
  * A generic [Client] for fetching resources via HTTP/s.
@@ -41,24 +45,54 @@ abstract class Client {
     abstract fun fetch(request: Request): Response
 
     /**
-     * List of default headers that should be added to every request unless overridden by the headers in the request.
+     * Generates a [Response] based on the provided [Request] for a data URI.
+     *
+     * @param request The [Request] for the data URI.
+     * @return The generated [Response] including the decoded bytes as body.
      */
-    protected val defaultHeaders: Headers = MutableHeaders(
-        // Unfortunately some implementations will always send a not removable Accept header. Let's override it with
-        // a header that accepts everything.
-        "Accept" to "*/*",
+    @Suppress("ComplexMethod", "TooGenericExceptionCaught")
+    protected fun fetchDataUri(request: Request): Response {
+        if (!request.isDataUri()) {
+            throw IOException("Not a data URI")
+        }
+        return try {
+            val dataUri = request.url
 
-        // We expect all clients to implement gzip decoding transparently.
-        "Accept-Encoding" to "gzip",
+            val (contentType, bytes) = if (dataUri.contains(DATA_URI_BASE64_EXT)) {
+                dataUri.substringAfter(DATA_URI_SCHEME).substringBefore(DATA_URI_BASE64_EXT) to
+                    Base64.decode(dataUri.substring(dataUri.lastIndexOf(',') + 1), Base64.DEFAULT)
+            } else {
+                val contentType = dataUri.substringAfter(DATA_URI_SCHEME).substringBefore(",")
+                val charset = if (contentType.contains(DATA_URI_CHARSET)) {
+                    Charset.forName(contentType.substringAfter(DATA_URI_CHARSET).substringBefore(","))
+                } else {
+                    Charsets.UTF_8
+                }
+                contentType to
+                    URLDecoder.decode(dataUri.substring(dataUri.lastIndexOf(',') + 1), charset.name()).toByteArray()
+            }
 
-        // Unfortunately some implementations will always send a not removable Accept-Language header. Let's override
-        // it with a header that accepts everything.
-        "Accept-Language" to "*/*",
+            val headers = MutableHeaders().apply {
+                set(Headers.Names.CONTENT_LENGTH, bytes.size.toString())
+                if (contentType.isNotEmpty()) {
+                    set(Headers.Names.CONTENT_TYPE, contentType)
+                }
+            }
 
-        // Default User Agent. Clients are expected to append their own tokens if needed.
-        "User-Agent" to "MozacFetch/${BuildConfig.LIBRARY_VERSION}",
+            Response(
+                dataUri,
+                Response.SUCCESS,
+                headers,
+                Response.Body(ByteArrayInputStream(bytes), contentType),
+            )
+        } catch (e: Exception) {
+            throw IOException("Failed to decode data URI")
+        }
+    }
 
-        // We expect all clients to support and use keep-alive by default.
-        "Connection" to "keep-alive"
-    )
+    companion object {
+        const val DATA_URI_BASE64_EXT = ";base64"
+        const val DATA_URI_SCHEME = "data:"
+        const val DATA_URI_CHARSET = "charset="
+    }
 }

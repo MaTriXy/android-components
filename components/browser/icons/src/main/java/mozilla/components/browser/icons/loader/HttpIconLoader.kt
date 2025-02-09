@@ -17,6 +17,7 @@ import mozilla.components.concept.fetch.Response
 import mozilla.components.concept.fetch.isSuccess
 import mozilla.components.support.base.log.logger.Logger
 import mozilla.components.support.ktx.android.net.isHttpOrHttps
+import mozilla.components.support.ktx.kotlin.sanitizeURL
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -26,8 +27,8 @@ private const val READ_TIMEOUT = 10L // Seconds
 /**
  * [IconLoader] implementation that will try to download the icon for resources that point to an http(s) URL.
  */
-class HttpIconLoader(
-    private val httpClient: Client
+open class HttpIconLoader(
+    private val httpClient: Client,
 ) : IconLoader {
     private val logger = Logger("HttpIconLoader")
     private val failureCache = FailureCache()
@@ -40,32 +41,41 @@ class HttpIconLoader(
         // Right now we always perform a download. We shouldn't retry to download from URLs that have failed just
         // recently: https://github.com/mozilla-mobile/android-components/issues/2591
 
+        return internalLoad(request, resource)
+    }
+
+    protected fun internalLoad(request: IconRequest, resource: IconRequest.Resource): IconLoader.Result {
         val downloadRequest = Request(
-            url = resource.url,
+            url = resource.url.sanitizeURL(),
             method = Request.Method.GET,
-            cookiePolicy = Request.CookiePolicy.INCLUDE,
+            cookiePolicy = if (request.isPrivate) {
+                Request.CookiePolicy.OMIT
+            } else {
+                Request.CookiePolicy.INCLUDE
+            },
             connectTimeout = Pair(CONNECT_TIMEOUT, TimeUnit.SECONDS),
             readTimeout = Pair(READ_TIMEOUT, TimeUnit.SECONDS),
             redirect = Request.Redirect.FOLLOW,
-            useCaches = true)
+            useCaches = true,
+            private = request.isPrivate,
+        )
 
-        val response = try {
-            httpClient.fetch(downloadRequest)
+        return try {
+            val response = httpClient.fetch(downloadRequest)
+            if (response.isSuccess) {
+                response.toIconLoaderResult()
+            } else {
+                failureCache.rememberFailure(resource.url)
+                IconLoader.Result.NoResult
+            }
         } catch (e: IOException) {
             logger.debug("IOException while trying to download icon resource", e)
-            return IconLoader.Result.NoResult
-        }
-
-        return if (response.isSuccess) {
-            response.toIconLoaderResult()
-        } else {
-            failureCache.rememberFailure(resource.url)
             IconLoader.Result.NoResult
         }
     }
 
-    private fun shouldDownload(resource: IconRequest.Resource): Boolean {
-        return resource.url.toUri().isHttpOrHttps && !failureCache.hasFailedRecently(resource.url)
+    protected fun shouldDownload(resource: IconRequest.Resource): Boolean {
+        return resource.url.sanitizeURL().toUri().isHttpOrHttps && !failureCache.hasFailedRecently(resource.url)
     }
 }
 

@@ -8,27 +8,25 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import kotlinx.android.synthetic.main.fragment_browser.view.*
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.ObsoleteCoroutinesApi
+import androidx.core.view.isVisible
 import mozilla.components.concept.engine.manifest.WebAppManifest
+import mozilla.components.feature.customtabs.CustomTabWindowFeature
 import mozilla.components.feature.customtabs.CustomTabsToolbarFeature
-import mozilla.components.feature.pwa.ext.getTrustedScope
 import mozilla.components.feature.pwa.ext.getWebAppManifest
 import mozilla.components.feature.pwa.ext.putWebAppManifest
-import mozilla.components.feature.pwa.ext.trustedOrigins
+import mozilla.components.feature.pwa.feature.ManifestUpdateFeature
 import mozilla.components.feature.pwa.feature.WebAppActivityFeature
 import mozilla.components.feature.pwa.feature.WebAppHideToolbarFeature
 import mozilla.components.feature.pwa.feature.WebAppSiteControlsFeature
-import mozilla.components.lib.state.ext.consumeFrom
-import mozilla.components.support.base.feature.BackHandler
+import mozilla.components.support.base.feature.UserInteractionHandler
 import mozilla.components.support.base.feature.ViewBoundFeatureWrapper
+import mozilla.components.support.ktx.android.arch.lifecycle.addObservers
 import org.mozilla.samples.browser.ext.components
 
 /**
  * Fragment used for browsing within an external app, such as for custom tabs and PWAs.
  */
-class ExternalAppBrowserFragment : BaseBrowserFragment(), BackHandler {
+class ExternalAppBrowserFragment : BaseBrowserFragment(), UserInteractionHandler {
     private val customTabsToolbarFeature = ViewBoundFeatureWrapper<CustomTabsToolbarFeature>()
     private val hideToolbarFeature = ViewBoundFeatureWrapper<WebAppHideToolbarFeature>()
 
@@ -36,76 +34,81 @@ class ExternalAppBrowserFragment : BaseBrowserFragment(), BackHandler {
         get() = arguments?.getWebAppManifest()
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
-        val layout = super.onCreateView(inflater, container, savedInstanceState)
+        super.onCreateView(inflater, container, savedInstanceState)
+        val binding = super.binding
 
         val manifest = this.manifest
 
         customTabsToolbarFeature.set(
             feature = CustomTabsToolbarFeature(
-                components.sessionManager,
-                layout.toolbar,
+                components.store,
+                binding.toolbar,
                 sessionId,
+                components.customTabsUseCases,
                 components.menuBuilder,
                 window = activity?.window,
-                closeListener = { activity?.finish() }),
+                closeListener = { activity?.finish() },
+            ),
             owner = this,
-            view = layout)
+            view = binding.root,
+        )
 
         hideToolbarFeature.set(
             feature = WebAppHideToolbarFeature(
-                components.sessionManager,
-                layout.toolbar,
-                sessionId!!,
-                listOfNotNull(manifest?.getTrustedScope())
-            ),
+                components.store,
+                components.customTabsStore,
+                sessionId,
+                manifest,
+            ) { toolbarVisible ->
+                binding.toolbar.isVisible = toolbarVisible
+            },
             owner = this,
-            view = layout.toolbar)
+            view = binding.toolbar,
+        )
+
+        val windowFeature = CustomTabWindowFeature(
+            requireActivity(),
+            components.store,
+            sessionId!!,
+        ) {
+            // No-op. Client may override this
+        }
+        lifecycle.addObserver(windowFeature)
 
         if (manifest != null) {
-            activity?.lifecycle?.addObserver(
+            activity?.lifecycle?.addObservers(
                 WebAppActivityFeature(
-                    activity!!,
+                    requireActivity(),
                     components.icons,
-                    manifest
-                )
+                    manifest,
+                ),
+                ManifestUpdateFeature(
+                    requireContext(),
+                    components.store,
+                    components.webAppShortcutManager,
+                    components.webAppManifestStorage,
+                    sessionId!!,
+                    manifest,
+                ),
             )
-            activity?.lifecycle?.addObserver(
+            viewLifecycleOwner.lifecycle.addObserver(
                 WebAppSiteControlsFeature(
                     context?.applicationContext!!,
-                    components.sessionManager,
+                    components.store,
                     components.sessionUseCases.reload,
                     sessionId!!,
-                    manifest
-                )
+                    manifest,
+                    icons = components.icons,
+                ),
             )
         }
 
-        return layout
-    }
-
-    @ObsoleteCoroutinesApi
-    @ExperimentalCoroutinesApi
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        super.onViewCreated(view, savedInstanceState)
-
-        val scope = listOfNotNull(manifest?.getTrustedScope())
-
-        consumeFrom(components.customTabsStore) { state ->
-            sessionId
-                ?.let { components.sessionManager.findSessionById(it) }
-                ?.let { session -> session.customTabConfig?.sessionToken }
-                ?.let { token -> state.tabs[token] }
-                ?.let { tabState ->
-                    hideToolbarFeature.withFeature {
-                        it.onTrustedScopesChange(scope + tabState.trustedOrigins)
-                    }
-                }
-        }
+        return binding.root
     }
 
     /**
      * Calls [onBackPressed] for features in the base class first,
-     * before trying to call the external app [BackHandler].
+     * before trying to call the external app [UserInteractionHandler].
      */
     override fun onBackPressed(): Boolean =
         super.onBackPressed() || customTabsToolbarFeature.onBackPressed()
@@ -113,7 +116,7 @@ class ExternalAppBrowserFragment : BaseBrowserFragment(), BackHandler {
     companion object {
         fun create(
             sessionId: String,
-            manifest: WebAppManifest?
+            manifest: WebAppManifest?,
         ) = ExternalAppBrowserFragment().apply {
             arguments = Bundle().apply {
                 putSessionId(sessionId)

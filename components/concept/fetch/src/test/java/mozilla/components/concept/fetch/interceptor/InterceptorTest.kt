@@ -58,29 +58,35 @@ class InterceptorTest {
                 override fun intercept(chain: Interceptor.Chain): Response {
                     assertEquals("https://www.mozilla.org", chain.request.url)
                     order.add("A")
-                    return chain.proceed(chain.request.copy(
-                        url = chain.request.url + "/a"
-                    ))
+                    return chain.proceed(
+                        chain.request.copy(
+                            url = chain.request.url + "/a",
+                        ),
+                    )
                 }
             },
             object : Interceptor {
                 override fun intercept(chain: Interceptor.Chain): Response {
                     assertEquals("https://www.mozilla.org/a", chain.request.url)
                     order.add("B")
-                    return chain.proceed(chain.request.copy(
-                        url = chain.request.url + "/b"
-                    ))
+                    return chain.proceed(
+                        chain.request.copy(
+                            url = chain.request.url + "/b",
+                        ),
+                    )
                 }
             },
             object : Interceptor {
                 override fun intercept(chain: Interceptor.Chain): Response {
                     assertEquals("https://www.mozilla.org/a/b", chain.request.url)
                     order.add("C")
-                    return chain.proceed(chain.request.copy(
-                        url = chain.request.url + "/c"
-                    ))
+                    return chain.proceed(
+                        chain.request.copy(
+                            url = chain.request.url + "/c",
+                        ),
+                    )
                 }
-            }
+            },
         )
 
         val response = client.fetch(Request(url = "https://www.mozilla.org"))
@@ -99,7 +105,7 @@ class InterceptorTest {
                 override fun intercept(chain: Interceptor.Chain): Response {
                     return Response("https://www.firefox.com", 203, MutableHeaders(), Response.Body.empty())
                 }
-            }
+            },
         )
 
         val response = client.fetch(Request(url = "https://www.mozilla.org"))
@@ -110,7 +116,7 @@ class InterceptorTest {
 }
 
 private class FakeClient(
-    val response: Response? = null
+    val response: Response? = null,
 ) : Client() {
     var resourceFetched = false
 
@@ -120,7 +126,7 @@ private class FakeClient(
             url = request.url,
             status = 200,
             body = Response.Body.empty(),
-            headers = MutableHeaders()
+            headers = MutableHeaders(),
         )
     }
 }

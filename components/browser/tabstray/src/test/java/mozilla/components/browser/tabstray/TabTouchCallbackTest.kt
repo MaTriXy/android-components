@@ -7,48 +7,45 @@ package mozilla.components.browser.tabstray
 import android.view.LayoutInflater
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import mozilla.components.concept.tabstray.TabsTray
-import mozilla.components.support.base.observer.Observable
-import mozilla.components.support.base.observer.ObserverRegistry
-import mozilla.components.support.test.any
+import mozilla.components.browser.state.state.TabSessionState
 import mozilla.components.support.test.mock
 import mozilla.components.support.test.robolectric.testContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mockito.`when`
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 
 @RunWith(AndroidJUnit4::class)
 class TabTouchCallbackTest {
 
     @Test
     fun `onSwiped notifies observers`() {
-        val observer: TabsTray.Observer = mock()
-        val observable: Observable<TabsTray.Observer> = ObserverRegistry()
-        observable.register(observer)
+        var onTabClosedWasCalled = false
 
-        val touchCallback = TabTouchCallback(observable)
+        val onTabClosed: (TabSessionState) -> Unit = {
+            onTabClosedWasCalled = true
+        }
+        val touchCallback = TabTouchCallback(onTabClosed)
         val viewHolder: TabViewHolder = mock()
 
         touchCallback.onSwiped(viewHolder, 0)
 
-        verify(observer, never()).onTabClosed(any())
+        assertFalse(onTabClosedWasCalled)
 
         // With a session available.
-        `when`(viewHolder.session).thenReturn(mock())
+        `when`(viewHolder.tab).thenReturn(mock())
 
         touchCallback.onSwiped(viewHolder, 0)
 
-        verify(observer).onTabClosed(any())
+        assertTrue(onTabClosedWasCalled)
     }
 
     @Test
     fun `onChildDraw alters alpha of ViewHolder on swipe gesture`() {
         val view = LayoutInflater.from(testContext).inflate(R.layout.mozac_browser_tabstray_item, null)
-        val holder = TabViewHolder(view, TabViewHolderTest.mockTabsTrayWithStyles())
+        val holder = DefaultTabViewHolder(view)
         val callback = TabTouchCallback(mock())
 
         holder.itemView.alpha = 0f

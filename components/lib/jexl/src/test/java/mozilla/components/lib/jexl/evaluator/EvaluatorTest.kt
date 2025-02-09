@@ -43,16 +43,17 @@ class EvaluatorTest {
     fun `Should evaluate an arithmetic expression`() {
         assertExpressionYieldsResult(
             "(2 + 3) * 4",
-            20
+            20,
         )
     }
 
     @Test
     fun `Should evaluate a string concat`() {
-        assertExpressionYieldsResult("""
+        assertExpressionYieldsResult(
+            """
                 "Hello" + (4+4) + "Wo\"rld"
             """.trimIndent(),
-            "Hello8Wo\"rld"
+            "Hello8Wo\"rld",
         )
     }
 
@@ -60,7 +61,7 @@ class EvaluatorTest {
     fun `Should evaluate a true comparison expression`() {
         assertExpressionYieldsResult(
             "2 > 1",
-            true
+            true,
         )
     }
 
@@ -68,7 +69,7 @@ class EvaluatorTest {
     fun `Should evaluate a false comparison expression`() {
         assertExpressionYieldsResult(
             "2 <= 1",
-            false
+            false,
         )
     }
 
@@ -76,7 +77,7 @@ class EvaluatorTest {
     fun `Should evaluate a complex expression`() {
         assertExpressionYieldsResult(
             "\"foo\" && 6 >= 6 && 0 + 1 && true",
-            true
+            true,
         )
     }
 
@@ -85,30 +86,33 @@ class EvaluatorTest {
         val context = JexlContext(
             "foo" to JexlObject(
                 "baz" to JexlObject(
-                    "bar" to JexlString("tek")
-                )
-            )
+                    "bar" to JexlString("tek"),
+                ),
+            ),
         )
 
         assertExpressionYieldsResult(
             "foo.baz.bar",
             "tek",
-            context = context)
+            context = context,
+        )
     }
 
     @Test
     fun `Should apply transforms`() {
         val context = JexlContext(
-            "foo" to JexlInteger(10)
+            "foo" to JexlInteger(10),
         )
 
         assertExpressionYieldsResult(
             "foo|half + 3",
             8,
             context = context,
-            transforms = mapOf("half" to { value, _ ->
-                value.div(JexlInteger(2))
-            })
+            transforms = mapOf(
+                "half" to { value, _ ->
+                    value.div(JexlInteger(2))
+                },
+            ),
         )
     }
 
@@ -119,15 +123,15 @@ class EvaluatorTest {
                 "bar" to JexlArray(
                     JexlObject("tek" to JexlString("hello")),
                     JexlObject("tek" to JexlString("baz")),
-                    JexlObject("tok" to JexlString("baz"))
-                )
-            )
+                    JexlObject("tok" to JexlString("baz")),
+                ),
+            ),
         )
 
         assertExpressionYieldsResult(
             "foo.bar[.tek == \"baz\"]",
             listOf(JexlObject("tek" to JexlString("baz"))),
-            context = context
+            context = context,
         )
     }
 
@@ -139,25 +143,25 @@ class EvaluatorTest {
                     JexlObject(
                         "tek" to JexlObject(
                             "hello" to JexlString(
-                                "world"
-                            )
-                        )
+                                "world",
+                            ),
+                        ),
                     ),
                     JexlObject(
                         "tek" to JexlObject(
                             "hello" to JexlString(
-                                "universe"
-                            )
-                        )
-                    )
-                )
-            )
+                                "universe",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
         )
 
         assertExpressionYieldsResult(
             "foo.bar.tek.hello",
             "world",
-            context = context
+            context = context,
         )
     }
 
@@ -168,15 +172,15 @@ class EvaluatorTest {
                 "bar" to JexlArray(
                     JexlObject("tek" to JexlString("tok")),
                     JexlObject("tek" to JexlString("baz")),
-                    JexlObject("tek" to JexlString("foz"))
-                )
-            )
+                    JexlObject("tek" to JexlString("foz")),
+                ),
+            ),
         )
 
         assertExpressionYieldsResult(
             "foo.bar[1].tek",
             "baz",
-            context = context
+            context = context,
         )
     }
 
@@ -185,43 +189,43 @@ class EvaluatorTest {
         val context = JexlContext(
             "foo" to JexlObject(
                 "baz" to JexlObject(
-                    "bar" to JexlString("tek")
-                )
-            )
+                    "bar" to JexlString("tek"),
+                ),
+            ),
         )
 
         assertExpressionYieldsResult(
             "foo[\"ba\" + \"z\"].bar",
             "tek",
-            context = context
+            context = context,
         )
     }
 
     @Test
     fun `Should allow simple filters on undefined objects`() {
         val context = JexlContext(
-            "foo" to JexlObject()
+            "foo" to JexlObject(),
         )
 
         assertExpressionYieldsResult(
             "foo.bar[\"baz\"].tok",
             JexlUndefined(),
             context = context,
-            unpack = false
+            unpack = false,
         )
     }
 
     @Test
     fun `Should allow complex filters on undefined objects`() {
         val context = JexlContext(
-            "foo" to JexlObject()
+            "foo" to JexlObject(),
         )
 
         assertExpressionYieldsResult(
             "foo.bar[.size > 1].baz",
             JexlUndefined(),
             context = context,
-            unpack = false
+            unpack = false,
         )
     }
 
@@ -229,7 +233,7 @@ class EvaluatorTest {
     fun `Should throw when transform does not exist`() {
         assertExpressionYieldsResult(
             "\"hello\"|world",
-            "-- should throw"
+            "-- should throw",
         )
     }
 
@@ -237,7 +241,8 @@ class EvaluatorTest {
     fun `Should apply the DivFloor operator`() {
         assertExpressionYieldsResult(
             "7 // 2",
-            3)
+            3,
+        )
     }
 
     @Test
@@ -247,11 +252,11 @@ class EvaluatorTest {
             JexlObject(
                 "foo" to JexlObject(
                     "bar" to JexlString(
-                        "tek"
-                    )
-                )
+                        "tek",
+                    ),
+                ),
             ),
-            unpack = false
+            unpack = false,
         )
     }
 
@@ -259,7 +264,7 @@ class EvaluatorTest {
     fun `Should evaluate an empty object literal`() {
         assertExpressionYieldsResult(
             "{}",
-            emptyMap<String, JexlValue>()
+            emptyMap<String, JexlValue>(),
         )
     }
 
@@ -268,11 +273,13 @@ class EvaluatorTest {
         assertExpressionYieldsResult(
             """"foo"|concat("baz", "bar", "tek")""",
             "foo: bazbartek",
-            transforms = mapOf("concat" to { value, arguments ->
-                value + JexlString(": ") + JexlString(
-                    arguments.joinToString("")
-                )
-            })
+            transforms = mapOf(
+                "concat" to { value, arguments ->
+                    value + JexlString(": ") + JexlString(
+                        arguments.joinToString(""),
+                    )
+                },
+            ),
         )
     }
 
@@ -280,7 +287,8 @@ class EvaluatorTest {
     fun `Should evaluate dot notation for object literals`() {
         assertExpressionYieldsResult(
             "{foo: \"bar\"}.foo",
-            "bar")
+            "bar",
+        )
     }
 
     @Test
@@ -288,7 +296,7 @@ class EvaluatorTest {
     fun `Should allow access to literal properties`() {
         assertExpressionYieldsResult(
             "\"foo\".length",
-            3
+            3,
         )
     }
 
@@ -298,19 +306,19 @@ class EvaluatorTest {
             "[\"foo\", 1+2]",
             listOf(
                 JexlString("foo"),
-                JexlInteger(3)
-            )
+                JexlInteger(3),
+            ),
         )
     }
 
     @Test
-    fun `Should apply the "in" operator to strings`() {
+    fun `Should apply the 'in' operator to strings`() {
         assertExpressionYieldsResult(""""bar" in "foobartek"""", true)
         assertExpressionYieldsResult(""""baz" in "foobartek"""", false)
     }
 
     @Test
-    fun `Should apply the "in" operator to arrays`() {
+    fun `Should apply the 'in' operator to arrays`() {
         assertExpressionYieldsResult(""""bar" in ["foo","bar","tek"]""", true)
         assertExpressionYieldsResult(""""baz" in ["foo","bar","tek"]""", false)
     }
@@ -342,7 +350,7 @@ class EvaluatorTest {
         result: Any,
         context: JexlContext = JexlContext(),
         transforms: Map<String, Transform> = emptyMap(),
-        unpack: Boolean = true
+        unpack: Boolean = true,
     ) {
         val tree = toTree(expression)
 
@@ -356,7 +364,7 @@ class EvaluatorTest {
 
     private fun toTree(
         expression: String,
-        grammar: Grammar = Grammar()
+        grammar: Grammar = Grammar(),
     ): AstNode {
         val lexer = Lexer(grammar)
         val parser = Parser(grammar)

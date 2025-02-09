@@ -6,10 +6,9 @@ package mozilla.components.concept.engine.request
 
 import mozilla.components.browser.errorpages.ErrorType
 import mozilla.components.concept.engine.EngineSession
-import org.junit.Test
 import mozilla.components.concept.engine.request.RequestInterceptor.InterceptionResponse
-import mozilla.components.concept.engine.request.RequestInterceptor.ErrorResponse
 import org.junit.Assert.assertEquals
+import org.junit.Test
 import org.mockito.Mockito.mock
 
 class RequestInterceptorTest {
@@ -17,31 +16,22 @@ class RequestInterceptorTest {
     @Test
     fun `match interception response`() {
         val urlResponse = InterceptionResponse.Url("https://mozilla.org")
-        val contentReponse = InterceptionResponse.Content("data")
+        val contentResponse = InterceptionResponse.Content("data")
 
         val url: String = urlResponse.url
 
         val content: Triple<String, String, String> =
-            Triple(contentReponse.data, contentReponse.encoding, contentReponse.mimeType)
+            Triple(contentResponse.data, contentResponse.encoding, contentResponse.mimeType)
 
         assertEquals("https://mozilla.org", url)
         assertEquals(Triple("data", "UTF-8", "text/html"), content)
     }
 
     @Test
-    fun `error response has default values`() {
-        val errorResponse = ErrorResponse("data")
-        assertEquals("data", errorResponse.data)
-        assertEquals("text/html", errorResponse.mimeType)
-        assertEquals("UTF-8", errorResponse.encoding)
-        assertEquals(null, errorResponse.url)
-    }
-
-    @Test
     fun `interceptor has default methods`() {
         val engineSession = mock(EngineSession::class.java)
         val interceptor = object : RequestInterceptor { }
-        interceptor.onLoadRequest(engineSession, "url")
+        interceptor.onLoadRequest(engineSession, "url", null, false, false, false, false, false)
         interceptor.onErrorRequest(engineSession, ErrorType.ERROR_UNKNOWN_SOCKET_TYPE, null)
     }
 }

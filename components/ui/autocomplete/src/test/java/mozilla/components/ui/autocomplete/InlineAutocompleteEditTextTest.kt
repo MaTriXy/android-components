@@ -4,6 +4,10 @@
 
 package mozilla.components.ui.autocomplete
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.os.Build
 import android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
 import android.view.KeyEvent
 import android.view.ViewParent
@@ -20,11 +24,17 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.ArgumentMatchers.anyBoolean
+import org.mockito.ArgumentMatchers.eq
+import org.mockito.Mockito.anyInt
 import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.never
 import org.mockito.Mockito.spy
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.robolectric.Robolectric.buildAttributeSet
+import org.robolectric.annotation.Config
 
 @RunWith(AndroidJUnit4::class)
 class InlineAutocompleteEditTextTest {
@@ -279,6 +289,15 @@ class InlineAutocompleteEditTextTest {
         // Empty text isn't autocompleted either.
         et.setText("")
         assertEquals(1, invokedCounter)
+
+        // Autocomplete for the first letter
+        et.setText("t")
+        assertEquals(2, invokedCounter)
+        et.applyAutocompleteResult(AutocompleteResult("text", "source", 1))
+
+        // Autocomplete should be called for the next letter that doesn't match the result
+        et.setText("ta")
+        assertEquals(3, invokedCounter)
     }
 
     @Test
@@ -330,5 +349,199 @@ class InlineAutocompleteEditTextTest {
         // Verify that we finished composing
         assertEquals(-1, BaseInputConnection.getComposingSpanStart(et.text))
         assertEquals(-1, BaseInputConnection.getComposingSpanEnd(et.text))
+    }
+
+    @Test
+    fun `GIVEN empty edit field WHEN text 'g' added THEN autocomplete to google`() {
+        val et = InlineAutocompleteEditText(testContext, attributes)
+        et.setText("")
+        et.onAttachedToWindow()
+
+        et.autocompleteResult = AutocompleteResult(
+            text = "google.com",
+            source = "test-source",
+            totalItems = 100,
+        )
+
+        et.setText("g")
+        assertEquals("google.com", "${et.text}")
+    }
+
+    @Test
+    fun `GIVEN empty edit field WHEN text 'g ' added THEN don't autocomplete to google`() {
+        val et = InlineAutocompleteEditText(testContext, attributes)
+        et.setText("")
+        et.onAttachedToWindow()
+
+        et.autocompleteResult = AutocompleteResult(
+            text = "google.com",
+            source = "test-source",
+            totalItems = 100,
+        )
+
+        et.setText("g ")
+        assertEquals("g ", "${et.text}")
+    }
+
+    @Test
+    fun `GIVEN field with 'google' WHEN backspacing THEN doesn't autocomplete`() {
+        val et = InlineAutocompleteEditText(testContext, attributes)
+        et.setText("google")
+        et.onAttachedToWindow()
+
+        et.autocompleteResult = AutocompleteResult(
+            text = "google.com",
+            source = "test-source",
+            totalItems = 100,
+        )
+
+        et.setText("googl")
+        assertEquals("googl", "${et.text}")
+    }
+
+    @Test
+    fun `GIVEN field with selected text WHEN text 'g' added THEN autocomplete to google`() {
+        val et = InlineAutocompleteEditText(testContext, attributes)
+        et.setText("testestest")
+        et.selectAll()
+        et.onAttachedToWindow()
+        et.autocompleteResult = AutocompleteResult(
+            text = "google.com",
+            source = "test-source",
+            totalItems = 100,
+        )
+
+        et.setText("g")
+        assertEquals("google.com", "${et.text}")
+    }
+
+    @Test
+    fun `GIVEN field with selected text 'google ' WHEN text 'g' added THEN autocomplete to google`() {
+        val et = InlineAutocompleteEditText(testContext, attributes)
+        et.setText("https://www.google.com/")
+        et.selectAll()
+        et.onAttachedToWindow()
+        et.autocompleteResult = AutocompleteResult(
+            text = "google.com",
+            source = "test-source",
+            totalItems = 100,
+        )
+
+        et.setText("g")
+        assertEquals("google.com", "${et.text}")
+    }
+
+    @Test
+    fun `WHEN setting text THEN isEnabled is never modified`() {
+        val et = spy(InlineAutocompleteEditText(testContext, attributes))
+        et.setText("", shouldAutoComplete = false)
+        // assigning here so it verifies the setter, not the getter
+        verify(et, never()).isEnabled = true
+    }
+
+    @Test
+    fun `WHEN onTextContextMenuItem is called for options other than paste THEN we should not paste() and just call super`() {
+        val editText = spy(InlineAutocompleteEditText(testContext, attributes))
+
+        editText.onTextContextMenuItem(android.R.id.copy)
+        editText.onTextContextMenuItem(android.R.id.shareText)
+        editText.onTextContextMenuItem(android.R.id.cut)
+        editText.onTextContextMenuItem(android.R.id.selectAll)
+
+        verify(editText, never()).paste(anyInt(), anyInt(), anyBoolean())
+        verify(editText, times(4)).callOnTextContextMenuItemSuper(anyInt())
+    }
+
+    @Test
+    fun `WHEN onTextContextMenuItem is called for paste THEN we should paste() and not call super`() {
+        val editText = spy(InlineAutocompleteEditText(testContext, attributes))
+
+        editText.onTextContextMenuItem(android.R.id.paste)
+
+        verify(editText).paste(anyInt(), anyInt(), anyBoolean())
+        verify(editText, never()).callOnTextContextMenuItemSuper(anyInt())
+    }
+
+    @Test
+    fun `WHEN onTextContextMenuItem is called for pasteAsPlainText THEN we should paste() and not call super`() {
+        val editText = spy(InlineAutocompleteEditText(testContext, attributes))
+
+        editText.onTextContextMenuItem(android.R.id.pasteAsPlainText)
+
+        verify(editText).paste(anyInt(), anyInt(), anyBoolean())
+        verify(editText, never()).callOnTextContextMenuItemSuper(anyInt())
+    }
+
+    @Test
+    @Config(sdk = [Build.VERSION_CODES.LOLLIPOP, Build.VERSION_CODES.LOLLIPOP_MR1])
+    fun `GIVEN an Android L device, WHEN onTextContextMenuItem is called for paste THEN we should paste() with formatting`() {
+        val editText = spy(InlineAutocompleteEditText(testContext, attributes))
+
+        editText.onTextContextMenuItem(android.R.id.paste)
+
+        verify(editText).paste(anyInt(), anyInt(), eq(true))
+    }
+
+    @Test
+    @Config(sdk = [Build.VERSION_CODES.M, Build.VERSION_CODES.N, Build.VERSION_CODES.O, Build.VERSION_CODES.P])
+    fun `GIVEN an Android M device, WHEN onTextContextMenuItem is called for paste THEN we should paste() without formatting`() {
+        val editText = spy(InlineAutocompleteEditText(testContext, attributes))
+
+        editText.onTextContextMenuItem(android.R.id.paste)
+
+        verify(editText).paste(anyInt(), anyInt(), eq(false))
+    }
+
+    @Test
+    fun `GIVEN no previous text WHEN paste is selected THEN paste() should be called with 0,0`() {
+        val editText = spy(InlineAutocompleteEditText(testContext, attributes))
+
+        editText.onTextContextMenuItem(android.R.id.paste)
+
+        verify(editText).paste(eq(0), eq(0), eq(false))
+    }
+
+    @Test
+    fun `GIVEN 5 chars previous text WHEN paste is selected THEN paste() should be called with 0,5`() {
+        val editText = spy(InlineAutocompleteEditText(testContext, attributes))
+        editText.setText("chars")
+        editText.selectAll()
+
+        editText.onTextContextMenuItem(android.R.id.paste)
+
+        verify(editText).paste(eq(0), eq(5), eq(false))
+    }
+
+    @Test
+    fun `WHEN paste() is called with new text THEN we will display the new text`() {
+        val editText = spy(InlineAutocompleteEditText(testContext, attributes))
+        (testContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).apply {
+            setPrimaryClip(ClipData.newPlainText("Test", "test"))
+        }
+
+        assertEquals("", editText.text.toString())
+
+        editText.paste(0, 0, false)
+
+        assertEquals("test", editText.text.toString())
+    }
+
+    fun `WHEN committing autocomplete THEN textChangedListener is invoked`() {
+        val et = InlineAutocompleteEditText(testContext, attributes)
+        et.setText("")
+
+        et.onAttachedToWindow()
+        et.autocompleteResult = AutocompleteResult(
+            text = "google.com",
+            source = "test-source",
+            totalItems = 100,
+        )
+        et.setText("g")
+        var callbackInvoked = false
+        et.setOnTextChangeListener { _, _ ->
+            callbackInvoked = true
+        }
+        et.setSelection(3)
+        assertTrue(callbackInvoked)
     }
 }

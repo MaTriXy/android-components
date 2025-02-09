@@ -4,10 +4,11 @@
 
 package mozilla.components.feature.sitepermissions.db
 
-import mozilla.components.feature.sitepermissions.SitePermissions
-import mozilla.components.feature.sitepermissions.SitePermissions.Status.ALLOWED
-import mozilla.components.feature.sitepermissions.SitePermissions.Status.BLOCKED
-import mozilla.components.feature.sitepermissions.SitePermissions.Status.NO_DECISION
+import mozilla.components.concept.engine.permission.SitePermissions
+import mozilla.components.concept.engine.permission.SitePermissions.AutoplayStatus
+import mozilla.components.concept.engine.permission.SitePermissions.Status.ALLOWED
+import mozilla.components.concept.engine.permission.SitePermissions.Status.BLOCKED
+import mozilla.components.concept.engine.permission.SitePermissions.Status.NO_DECISION
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -18,12 +19,16 @@ class SitePermissionEntityTest {
         val dbEntity = SitePermissionsEntity(
             origin = "mozilla.dev",
             localStorage = ALLOWED,
+            crossOriginStorageAccess = BLOCKED,
             location = BLOCKED,
             notification = NO_DECISION,
             microphone = NO_DECISION,
             camera = NO_DECISION,
             bluetooth = ALLOWED,
-            savedAt = 0
+            autoplayInaudible = AutoplayStatus.ALLOWED,
+            autoplayAudible = AutoplayStatus.BLOCKED,
+            mediaKeySystemAccess = NO_DECISION,
+            savedAt = 0,
         )
 
         val domainClass = dbEntity.toSitePermission()
@@ -31,11 +36,15 @@ class SitePermissionEntityTest {
         with(dbEntity) {
             assertEquals(origin, domainClass.origin)
             assertEquals(localStorage, domainClass.localStorage)
+            assertEquals(crossOriginStorageAccess, domainClass.crossOriginStorageAccess)
             assertEquals(location, domainClass.location)
             assertEquals(notification, domainClass.notification)
             assertEquals(microphone, domainClass.microphone)
             assertEquals(camera, domainClass.camera)
             assertEquals(bluetooth, domainClass.bluetooth)
+            assertEquals(autoplayAudible, domainClass.autoplayAudible)
+            assertEquals(autoplayInaudible, domainClass.autoplayInaudible)
+            assertEquals(mediaKeySystemAccess, domainClass.mediaKeySystemAccess)
             assertEquals(savedAt, domainClass.savedAt)
         }
     }
@@ -45,12 +54,16 @@ class SitePermissionEntityTest {
         val domainClass = SitePermissions(
             origin = "mozilla.dev",
             localStorage = ALLOWED,
+            crossOriginStorageAccess = BLOCKED,
             location = BLOCKED,
             notification = NO_DECISION,
             microphone = NO_DECISION,
             camera = NO_DECISION,
             bluetooth = ALLOWED,
-            savedAt = 0
+            autoplayInaudible = AutoplayStatus.ALLOWED,
+            autoplayAudible = AutoplayStatus.BLOCKED,
+            mediaKeySystemAccess = NO_DECISION,
+            savedAt = 0,
         )
 
         val dbEntity = domainClass.toSitePermissionsEntity()
@@ -58,11 +71,15 @@ class SitePermissionEntityTest {
         with(dbEntity) {
             assertEquals(origin, domainClass.origin)
             assertEquals(localStorage, domainClass.localStorage)
+            assertEquals(crossOriginStorageAccess, domainClass.crossOriginStorageAccess)
             assertEquals(location, domainClass.location)
             assertEquals(notification, domainClass.notification)
             assertEquals(microphone, domainClass.microphone)
             assertEquals(camera, domainClass.camera)
             assertEquals(bluetooth, domainClass.bluetooth)
+            assertEquals(autoplayAudible, domainClass.autoplayAudible)
+            assertEquals(autoplayInaudible, domainClass.autoplayInaudible)
+            assertEquals(mediaKeySystemAccess, domainClass.mediaKeySystemAccess)
             assertEquals(savedAt, domainClass.savedAt)
         }
     }

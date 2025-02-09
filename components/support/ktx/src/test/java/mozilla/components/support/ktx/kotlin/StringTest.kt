@@ -9,6 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -96,7 +97,6 @@ class StringTest {
 
     @Test
     fun `string to date conversion using multiple formats`() {
-
         assertEquals("2019-08-16T01:02".toDate("yyyy-MM-dd'T'HH:mm"), "2019-08-16T01:02".toDate())
 
         assertEquals("2019-08-16T01:02:03".toDate("yyyy-MM-dd'T'HH:mm"), "2019-08-16T01:02:03".toDate())
@@ -111,5 +111,180 @@ class StringTest {
         assertEquals("0a4d55a8d778e5022fab701977c5d840bbc486d0", "Hello World".sha1())
 
         assertEquals("8de545c123907e9f886ba2313560a0abef530594", "ßüöä@!§\$".sha1())
+    }
+
+    @Test
+    fun `Try Get Host From Url`() {
+        val urlTest = "http://www.example.com:1080/docs/resource1.html"
+        val new = urlTest.tryGetHostFromUrl()
+        assertEquals(new, "www.example.com")
+    }
+
+    @Test
+    fun `Try Get Host From Malformed Url`() {
+        val urlTest = "notarealurl"
+        val new = urlTest.tryGetHostFromUrl()
+        assertEquals(new, "notarealurl")
+    }
+
+    @Test
+    fun isSameOriginAs() {
+        // Host mismatch.
+        assertFalse("https://foo.bar".isSameOriginAs("https://foo.baz"))
+        // Scheme mismatch.
+        assertFalse("http://127.0.0.1".isSameOriginAs("https://127.0.0.1"))
+        // Port mismatch (implicit + explicit).
+        assertFalse("https://foo.bar:444".isSameOriginAs("https://foo.bar"))
+        // Port mismatch (explicit).
+        assertFalse("https://foo.bar:444".isSameOriginAs("https://foo.bar:555"))
+        // Port OK but scheme different.
+        assertFalse("https://foo.bar".isSameOriginAs("http://foo.bar:443"))
+        // Port OK (explicit) but scheme different.
+        assertFalse("https://foo.bar:443".isSameOriginAs("ftp://foo.bar:443"))
+
+        assertTrue("https://foo.bar".isSameOriginAs("https://foo.bar"))
+        assertTrue("https://foo.bar/bobo".isSameOriginAs("https://foo.bar/obob"))
+        assertTrue("https://foo.bar".isSameOriginAs("https://foo.bar:443"))
+        assertTrue("https://foo.bar:333".isSameOriginAs("https://foo.bar:333"))
+    }
+
+    @Test
+    fun isExtensionUrl() {
+        assertTrue("moz-extension://1232-abcd".isExtensionUrl())
+        assertFalse("mozilla.org".isExtensionUrl())
+        assertFalse("https://mozilla.org".isExtensionUrl())
+        assertFalse("http://mozilla.org".isExtensionUrl())
+    }
+
+    @Test
+    fun sanitizeURL() {
+        val expectedUrl = "http://mozilla.org"
+        assertEquals(expectedUrl, "\nhttp://mozilla.org\n".sanitizeURL())
+    }
+
+    @Test
+    fun isResourceUrl() {
+        assertTrue("resource://1232-abcd".isResourceUrl())
+        assertFalse("mozilla.org".isResourceUrl())
+        assertFalse("https://mozilla.org".isResourceUrl())
+        assertFalse("http://mozilla.org".isResourceUrl())
+    }
+
+    @Test
+    fun sanitizeFileName() {
+        var file = "/../../../../../../../../../../directory/file.......txt"
+        val fileName = "file.txt"
+
+        assertEquals(fileName, file.sanitizeFileName())
+
+        file = "/root/directory/file.txt"
+
+        assertEquals(fileName, file.sanitizeFileName())
+
+        assertEquals("file", "file".sanitizeFileName())
+
+        assertEquals("file", "file..".sanitizeFileName())
+
+        assertEquals("file", "file.".sanitizeFileName())
+
+        assertEquals("file", ".file".sanitizeFileName())
+
+        assertEquals("test.2020.12.01.txt", "test.2020.12.01.txt".sanitizeFileName())
+    }
+
+    @Test
+    fun `getDataUrlImageExtension returns a default extension if one cannot be extracted from the data url`() {
+        val base64Image = "data:;base64,testImage"
+
+        val result = base64Image.getDataUrlImageExtension()
+
+        assertEquals("jpg", result)
+    }
+
+    @Test
+    fun `getDataUrlImageExtension returns an extension based on the media type included in the the data url`() {
+        val base64Image = "data:image/gif;base64,testImage"
+
+        val result = base64Image.getDataUrlImageExtension()
+
+        assertEquals("gif", result)
+    }
+
+    @Test
+    fun `ifNullOrEmpty returns the same if this CharSequence is not null and not empty`() {
+        val randomString = "something"
+
+        assertSame(randomString, randomString.ifNullOrEmpty { "something else" })
+    }
+
+    @Test
+    fun `ifNullOrEmpty returns the invocation of the passed in argument if this CharSequence is null`() {
+        val nullString: String? = null
+        val validResult = "notNullString"
+
+        assertSame(validResult, nullString.ifNullOrEmpty { validResult })
+    }
+
+    @Test
+    fun `ifNullOrEmpty returns the invocation of the passed in argument if this CharSequence is empty`() {
+        val nullString = ""
+        val validResult = "notEmptyString"
+
+        assertSame(validResult, nullString.ifNullOrEmpty { validResult })
+    }
+
+    @Test
+    fun `getRepresentativeCharacter returns the correct representative character for the given urls`() {
+        assertEquals("M", "https://mozilla.org".getRepresentativeCharacter())
+        assertEquals("W", "http://wikipedia.org".getRepresentativeCharacter())
+        assertEquals("P", "http://plus.google.com".getRepresentativeCharacter())
+        assertEquals("E", "https://en.m.wikipedia.org/wiki/Main_Page".getRepresentativeCharacter())
+
+        // Stripping common prefixes
+        assertEquals("T", "http://www.theverge.com".getRepresentativeCharacter())
+        assertEquals("F", "https://m.facebook.com".getRepresentativeCharacter())
+        assertEquals("T", "https://mobile.twitter.com".getRepresentativeCharacter())
+
+        // Special urls
+        assertEquals("?", "file:///".getRepresentativeCharacter())
+        assertEquals("S", "file:///system/".getRepresentativeCharacter())
+        assertEquals("P", "ftp://people.mozilla.org/test".getRepresentativeCharacter())
+
+        // No values
+        assertEquals("?", "".getRepresentativeCharacter())
+
+        // Rubbish
+        assertEquals("Z", "zZz".getRepresentativeCharacter())
+        assertEquals("Ö", "ölkfdpou3rkjaslfdköasdfo8".getRepresentativeCharacter())
+        assertEquals("?", "_*+*'##".getRepresentativeCharacter())
+        assertEquals("ツ", "¯\\_(ツ)_/¯".getRepresentativeCharacter())
+        assertEquals("ಠ", "ಠ_ಠ Look of Disapproval".getRepresentativeCharacter())
+
+        // Non-ASCII
+        assertEquals("Ä", "http://www.ätzend.de".getRepresentativeCharacter())
+        assertEquals("名", "http://名がドメイン.com".getRepresentativeCharacter())
+        assertEquals("C", "http://√.com".getRepresentativeCharacter())
+        assertEquals("SS", "http://ß.de".getRepresentativeCharacter())
+        assertEquals("Ԛ", "http://ԛәлп.com/".getRepresentativeCharacter()) // cyrillic
+
+        // Punycode
+        assertEquals("X", "http://xn--tzend-fra.de".getRepresentativeCharacter()) // ätzend.de
+        assertEquals("X", "http://xn--V8jxj3d1dzdz08w.com".getRepresentativeCharacter()) // 名がドメイン.com
+
+        // Numbers
+        assertEquals("1", "https://www.1and1.com/".getRepresentativeCharacter())
+
+        // IP
+        assertEquals("1", "https://192.168.0.1".getRepresentativeCharacter())
+    }
+
+    @Test
+    fun `last4Digits returns a string with only last 4 digits `() {
+        assertEquals("8431", "371449635398431".last4Digits())
+        assertEquals("2345", "12345".last4Digits())
+        assertEquals("1234", "1234".last4Digits())
+        assertEquals("123", "123".last4Digits())
+        assertEquals("1", "1".last4Digits())
+        assertEquals("", "".last4Digits())
     }
 }

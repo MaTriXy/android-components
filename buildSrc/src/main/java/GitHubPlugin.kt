@@ -5,7 +5,6 @@
 import groovy.json.JsonSlurper
 import org.gradle.api.Plugin
 import org.gradle.api.Project
-import org.gradle.kotlin.dsl.task
 import java.util.Properties
 
 open class GitHubPlugin : Plugin<Project> {
@@ -15,15 +14,13 @@ open class GitHubPlugin : Plugin<Project> {
     companion object {
         private const val REPO_OWNER = "mozilla-mobile"
         private const val REPO_NAME = "android-components"
-        private const val BASE_BRANCH_NAME = "master"
+        private const val BASE_BRANCH_NAME = "main"
         private const val HEAD = "MickeyMoz"
         private const val TOKEN_FILE_PATH = ".github_token"
     }
 
     override fun apply(project: Project) {
-
-        project.task("openPR") {
-
+        project.tasks.register("openPR") {
             doLast {
                 init(project)
                 val title = project.property("title").toString()
@@ -38,8 +35,7 @@ open class GitHubPlugin : Plugin<Project> {
             }
         }
 
-        project.task("openIssue") {
-
+        project.tasks.register("openIssue") {
             doLast {
                 init(project)
                 val title = project.property("title").toString()
@@ -59,14 +55,16 @@ open class GitHubPlugin : Plugin<Project> {
         baseBranch: String,
         owner: String,
         repoName: String,
-        user: String
+        user: String,
     ) {
-        val bodyJson = ("{\n" +
-            "  \"title\": \" $title\",\n" +
-            "  \"body\": \"$body\",\n" +
-            "  \"head\": \"$user:$branchName\",\n" +
-            "  \"base\": \"$baseBranch\"\n" +
-            "}")
+        val bodyJson = (
+            "{\n" +
+                "  \"title\": \" $title\",\n" +
+                "  \"body\": \"$body\",\n" +
+                "  \"head\": \"$user:$branchName\",\n" +
+                "  \"base\": \"$baseBranch\"\n" +
+                "}"
+            )
 
         val result = client.createPullRequest(owner, repoName, bodyJson)
 
@@ -84,10 +82,12 @@ open class GitHubPlugin : Plugin<Project> {
 
     @Suppress("TooGenericExceptionThrown")
     private fun createIssue(title: String, body: String, owner: String, repoName: String) {
-        val bodyJson = ("{\n" +
-            "  \"title\": \"$title\",\n" +
-            "  \"body\": \"$body\"" +
-            "}")
+        val bodyJson = (
+            "{\n" +
+                "  \"title\": \"$title\",\n" +
+                "  \"body\": \"$body\"" +
+                "}"
+            )
 
         val result = client.createIssue(owner, repoName, bodyJson)
         val successFul = result.first

@@ -7,12 +7,13 @@ package mozilla.components.feature.qr
 import android.Manifest.permission.CAMERA
 import android.content.Context
 import androidx.annotation.MainThread
+import androidx.annotation.StringRes
 import androidx.annotation.VisibleForTesting
 import androidx.fragment.app.FragmentManager
-import mozilla.components.support.base.feature.BackHandler
 import mozilla.components.support.base.feature.LifecycleAwareFeature
 import mozilla.components.support.base.feature.OnNeedToRequestPermissions
 import mozilla.components.support.base.feature.PermissionsFeature
+import mozilla.components.support.base.feature.UserInteractionHandler
 import mozilla.components.support.ktx.android.content.isPermissionGranted
 
 typealias OnScanResult = (result: String) -> Unit
@@ -29,32 +30,44 @@ typealias OnScanResult = (result: String) -> Unit
  * need to be requested before a QR scan can be performed. Once the request
  * is completed, [onPermissionsResult] needs to be invoked. This feature
  * will request [android.Manifest.permission.CAMERA].
+ * @property scanMessage (Optional) String resource for an optional message
+ * to be laid out below the QR scan viewfinder
  */
 class QrFeature(
     private val context: Context,
     private val fragmentManager: FragmentManager,
     private val onScanResult: OnScanResult = { },
-    override val onNeedToRequestPermissions: OnNeedToRequestPermissions = { }
-) : LifecycleAwareFeature, BackHandler, PermissionsFeature {
+    override val onNeedToRequestPermissions: OnNeedToRequestPermissions = { },
+    @StringRes
+    private var scanMessage: Int? = null,
+) : LifecycleAwareFeature, UserInteractionHandler, PermissionsFeature {
     private var containerViewId: Int = 0
+
+    private val qrFragment
+        get() = fragmentManager.findFragmentByTag(QR_FRAGMENT_TAG) as? QrFragment
+
+    @Suppress("MemberVisibilityCanBePrivate")
+    val isScanInProgress
+        get() = qrFragment != null
 
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     internal val scanCompleteListener: QrFragment.OnScanCompleteListener = object : QrFragment.OnScanCompleteListener {
         @MainThread
         override fun onScanComplete(result: String) {
+            setScanCompleteListener(null)
             removeQrFragment()
             onScanResult(result)
         }
     }
 
     override fun start() {
-        (fragmentManager.findFragmentByTag(QR_FRAGMENT_TAG) as? QrFragment)?.let {
-            it.scanCompleteListener = scanCompleteListener
-        }
+        setScanCompleteListener(scanCompleteListener)
     }
 
     override fun stop() {
-        // Nothing to do here for now.
+        // Prevent an already in progress qr decode operation informing us later of a result
+        // and so triggering an IllegalStateException when trying to remove the qr fragment.
+        setScanCompleteListener(null)
     }
 
     override fun onBackPressed(): Boolean {
@@ -74,9 +87,12 @@ class QrFeature(
         this.containerViewId = containerViewId
 
         return if (context.isPermissionGranted(CAMERA)) {
-            fragmentManager.beginTransaction()
-                .add(containerViewId, QrFragment.newInstance(scanCompleteListener), QR_FRAGMENT_TAG)
-                .commit()
+            when (isScanInProgress) {
+                true -> qrFragment?.startScanning()
+                false -> fragmentManager.beginTransaction()
+                    .add(containerViewId, QrFragment.newInstance(scanCompleteListener, scanMessage), QR_FRAGMENT_TAG)
+                    .commit()
+            }
             true
         } else {
             onNeedToRequestPermissions(arrayOf(CAMERA))
@@ -91,6 +107,12 @@ class QrFeature(
     override fun onPermissionsResult(permissions: Array<String>, grantResults: IntArray) {
         if (context.isPermissionGranted(CAMERA)) {
             scan(containerViewId)
+        } else {
+            // It is possible that we started scanning then the user is will update
+            // the camera permission in Android settings.
+            // The client app is expected to ask again for the camera permission when the app is resumed
+            // and this request can be denied by the user so we should interrupt the in-progress scanning.
+            removeQrFragment()
         }
     }
 
@@ -100,13 +122,21 @@ class QrFeature(
      * @return true if the fragment was removed, otherwise false.
      */
     internal fun removeQrFragment(): Boolean {
-        with(fragmentManager) {
-            findFragmentByTag(QR_FRAGMENT_TAG)?.let {
-                beginTransaction().remove(it).commit()
-                return true
-            }
+        qrFragment?.let {
+            fragmentManager.beginTransaction().remove(it).commit()
+            return true
         }
         return false
+    }
+
+    /**
+     * Set a callback for when a qr code has been successfully scanned and decoded.
+     */
+    @VisibleForTesting
+    internal fun setScanCompleteListener(listener: QrFragment.OnScanCompleteListener?) {
+        (fragmentManager.findFragmentByTag(QR_FRAGMENT_TAG) as? QrFragment)?.let {
+            it.scanCompleteListener = listener
+        }
     }
 
     companion object {

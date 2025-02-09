@@ -27,8 +27,8 @@ class TrackingProtectionActionTest {
 
         store = BrowserStore(
             initialState = BrowserState(
-                tabs = listOf(tab)
-            )
+                tabs = listOf(tab),
+            ),
         )
     }
 
@@ -58,6 +58,47 @@ class TrackingProtectionActionTest {
             .joinBlocking()
 
         assertTrue(trackingProtectionState().enabled)
+    }
+
+    @Test
+    fun `ToggleExclusionListAction - Updates enabled flag of TrackingProtectionState`() {
+        assertFalse(trackingProtectionState().ignoredOnTrackingProtection)
+
+        store.dispatch(
+            TrackingProtectionAction.ToggleExclusionListAction(
+                tabId = tab.id,
+                excluded = true,
+            ),
+        ).joinBlocking()
+
+        assertTrue(trackingProtectionState().ignoredOnTrackingProtection)
+
+        store.dispatch(
+            TrackingProtectionAction.ToggleExclusionListAction(
+                tabId = tab.id,
+                excluded = true,
+            ),
+        ).joinBlocking()
+
+        assertTrue(trackingProtectionState().ignoredOnTrackingProtection)
+
+        store.dispatch(
+            TrackingProtectionAction.ToggleExclusionListAction(
+                tabId = tab.id,
+                excluded = false,
+            ),
+        ).joinBlocking()
+
+        assertFalse(trackingProtectionState().ignoredOnTrackingProtection)
+
+        store.dispatch(
+            TrackingProtectionAction.ToggleExclusionListAction(
+                tabId = tab.id,
+                excluded = true,
+            ),
+        ).joinBlocking()
+
+        assertTrue(trackingProtectionState().ignoredOnTrackingProtection)
     }
 
     @Test

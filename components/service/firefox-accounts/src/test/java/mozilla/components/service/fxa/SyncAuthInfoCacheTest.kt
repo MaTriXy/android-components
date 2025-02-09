@@ -8,9 +8,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import mozilla.components.concept.sync.SyncAuthInfo
 import mozilla.components.support.test.robolectric.testContext
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -24,10 +24,10 @@ class SyncAuthInfoCacheTest {
         val authInfo = SyncAuthInfo(
             kid = "testKid",
             fxaAccessToken = "fxaAccess",
-            // expires in the future
-            fxaAccessTokenExpiresAt = System.currentTimeMillis() + 60 * 1000L,
+            // expires in the future (in seconds)
+            fxaAccessTokenExpiresAt = (System.currentTimeMillis() / 1000L) + 60,
             syncKey = "long secret key",
-            tokenServerUrl = "http://www.token.server/url"
+            tokenServerUrl = "http://www.token.server/url",
         )
 
         cache.setToCache(authInfo)
@@ -36,8 +36,8 @@ class SyncAuthInfoCacheTest {
         assertFalse(cache.expired())
 
         val authInfo2 = authInfo.copy(
-            // expires in the past
-            fxaAccessTokenExpiresAt = System.currentTimeMillis() - 60 * 1000L
+            // expires in the past (in seconds)
+            fxaAccessTokenExpiresAt = (System.currentTimeMillis() / 1000L) - 60,
         )
 
         cache.setToCache(authInfo2)

@@ -4,11 +4,13 @@
 
 package mozilla.components.lib.fetch.httpurlconnection
 
+import mozilla.components.concept.fetch.BuildConfig
 import mozilla.components.concept.fetch.Client
 import mozilla.components.concept.fetch.Headers
 import mozilla.components.concept.fetch.MutableHeaders
 import mozilla.components.concept.fetch.Request
 import mozilla.components.concept.fetch.Response
+import mozilla.components.concept.fetch.isDataUri
 import mozilla.components.lib.fetch.httpurlconnection.HttpURLConnectionClient.Companion.getOrCreateCookieManager
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -23,12 +25,24 @@ import java.util.zip.GZIPInputStream
  * [HttpURLConnection] implementation of [Client].
  */
 class HttpURLConnectionClient : Client() {
+    private val defaultHeaders: Headers = MutableHeaders(
+        "User-Agent" to "MozacFetch/${BuildConfig.LIBRARY_VERSION}",
+        "Accept-Encoding" to "gzip",
+    )
+
     @Throws(IOException::class)
     override fun fetch(request: Request): Response {
+        if (request.private) {
+            throw IllegalArgumentException("Client doesn't support private request")
+        }
+        if (request.isDataUri()) {
+            return fetchDataUri(request)
+        }
+
         val connection = (URL(request.url).openConnection() as HttpURLConnection)
 
         connection.setupWith(request)
-        connection.addHeadersFrom(request, defaultHeaders = defaultHeaders)
+        connection.addHeadersFrom(request, defaultHeaders)
         connection.addBodyFrom(request)
 
         return connection.toResponse()
@@ -107,7 +121,7 @@ private fun HttpURLConnection.toResponse(): Response {
         url.toString(),
         responseCode,
         headers,
-        createBody(this, headers["Content-Type"])
+        createBody(this, headers["Content-Type"]),
     )
 }
 
@@ -141,7 +155,7 @@ private fun createBody(connection: HttpURLConnection, contentType: String?): Res
             connection,
             connection.inputStream,
             gzipped,
-            contentType
+            contentType,
         )
     }
 
@@ -150,7 +164,7 @@ private fun createBody(connection: HttpURLConnection, contentType: String?): Res
             connection,
             connection.errorStream,
             gzipped,
-            contentType
+            contentType,
         )
     }
 
@@ -163,7 +177,7 @@ private class HttpUrlConnectionBody(
     private val connection: HttpURLConnection,
     stream: InputStream,
     gzipped: Boolean,
-    contentType: String?
+    contentType: String?,
 ) : Response.Body(if (gzipped) GZIPInputStream(stream) else stream, contentType) {
     override fun close() {
         super.close()

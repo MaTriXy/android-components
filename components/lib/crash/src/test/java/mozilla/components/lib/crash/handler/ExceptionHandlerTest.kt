@@ -5,57 +5,54 @@
 package mozilla.components.lib.crash.handler
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import mozilla.components.concept.base.crash.Breadcrumb
 import mozilla.components.lib.crash.Crash
 import mozilla.components.lib.crash.CrashReporter
 import mozilla.components.lib.crash.service.CrashReporterService
 import mozilla.components.support.test.any
+import mozilla.components.support.test.eq
 import mozilla.components.support.test.mock
 import mozilla.components.support.test.robolectric.testContext
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.fail
+import mozilla.components.support.test.rule.MainCoroutineRule
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mockito.never
 import org.mockito.Mockito.spy
 import org.mockito.Mockito.verify
 
+@ExperimentalCoroutinesApi
 @RunWith(AndroidJUnit4::class)
 class ExceptionHandlerTest {
 
+    @get:Rule
+    val coroutinesTestRule = MainCoroutineRule()
+    private val scope = coroutinesTestRule.scope
+
     @Test
     fun `ExceptionHandler forwards crashes to CrashReporter`() {
-        var capturedCrash: Crash? = null
-        val service = object : CrashReporterService {
-            override fun report(crash: Crash.UncaughtExceptionCrash) {
-                capturedCrash = crash
-            }
+        val service: CrashReporterService = mock()
 
-            override fun report(crash: Crash.NativeCodeCrash) {
-                fail("Did not expect native crash")
-            }
-        }
-
-        val crashReporter = spy(CrashReporter(
-            shouldPrompt = CrashReporter.Prompt.NEVER,
-            services = listOf(service)
-        ))
+        val crashReporter = spy(
+            CrashReporter(
+                context = testContext,
+                shouldPrompt = CrashReporter.Prompt.NEVER,
+                services = listOf(service),
+                scope = scope,
+            ),
+        )
 
         val handler = ExceptionHandler(
             testContext,
-            crashReporter)
+            crashReporter,
+        )
 
         val exception = RuntimeException("Hello World")
         handler.uncaughtException(Thread.currentThread(), exception)
 
-        verify(crashReporter).onCrash(any(), any())
-
-        assertNotNull(capturedCrash)
-
-        val crash = capturedCrash as? Crash.UncaughtExceptionCrash
-            ?: throw AssertionError("Expected UncaughtExceptionCrash instance")
-
-        assertEquals(exception, crash.throwable)
+        verify(crashReporter).onCrash(eq(testContext), any())
+        verify(crashReporter).sendCrashReport(eq(testContext), any())
     }
 
     @Test
@@ -63,20 +60,30 @@ class ExceptionHandlerTest {
         val defaultExceptionHandler: Thread.UncaughtExceptionHandler = mock()
 
         val crashReporter = CrashReporter(
-                shouldPrompt = CrashReporter.Prompt.NEVER,
-                services = listOf(object : CrashReporterService {
-                    override fun report(crash: Crash.UncaughtExceptionCrash) {
-                    }
+            context = testContext,
+            shouldPrompt = CrashReporter.Prompt.NEVER,
+            services = listOf(
+                object : CrashReporterService {
+                    override val id: String = "test"
 
-                    override fun report(crash: Crash.NativeCodeCrash) {
-                    }
-                })
+                    override val name: String = "TestReporter"
+
+                    override fun createCrashReportUrl(identifier: String): String? = null
+
+                    override fun report(crash: Crash.UncaughtExceptionCrash): String? = null
+
+                    override fun report(crash: Crash.NativeCodeCrash): String? = null
+
+                    override fun report(throwable: Throwable, breadcrumbs: ArrayList<Breadcrumb>): String? = null
+                },
+            ),
+            scope = scope,
         ).install(testContext)
 
         val handler = ExceptionHandler(
             testContext,
             crashReporter,
-            defaultExceptionHandler
+            defaultExceptionHandler,
         )
 
         verify(defaultExceptionHandler, never()).uncaughtException(any(), any())

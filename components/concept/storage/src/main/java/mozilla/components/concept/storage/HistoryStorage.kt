@@ -7,14 +7,13 @@ package mozilla.components.concept.storage
 /**
  * An interface which defines read/write methods for history data.
  */
-@SuppressWarnings("TooManyFunctions")
 interface HistoryStorage : Storage {
     /**
      * Records a visit to a page.
      * @param uri of the page which was visited.
-     * @param visitType type of the visit, see [VisitType].
+     * @param visit Information about the visit; see [PageVisit].
      */
-    suspend fun recordVisit(uri: String, visitType: VisitType)
+    suspend fun recordVisit(uri: String, visit: PageVisit)
 
     /**
      * Records an observation about a page.
@@ -22,6 +21,11 @@ interface HistoryStorage : Storage {
      * @param observation a [PageObservation] which encapsulates meta data observed about the page.
      */
     suspend fun recordObservation(uri: String, observation: PageObservation)
+
+    /**
+     * @return True if provided [uri] can be added to the storage layer.
+     */
+    fun canAddUri(uri: String): Boolean
 
     /**
      * Maps a list of page URIs to a list of booleans indicating if each URI was visited.
@@ -47,7 +51,7 @@ interface HistoryStorage : Storage {
     suspend fun getDetailedVisits(
         start: Long,
         end: Long = Long.MAX_VALUE,
-        excludeTypes: List<VisitType> = listOf()
+        excludeTypes: List<VisitType> = listOf(),
     ): List<VisitInfo>
 
     /**
@@ -65,8 +69,22 @@ interface HistoryStorage : Storage {
     suspend fun getVisitsPaginated(
         offset: Long,
         count: Long,
-        excludeTypes: List<VisitType> = listOf()
+        excludeTypes: List<VisitType> = listOf(),
     ): List<VisitInfo>
+
+    /**
+     * Returns a list of the top frecent site infos limited by the given number of items and
+     * frecency threshold sorted by most to least frecent.
+     *
+     * @param numItems the number of top frecent sites to return in the list.
+     * @param frecencyThreshold frecency threshold option for filtering visited sites based on
+     * their frecency score.
+     * @return a list of the [TopFrecentSiteInfo], most frecent first.
+     */
+    suspend fun getTopFrecentSites(
+        numItems: Int,
+        frecencyThreshold: FrecencyThresholdOption,
+    ): List<TopFrecentSiteInfo>
 
     /**
      * Retrieves suggestions matching the [query].
@@ -119,7 +137,61 @@ interface HistoryStorage : Storage {
     suspend fun prune()
 }
 
-data class PageObservation(val title: String?)
+/**
+ * Information to record about a visit.
+ *
+ * @property visitType The transition type for this visit. See [VisitType].
+ * @property redirectSource Optional; if this visit is redirecting to another page,
+ *  what kind of redirect is it? See [RedirectSource] for the options.
+ */
+data class PageVisit(
+    val visitType: VisitType,
+    val redirectSource: RedirectSource? = null,
+)
+
+/**
+ * A redirect source describes how a page redirected to another page.
+ */
+enum class RedirectSource {
+    // The page temporarily redirected to another page.
+    TEMPORARY,
+
+    // The page permanently redirected to another page.
+    PERMANENT,
+}
+
+/**
+ * Metadata information observed in a page to record.
+ *
+ * @property title The title of the page.
+ * @property previewImageUrl The preview image of the page (e.g. the hero image), if available.
+ */
+data class PageObservation(
+    val title: String? = null,
+    val previewImageUrl: String? = null,
+)
+
+/**
+ * Information about a top frecent site. This represents a most frequently visited site.
+ *
+ * @property url The URL of the page that was visited.
+ * @property title The title of the page that was visited, if known.
+ */
+data class TopFrecentSiteInfo(
+    val url: String,
+    val title: String?,
+)
+
+/**
+ * Frecency threshold options for fetching top frecent sites.
+ */
+enum class FrecencyThresholdOption {
+    /** Returns all visited pages. */
+    NONE,
+
+    /** Skip visited pages that were only visited once. */
+    SKIP_ONE_TIME_PAGES,
+}
 
 /**
  * Information about a history visit.
@@ -128,12 +200,16 @@ data class PageObservation(val title: String?)
  * @property title The title of the page that was visited, if known.
  * @property visitTime The time the page was visited in integer milliseconds since the unix epoch.
  * @property visitType What the transition type of the visit is, expressed as [VisitType].
+ * @property previewImageUrl The preview image of the page (e.g. the hero image), if available.
+ * @property isRemote Distinguishes visits made on the device and those that come from Sync.
  */
 data class VisitInfo(
     val url: String,
     val title: String?,
     val visitTime: Long,
-    val visitType: VisitType
+    val visitType: VisitType,
+    val previewImageUrl: String?,
+    var isRemote: Boolean,
 )
 
 /**
@@ -143,8 +219,10 @@ data class VisitInfo(
 enum class VisitType(val type: Int) {
     // Internal visit type used for meta data updates. Doesn't represent an actual page visit.
     NOT_A_VISIT(-1),
+
     // User followed a link.
     LINK(1),
+
     // User typed a URL or selected it from the UI (autocomplete results, etc).
     TYPED(2),
     BOOKMARK(3),
@@ -153,7 +231,7 @@ enum class VisitType(val type: Int) {
     REDIRECT_TEMPORARY(6),
     DOWNLOAD(7),
     FRAMED_LINK(8),
-    RELOAD(9)
+    RELOAD(9),
 }
 
 /**
@@ -169,7 +247,7 @@ data class SearchResult(
     val id: String,
     val url: String,
     val score: Int,
-    val title: String? = null
+    val title: String? = null,
 )
 
 /**
@@ -185,5 +263,5 @@ data class HistoryAutocompleteResult(
     val text: String,
     val url: String,
     val source: String,
-    val totalItems: Int
+    val totalItems: Int,
 )

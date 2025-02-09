@@ -13,11 +13,12 @@ import android.os.Parcelable
 import androidx.annotation.ColorInt
 import androidx.browser.customtabs.CustomTabsIntent.EXTRA_ACTION_BUTTON_BUNDLE
 import androidx.browser.customtabs.CustomTabsIntent.EXTRA_CLOSE_BUTTON_ICON
-import androidx.browser.customtabs.CustomTabsIntent.EXTRA_DEFAULT_SHARE_MENU_ITEM
 import androidx.browser.customtabs.CustomTabsIntent.EXTRA_ENABLE_URLBAR_HIDING
 import androidx.browser.customtabs.CustomTabsIntent.EXTRA_EXIT_ANIMATION_BUNDLE
 import androidx.browser.customtabs.CustomTabsIntent.EXTRA_MENU_ITEMS
+import androidx.browser.customtabs.CustomTabsIntent.EXTRA_NAVIGATION_BAR_COLOR
 import androidx.browser.customtabs.CustomTabsIntent.EXTRA_SESSION
+import androidx.browser.customtabs.CustomTabsIntent.EXTRA_SHARE_STATE
 import androidx.browser.customtabs.CustomTabsIntent.EXTRA_TINT_ACTION_BUTTON
 import androidx.browser.customtabs.CustomTabsIntent.EXTRA_TITLE_VISIBILITY_STATE
 import androidx.browser.customtabs.CustomTabsIntent.EXTRA_TOOLBAR_COLOR
@@ -27,14 +28,16 @@ import androidx.browser.customtabs.CustomTabsIntent.KEY_ID
 import androidx.browser.customtabs.CustomTabsIntent.KEY_MENU_ITEM_TITLE
 import androidx.browser.customtabs.CustomTabsIntent.KEY_PENDING_INTENT
 import androidx.browser.customtabs.CustomTabsIntent.NO_TITLE
+import androidx.browser.customtabs.CustomTabsIntent.SHARE_STATE_DEFAULT
+import androidx.browser.customtabs.CustomTabsIntent.SHARE_STATE_ON
 import androidx.browser.customtabs.CustomTabsIntent.SHOW_PAGE_TITLE
 import androidx.browser.customtabs.CustomTabsIntent.TOOLBAR_ACTION_BUTTON_ID
 import androidx.browser.customtabs.CustomTabsSessionToken
 import androidx.browser.customtabs.TrustedWebUtils.EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY
 import mozilla.components.browser.state.state.CustomTabActionButtonConfig
 import mozilla.components.browser.state.state.CustomTabConfig
-import mozilla.components.browser.state.state.CustomTabConfig.Companion.EXTRA_NAVIGATION_BAR_COLOR
 import mozilla.components.browser.state.state.CustomTabMenuItem
+import mozilla.components.browser.state.state.ExternalAppType
 import mozilla.components.support.utils.SafeIntent
 import mozilla.components.support.utils.toSafeBundle
 import mozilla.components.support.utils.toSafeIntent
@@ -82,7 +85,7 @@ fun isTrustedWebActivityIntent(safeIntent: SafeIntent) = isCustomTabIntent(safeI
  */
 fun createCustomTabConfigFromIntent(
     intent: Intent,
-    resources: Resources?
+    resources: Resources?,
 ): CustomTabConfig {
     val safeIntent = intent.toSafeIntent()
 
@@ -92,7 +95,7 @@ fun createCustomTabConfigFromIntent(
         closeButtonIcon = getCloseButtonIcon(safeIntent, resources),
         enableUrlbarHiding = safeIntent.getBooleanExtra(EXTRA_ENABLE_URLBAR_HIDING, false),
         actionButtonConfig = getActionButtonConfig(safeIntent),
-        showShareMenuItem = safeIntent.getBooleanExtra(EXTRA_DEFAULT_SHARE_MENU_ITEM, false),
+        showShareMenuItem = (safeIntent.getIntExtra(EXTRA_SHARE_STATE, SHARE_STATE_DEFAULT) == SHARE_STATE_ON),
         menuItems = getMenuItems(safeIntent),
         exitAnimations = safeIntent.getBundleExtra(EXTRA_EXIT_ANIMATION_BUNDLE)?.unsafe,
         titleVisible = safeIntent.getIntExtra(EXTRA_TITLE_VISIBILITY_STATE, NO_TITLE) == SHOW_PAGE_TITLE,
@@ -101,7 +104,8 @@ fun createCustomTabConfigFromIntent(
             CustomTabsSessionToken.getSessionTokenFromIntent(intent)
         } else {
             null
-        }
+        },
+        externalAppType = ExternalAppType.CUSTOM_TAB,
     )
 }
 
@@ -134,7 +138,7 @@ private fun getActionButtonConfig(intent: SafeIntent): CustomTabActionButtonConf
             description = description,
             icon = icon,
             pendingIntent = pendingIntent,
-            tint = tint
+            tint = tint,
         )
     } else {
         null
@@ -151,7 +155,7 @@ private fun getMenuItems(intent: SafeIntent): List<CustomTabMenuItem> =
             if (name != null && pendingIntent != null) {
                 CustomTabMenuItem(
                     name = name,
-                    pendingIntent = pendingIntent
+                    pendingIntent = pendingIntent,
                 )
             } else {
                 null

@@ -8,15 +8,15 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import androidx.core.os.LocaleListCompat as LocaleList
 import org.mozilla.geckoview.GeckoRuntime
+import androidx.core.os.LocaleListCompat as LocaleList
 
 /**
  * Class to set the locales setting for geckoview, updating from the locale of the device.
  */
 class LocaleSettingUpdater(
     private val context: Context,
-    private val runtime: GeckoRuntime
+    private val runtime: GeckoRuntime,
 ) : SettingUpdater<Array<String>>() {
 
     override var value: Array<String> = findValue()
@@ -44,7 +44,7 @@ class LocaleSettingUpdater(
     override fun findValue(): Array<String> {
         val localeList = LocaleList.getAdjustedDefault()
         return arrayOfNulls<Unit>(localeList.size())
-            .mapIndexedNotNull { i, _ -> localeList.get(i).toLanguageTag() }
+            .mapIndexedNotNull { i, _ -> localeList.get(i)?.toLanguageTag() }
             .toTypedArray()
     }
 }

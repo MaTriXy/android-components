@@ -2,12 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-@file:Suppress("TooManyFunctions")
-
 package mozilla.components.concept.engine.manifest
 
 import android.graphics.Color
 import androidx.annotation.ColorInt
+import mozilla.components.concept.engine.manifest.parser.ShareTargetParser
+import mozilla.components.concept.engine.manifest.parser.parseIcons
+import mozilla.components.concept.engine.manifest.parser.serializeEnumName
+import mozilla.components.concept.engine.manifest.parser.serializeIcons
 import mozilla.components.support.ktx.android.org.json.asSequence
 import mozilla.components.support.ktx.android.org.json.tryGetString
 import org.json.JSONArray
@@ -40,6 +42,16 @@ class WebAppManifestParser {
     /**
      * Parses the provided JSON and returns a [WebAppManifest] (wrapped in [Result.Success] if parsing was successful.
      * Otherwise [Result.Failure].
+     *
+     * Gecko performs some initial parsing on the Web App Manifest, so the [JSONObject] we work with
+     * does not match what was originally provided by the website. Gecko:
+     * - Changes relative URLs to be absolute
+     * - Changes some space-separated strings into arrays (purpose, sizes)
+     * - Changes colors to follow Android format (#AARRGGBB)
+     * - Removes invalid enum values (ie display: halfscreen)
+     * - Ensures display, dir, start_url, and scope always have a value
+     * - Trims most strings (name, short_name, ...)
+     * See https://searchfox.org/mozilla-central/source/dom/manifest/ManifestProcessor.jsm
      */
     fun parse(json: JSONObject): Result {
         return try {
@@ -47,22 +59,25 @@ class WebAppManifestParser {
             val name = json.tryGetString("name") ?: shortName
                 ?: return Result.Failure(JSONException("Missing manifest name"))
 
-            Result.Success(WebAppManifest(
-                name = name,
-                shortName = shortName,
-                startUrl = json.getString("start_url"),
-                display = parseDisplayMode(json),
-                backgroundColor = parseColor(json.tryGetString("background_color")),
-                description = json.tryGetString("description"),
-                icons = parseIcons(json),
-                scope = json.tryGetString("scope"),
-                themeColor = parseColor(json.tryGetString("theme_color")),
-                dir = parseTextDirection(json),
-                lang = json.tryGetString("lang"),
-                orientation = parseOrientation(json),
-                relatedApplications = parseRelatedApplications(json),
-                preferRelatedApplications = json.optBoolean("prefer_related_applications", false)
-            ))
+            Result.Success(
+                WebAppManifest(
+                    name = name,
+                    shortName = shortName,
+                    startUrl = json.getString("start_url"),
+                    display = parseDisplayMode(json),
+                    backgroundColor = parseColor(json.tryGetString("background_color")),
+                    description = json.tryGetString("description"),
+                    icons = parseIcons(json),
+                    scope = json.tryGetString("scope"),
+                    themeColor = parseColor(json.tryGetString("theme_color")),
+                    dir = parseTextDirection(json),
+                    lang = json.tryGetString("lang"),
+                    orientation = parseOrientation(json),
+                    relatedApplications = parseRelatedApplications(json),
+                    preferRelatedApplications = json.optBoolean("prefer_related_applications", false),
+                    shareTarget = ShareTargetParser.parse(json.optJSONObject("share_target")),
+                ),
+            )
         } catch (e: JSONException) {
             Result.Failure(e)
         }
@@ -94,6 +109,7 @@ class WebAppManifestParser {
         putOpt("orientation", serializeEnumName(manifest.orientation.name))
         put("related_applications", serializeRelatedApplications(manifest.relatedApplications))
         put("prefer_related_applications", manifest.preferRelatedApplications)
+        putOpt("share_target", ShareTargetParser.serialize(manifest.shareTarget))
     }
 }
 
@@ -168,7 +184,7 @@ private fun parseRelatedApplication(app: JSONObject): WebAppManifest.ExternalApp
             url = url,
             id = id,
             minVersion = app.tryGetString("min_version"),
-            fingerprints = parseFingerprints(app)
+            fingerprints = parseFingerprints(app),
         )
     } else {
         null
@@ -183,7 +199,7 @@ private fun parseFingerprints(app: JSONObject): List<WebAppManifest.ExternalAppl
         .map {
             WebAppManifest.ExternalApplicationResource.Fingerprint(
                 type = it.getString("type"),
-                value = it.getString("value")
+                value = it.getString("value"),
             )
         }
         .toList()
@@ -195,7 +211,7 @@ private fun serializeColor(color: Int?): String? = color?.let {
 }
 
 private fun serializeRelatedApplications(
-    relatedApplications: List<WebAppManifest.ExternalApplicationResource>
+    relatedApplications: List<WebAppManifest.ExternalApplicationResource>,
 ): JSONArray {
     val list = relatedApplications.map { app ->
         JSONObject().apply {
@@ -210,7 +226,7 @@ private fun serializeRelatedApplications(
 }
 
 private fun serializeFingerprints(
-    fingerprints: List<WebAppManifest.ExternalApplicationResource.Fingerprint>
+    fingerprints: List<WebAppManifest.ExternalApplicationResource.Fingerprint>,
 ): JSONArray {
     val list = fingerprints.map {
         JSONObject().apply {

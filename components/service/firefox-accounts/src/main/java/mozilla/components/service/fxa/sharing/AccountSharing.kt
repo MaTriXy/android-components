@@ -4,11 +4,13 @@
 
 package mozilla.components.service.fxa.sharing
 
+import android.annotation.SuppressLint
 import android.annotation.TargetApi
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import mozilla.components.concept.sync.MigratingAccountInfo
 import mozilla.components.support.ktx.kotlin.toHexString
 import mozilla.components.support.ktx.kotlin.toSha256Digest
 
@@ -18,16 +20,7 @@ import mozilla.components.support.ktx.kotlin.toSha256Digest
 data class ShareableAccount(
     val email: String,
     val sourcePackage: String,
-    val authInfo: ShareableAuthInfo
-)
-
-/**
- * Data structure describing FxA and Sync credentials necessary to share an FxA account.
- */
-data class ShareableAuthInfo(
-    val sessionToken: String,
-    val kSync: String,
-    val kXCS: String
+    val authInfo: MigratingAccountInfo,
 )
 
 /**
@@ -35,6 +28,29 @@ data class ShareableAuthInfo(
  * Once an instance of [ShareableAccount] is obtained, it may be used with
  * [FxaAccountManager.migrateAccountAsync] directly,
  * or with [FirefoxAccount.migrateFromSessionTokenAsync] via [ShareableAccount.authInfo].
+ *
+ * Applications can register themselves as content providers for 'com.app.packagename.fxa.auth' authority,
+ * and provide account information to verified requesters.
+ *
+ * This singleton allows querying known fxa.auth providers. Before querying, their identity is verified.
+ *
+ * In both cases (querying for state, providing state) verification happens by comparing package signatures of
+ * the other side against a hardcoded list of packages and their legitimate signatures.
+ * This means that both sides must be aware of each other (e.g. which packages are able to query for,
+ * and provide account state).
+ *
+ * The ContentProvider data exchange protocol for the .fxa.auth providers is as follows:
+ * - application (let's assume its package name is org.mozilla.app) registers itself as an authority
+ * for content://org.mozilla.app.fxa.auth
+ * - a query that provides account state is: content://org.mozilla.app.fxa.auth/state
+ * - a single "row" is expected in a response, with following "columns":
+ * -- email, sessionToken, kSync, kXSCS
+ * -- if email is null, there is no authenticated account
+ * -- otherwise, all columns must be non-null
+ *
+ * [AccountSharing] only implements the querying side. Fennec (Firefox for Android before the Fenix rewrite)
+ * implemented the provider side, allowing for seamless account sharing between Fennec and Fenix if
+ * they were installed alongside each other.
  */
 object AccountSharing {
     internal const val KEY_EMAIL = "email"
@@ -56,7 +72,7 @@ object AccountSharing {
         // Fennec Beta
         "org.mozilla.firefox_beta" to "a78b62a5165b4494b2fead9e76a280d22d937fee6251aece599446b2ea319b04",
         // Fennec Nightly
-        "org.mozilla.fennec_aurora" to "bc0488838d06f4ca6bf32386daab0dd8ebcf3e7730787459f62fb3cd14a1baaa"
+        "org.mozilla.fennec_aurora" to "bc0488838d06f4ca6bf32386daab0dd8ebcf3e7730787459f62fb3cd14a1baaa",
     )
 
     /**
@@ -77,6 +93,7 @@ object AccountSharing {
     }
 
     @Suppress("Recycle", "ComplexMethod")
+    @SuppressLint("Range")
     private fun queryForAccount(context: Context, packageName: String): ShareableAccount? {
         // assuming a certain formatting for all authorities from all sources
         val authority = "$packageName.fxa.auth"
@@ -94,7 +111,9 @@ object AccountSharing {
             client.query(
                 authStateUri,
                 arrayOf(KEY_EMAIL, KEY_SESSION_TOKEN, KEY_KSYNC, KEY_KXSCS),
-                null, null, null
+                null,
+                null,
+                null,
             )?.use { cursor ->
                 cursor.moveToFirst()
 
@@ -109,7 +128,7 @@ object AccountSharing {
                     ShareableAccount(
                         email = email,
                         sourcePackage = packageName,
-                        authInfo = ShareableAuthInfo(sessionToken, kSync, kXSCS)
+                        authInfo = MigratingAccountInfo(sessionToken, kSync, kXSCS),
                     )
                 } else {
                     null
@@ -137,7 +156,7 @@ object AccountSharing {
     fun packageExistsWithSignature(
         packageManager: PackageManager,
         suspectPackage: String,
-        expectedSignature: String
+        expectedSignature: String,
     ): Boolean {
         val suspectSignature = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             getSignaturePostAPI28(packageManager, suspectPackage)
@@ -180,6 +199,7 @@ object AccountSharing {
      * but not signature rotation.
      * @return A certificate SHA256 fingerprint, if one could be reliably obtained.
      */
+    @SuppressLint("PackageManagerGetSignatures")
     fun getSignaturePreAPI28(packageManager: PackageManager, packageName: String): String? {
         // For older APIs, we use the deprecated `signatures` field, which isn't aware of certificate rotation.
         val packageInfo = try {

@@ -6,49 +6,38 @@ package mozilla.components.support.ktx.android.view
 
 import android.os.Build
 import android.os.Build.VERSION.SDK_INT
-import android.view.View
 import android.view.Window
 import androidx.annotation.ColorInt
+import androidx.core.view.WindowInsetsControllerCompat
 import mozilla.components.support.utils.ColorUtils.isDark
 
 /**
  * Colors the status bar.
  * If the color is light enough, a light status bar with dark icons will be used.
  */
-fun Window.setStatusBarTheme(@ColorInt color: Int) {
-    if (SDK_INT >= Build.VERSION_CODES.M) {
-        val flags = decorView.systemUiVisibility
-        decorView.systemUiVisibility =
-            flags.useLightFlag(color, View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR)
-    }
-    statusBarColor = color
+fun Window.setStatusBarTheme(@ColorInt toolbarColor: Int) {
+    getWindowInsetsController().isAppearanceLightStatusBars =
+        !isDark(toolbarColor)
+    statusBarColor = toolbarColor
 }
 
 /**
  * Colors the navigation bar.
  * If the color is light enough, a light navigation bar with dark icons will be used.
  */
-fun Window.setNavigationBarTheme(@ColorInt color: Int) {
-    if (SDK_INT >= Build.VERSION_CODES.O) {
-        val flags = decorView.systemUiVisibility
-        decorView.systemUiVisibility =
-            flags.useLightFlag(color, View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR)
-    }
+fun Window.setNavigationBarTheme(@ColorInt toolbarColor: Int) {
+    getWindowInsetsController().isAppearanceLightNavigationBars =
+        !isDark(toolbarColor)
+
     if (SDK_INT >= Build.VERSION_CODES.P) {
         navigationBarDividerColor = 0
     }
-    navigationBarColor = color
+    navigationBarColor = toolbarColor
 }
 
 /**
- * Augment this flag int with the addition or removal of a light status/navigation bar flag.
+ * Retrieves a {@link WindowInsetsControllerCompat} for the top-level window decor view.
  */
-private fun Int.useLightFlag(@ColorInt baseColor: Int, lightFlag: Int): Int {
-    return if (isDark(baseColor)) {
-        // Use dark bar
-        this and lightFlag.inv()
-    } else {
-        // Use light bar
-        this or lightFlag
-    }
+fun Window.getWindowInsetsController(): WindowInsetsControllerCompat {
+    return WindowInsetsControllerCompat(this, this.decorView)
 }

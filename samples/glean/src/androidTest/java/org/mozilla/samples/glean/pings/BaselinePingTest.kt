@@ -6,94 +6,107 @@ package org.mozilla.samples.glean.pings
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.rule.ActivityTestRule
-import org.junit.Assert.assertEquals
-
+import androidx.test.uiautomator.UiDevice
+import mozilla.components.service.glean.testing.GleanTestLocalServer
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
+import org.json.JSONObject
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.samples.glean.MainActivity
-import org.mozilla.samples.glean.getPingServer
-import androidx.test.uiautomator.UiDevice
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
-import androidx.work.testing.WorkManagerTestInitHelper
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
-import mozilla.components.service.glean.config.Configuration
-import mozilla.components.service.glean.testing.GleanTestRule
-import org.json.JSONObject
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Before
-import org.mozilla.samples.glean.getPingServerAddress
+import java.io.BufferedReader
+import java.io.ByteArrayInputStream
 import java.util.concurrent.TimeUnit
+import java.util.zip.GZIPInputStream
+
+/**
+ * Decompress the GZIP returned by the glean-core layer.
+ *
+ * @param data the gzipped [ByteArray] to decompress
+ * @return a [String] containing the uncompressed data.
+ */
+fun decompressGZIP(data: ByteArray): String {
+    return GZIPInputStream(ByteArrayInputStream(data)).bufferedReader().use(BufferedReader::readText)
+}
+
+/**
+ * Convenience method to get the body of a request as a String.
+ * The UTF8 representation of the request body will be returned.
+ * If the request body is gzipped, it will be decompressed first.
+ *
+ * @return a [String] containing the body of the request.
+ */
+fun RecordedRequest.getPlainBody(): String {
+    return if (this.getHeader("Content-Encoding") == "gzip") {
+        val bodyInBytes = this.body.readByteArray()
+        decompressGZIP(bodyInBytes)
+    } else {
+        this.body.readUtf8()
+    }
+}
 
 @RunWith(AndroidJUnit4::class)
 class BaselinePingTest {
-    @get:Rule
-    val activityRule: ActivityTestRule<MainActivity> = ActivityTestRule(MainActivity::class.java)
+    private val server = createMockWebServer()
 
     @get:Rule
-    val gleanRule = GleanTestRule(
-        ApplicationProvider.getApplicationContext(),
-        Configuration(serverEndpoint = getPingServerAddress())
-    )
+    val activityRule: ActivityScenarioRule<MainActivity> = ActivityScenarioRule(MainActivity::class.java)
 
-    @Before
-    fun clearWorkManager() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        WorkManagerTestInitHelper.initializeTestWorkManager(context)
+    @get:Rule
+    val gleanRule = GleanTestLocalServer(context, server.port)
+
+    private val context: Context
+        get() = ApplicationProvider.getApplicationContext()
+
+    /**
+     * Create a mock webserver that accepts all requests and replies with "OK".
+     * @return a [MockWebServer] instance
+     */
+    private fun createMockWebServer(): MockWebServer {
+        val server = MockWebServer()
+        server.setDispatcher(
+            object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    return MockResponse().setBody("OK")
+                }
+            },
+        )
+        return server
     }
 
     private fun waitForPingContent(
         pingName: String,
-        maxAttempts: Int = 3
-    ): JSONObject?
-    {
-        val server = getPingServer()
-
+        pingReason: String?,
+        maxAttempts: Int = 3,
+    ): JSONObject? {
         var attempts = 0
         do {
             attempts += 1
             val request = server.takeRequest(20L, TimeUnit.SECONDS)
             val docType = request.path.split("/")[3]
             if (pingName == docType) {
-                return JSONObject(request.body.readUtf8())
+                val parsedPayload = JSONObject(request.getPlainBody())
+                if (pingReason == null) {
+                    return parsedPayload
+                }
+
+                // If we requested a specific ping reason, look for it.
+                val reason = parsedPayload.getJSONObject("ping_info").getString("reason")
+                if (reason == pingReason) {
+                    return parsedPayload
+                }
             }
         } while (attempts < maxAttempts)
 
         return null
-    }
-
-    /**
-     * Sadly, the WorkManager still requires us to manually trigger the upload job.
-     * This function goes through all the active jobs by Glean (there should only be
-     * one!) and triggers them.
-     */
-    private fun triggerEnqueuedUpload() {
-        // The tag is really internal to PingUploadWorker, but we can't do much more
-        // than copy-paste unless we want to increase our API surface.
-        val tag = "mozac_service_glean_ping_upload_worker"
-        val reasonablyHighCITimeoutMs = 5000L
-
-        runBlocking {
-            withTimeout(reasonablyHighCITimeoutMs) {
-                do {
-                    val workInfoList = WorkManager.getInstance().getWorkInfosByTag(tag).get()
-                    workInfoList.forEach { workInfo ->
-                        if (workInfo.state === WorkInfo.State.ENQUEUED) {
-                            // Trigger WorkManager using TestDriver
-                            val testDriver = WorkManagerTestInitHelper.getTestDriver()
-                            testDriver.setAllConstraintsMet(workInfo.id)
-                            return@withTimeout
-                        }
-                    }
-                } while (true)
-            }
-        }
     }
 
     @Test
@@ -110,14 +123,8 @@ class BaselinePingTest {
         // Move it to background.
         device.pressHome()
 
-        // Wait for the upload job to be present and trigger it.
-        Thread.sleep(1000) // FIXME: for some reason, without this, WorkManager won't find the job
-        triggerEnqueuedUpload()
-
         // Validate the received data.
-        val baselinePing = waitForPingContent("baseline")!!
-        assertEquals("baseline", baselinePing.getJSONObject("ping_info")["ping_type"])
-
+        val baselinePing = waitForPingContent("baseline", "inactive")!!
         val metrics = baselinePing.getJSONObject("metrics")
 
         // Make sure we have a 'duration' field with a reasonable value: it should be >= 1, since

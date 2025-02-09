@@ -5,6 +5,7 @@
 package mozilla.components.browser.state.reducer
 
 import mozilla.components.browser.state.action.CustomTabListAction
+import mozilla.components.browser.state.ext.toTab
 import mozilla.components.browser.state.selector.findCustomTab
 import mozilla.components.browser.state.state.BrowserState
 
@@ -17,12 +18,24 @@ internal object CustomTabListReducer {
             is CustomTabListAction.AddCustomTabAction -> state.copy(customTabs = state.customTabs + action.tab)
 
             is CustomTabListAction.RemoveCustomTabAction -> {
-                val tab = state.findCustomTab(action.tabId) ?: return state
-                state.copy(customTabs = state.customTabs - tab)
+                state.copy(customTabs = state.customTabs.filter { it.id != action.tabId })
             }
 
             is CustomTabListAction.RemoveAllCustomTabsAction -> {
                 state.copy(customTabs = emptyList())
+            }
+
+            is CustomTabListAction.TurnCustomTabIntoNormalTabAction -> {
+                val customTab = state.findCustomTab(action.tabId)
+                if (customTab == null) {
+                    state
+                } else {
+                    val tab = customTab.toTab()
+                    state.copy(
+                        customTabs = state.customTabs - customTab,
+                        tabs = state.tabs + tab,
+                    )
+                }
             }
         }
     }

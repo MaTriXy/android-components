@@ -4,6 +4,7 @@
 
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
+apply plugin: 'kotlin-parcelize'
 
 android {
     compileSdkVersion config.compileSdkVersion
@@ -19,17 +20,27 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+
+    buildFeatures {
+        viewBinding true
+    }
 }
 
 dependencies {
+    implementation project(':concept-engine')
+    implementation project(':concept-menu')
+    implementation project(':browser-state')
     implementation project(':support-base')
     implementation project(':support-ktx')
     implementation project(':ui-colors')
+    implementation project(':ui-icons')
 
     implementation Dependencies.androidx_appcompat
     implementation Dependencies.androidx_core_ktx
     implementation Dependencies.androidx_recyclerview
     implementation Dependencies.androidx_cardview
+    implementation Dependencies.androidx_constraintlayout
+    implementation Dependencies.androidx_coordinatorlayout
 
     implementation Dependencies.kotlin_stdlib
 
@@ -39,7 +50,7 @@ dependencies {
     testImplementation Dependencies.androidx_test_junit
     testImplementation Dependencies.testing_robolectric
     testImplementation Dependencies.testing_mockito
-    testImplementation Dependencies.androidx_test_core
+    testImplementation Dependencies.testing_coroutines
 
 }
 

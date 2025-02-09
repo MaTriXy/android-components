@@ -5,7 +5,6 @@
 package mozilla.components.feature.readerview.internal
 
 import android.view.View
-import mozilla.components.feature.readerview.ReaderViewFeature
 import mozilla.components.feature.readerview.view.ReaderViewControlsView
 import mozilla.components.support.test.any
 import mozilla.components.support.test.mock
@@ -19,7 +18,7 @@ class ReaderViewControlsPresenterTest {
 
     @Test
     fun `start applies config to view`() {
-        val config: ReaderViewFeature.Config = mock()
+        val config: ReaderViewConfig = mock()
         val view = mock<ReaderViewControlsView>()
         val presenter = ReaderViewControlsPresenter(view, config)
 
@@ -29,6 +28,7 @@ class ReaderViewControlsPresenterTest {
 
         presenter.show()
 
+        verify(view).tryInflate()
         verify(view).setColorScheme(any())
         verify(view).setFontSize(5)
         verify(view).setFont(any())

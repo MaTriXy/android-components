@@ -7,32 +7,87 @@ package mozilla.components.feature.prompts
 import android.app.Activity
 import android.content.Intent
 import androidx.annotation.VisibleForTesting
-import androidx.annotation.VisibleForTesting.PRIVATE
+import androidx.annotation.VisibleForTesting.Companion.PRIVATE
+import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
-import mozilla.components.browser.session.SelectionAwareSessionObserver
-import mozilla.components.browser.session.Session
-import mozilla.components.browser.session.SessionManager
-import mozilla.components.browser.session.runWithSessionIdOrSelected
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.map
+import mozilla.components.browser.state.action.ContentAction
+import mozilla.components.browser.state.selector.findTabOrCustomTab
+import mozilla.components.browser.state.selector.findTabOrCustomTabOrSelectedTab
+import mozilla.components.browser.state.state.SessionState
+import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.concept.engine.prompt.Choice
 import mozilla.components.concept.engine.prompt.PromptRequest
 import mozilla.components.concept.engine.prompt.PromptRequest.Alert
 import mozilla.components.concept.engine.prompt.PromptRequest.Authentication
+import mozilla.components.concept.engine.prompt.PromptRequest.BeforeUnload
 import mozilla.components.concept.engine.prompt.PromptRequest.Color
+import mozilla.components.concept.engine.prompt.PromptRequest.Confirm
+import mozilla.components.concept.engine.prompt.PromptRequest.Dismissible
 import mozilla.components.concept.engine.prompt.PromptRequest.File
 import mozilla.components.concept.engine.prompt.PromptRequest.MenuChoice
 import mozilla.components.concept.engine.prompt.PromptRequest.MultipleChoice
+import mozilla.components.concept.engine.prompt.PromptRequest.Popup
+import mozilla.components.concept.engine.prompt.PromptRequest.Repost
+import mozilla.components.concept.engine.prompt.PromptRequest.SaveCreditCard
+import mozilla.components.concept.engine.prompt.PromptRequest.SaveLoginPrompt
+import mozilla.components.concept.engine.prompt.PromptRequest.SelectAddress
+import mozilla.components.concept.engine.prompt.PromptRequest.SelectCreditCard
+import mozilla.components.concept.engine.prompt.PromptRequest.SelectLoginPrompt
+import mozilla.components.concept.engine.prompt.PromptRequest.Share
 import mozilla.components.concept.engine.prompt.PromptRequest.SingleChoice
 import mozilla.components.concept.engine.prompt.PromptRequest.TextPrompt
 import mozilla.components.concept.engine.prompt.PromptRequest.TimeSelection
-import mozilla.components.feature.prompts.ChoiceDialogFragment.Companion.MENU_CHOICE_DIALOG_TYPE
-import mozilla.components.feature.prompts.ChoiceDialogFragment.Companion.MULTIPLE_CHOICE_DIALOG_TYPE
-import mozilla.components.feature.prompts.ChoiceDialogFragment.Companion.SINGLE_CHOICE_DIALOG_TYPE
+import mozilla.components.concept.storage.CreditCardEntry
+import mozilla.components.concept.storage.CreditCardValidationDelegate
+import mozilla.components.concept.storage.LoginEntry
+import mozilla.components.concept.storage.LoginValidationDelegate
+import mozilla.components.feature.prompts.address.AddressDelegate
+import mozilla.components.feature.prompts.address.AddressPicker
+import mozilla.components.feature.prompts.address.DefaultAddressDelegate
+import mozilla.components.feature.prompts.creditcard.CreditCardDelegate
+import mozilla.components.feature.prompts.creditcard.CreditCardPicker
+import mozilla.components.feature.prompts.creditcard.CreditCardSaveDialogFragment
+import mozilla.components.feature.prompts.dialog.AlertDialogFragment
+import mozilla.components.feature.prompts.dialog.AuthenticationDialogFragment
+import mozilla.components.feature.prompts.dialog.ChoiceDialogFragment
+import mozilla.components.feature.prompts.dialog.ChoiceDialogFragment.Companion.MENU_CHOICE_DIALOG_TYPE
+import mozilla.components.feature.prompts.dialog.ChoiceDialogFragment.Companion.MULTIPLE_CHOICE_DIALOG_TYPE
+import mozilla.components.feature.prompts.dialog.ChoiceDialogFragment.Companion.SINGLE_CHOICE_DIALOG_TYPE
+import mozilla.components.feature.prompts.dialog.ColorPickerDialogFragment
+import mozilla.components.feature.prompts.dialog.ConfirmDialogFragment
+import mozilla.components.feature.prompts.dialog.MultiButtonDialogFragment
+import mozilla.components.feature.prompts.dialog.PromptAbuserDetector
+import mozilla.components.feature.prompts.dialog.PromptDialogFragment
+import mozilla.components.feature.prompts.dialog.Prompter
+import mozilla.components.feature.prompts.dialog.SaveLoginDialogFragment
+import mozilla.components.feature.prompts.dialog.TextPromptDialogFragment
+import mozilla.components.feature.prompts.dialog.TimePickerDialogFragment
+import mozilla.components.feature.prompts.facts.emitCreditCardSaveShownFact
+import mozilla.components.feature.prompts.facts.emitSuccessfulAddressAutofillFormDetectedFact
+import mozilla.components.feature.prompts.facts.emitSuccessfulCreditCardAutofillFormDetectedFact
+import mozilla.components.feature.prompts.file.FilePicker
+import mozilla.components.feature.prompts.login.LoginDelegate
+import mozilla.components.feature.prompts.login.LoginExceptions
+import mozilla.components.feature.prompts.login.LoginPicker
+import mozilla.components.feature.prompts.share.DefaultShareDelegate
+import mozilla.components.feature.prompts.share.ShareDelegate
+import mozilla.components.lib.state.ext.flowScoped
+import mozilla.components.support.base.feature.ActivityResultHandler
 import mozilla.components.support.base.feature.LifecycleAwareFeature
 import mozilla.components.support.base.feature.OnNeedToRequestPermissions
 import mozilla.components.support.base.feature.PermissionsFeature
+import mozilla.components.support.base.feature.UserInteractionHandler
+import mozilla.components.support.base.log.logger.Logger
+import mozilla.components.support.ktx.kotlinx.coroutines.flow.ifAnyChanged
+import java.lang.ref.WeakReference
 import java.security.InvalidParameterException
+import java.util.Collections
 import java.util.Date
+import java.util.WeakHashMap
 
 @VisibleForTesting(otherwise = PRIVATE)
 internal const val FRAGMENT_TAG = "mozac_feature_prompt_dialog"
@@ -47,75 +102,182 @@ internal const val FRAGMENT_TAG = "mozac_feature_prompt_dialog"
  * onActivityResult in your [Activity] or [Fragment] and forward its calls
  * to [onActivityResult].
  *
- * This feature will subscribe to the currently selected [Session] and display
+ * This feature will subscribe to the currently selected session and display
  * a suitable native dialog based on [Session.Observer.onPromptRequested] events.
  * Once the dialog is closed or the user selects an item from the dialog
  * the related [PromptRequest] will be consumed.
  *
- * @property activity The [Activity] which hosts this feature. If hosted by a
- * [Fragment], this parameter can be ignored. Note that an
- * [IllegalStateException] will be thrown if neither an active nor a fragment
- * is specified.
- * @property fragment The [Fragment] which hosts this feature. If hosted by an
- * [Activity], this parameter can be ignored. Note that an
- * [IllegalStateException] will be thrown if neither an active nor a fragment
- * is specified.
- * @property sessionManager The [SessionManager] instance in order to subscribe
- * to the selected [Session].
+ * @property container The [Activity] or [Fragment] which hosts this feature.
+ * @property store The [BrowserStore] this feature should subscribe to.
+ * @property customTabId Optional id of a custom tab. Instead of showing context
+ * menus for the currently selected tab this feature will show only context menus
+ * for this custom tab if an id is provided.
  * @property fragmentManager The [FragmentManager] to be used when displaying
  * a dialog (fragment).
- * @property onNeedToRequestPermissions a callback invoked when permissions
+ * @property shareDelegate Delegate used to display share sheet.
+ * @property loginStorageDelegate Delegate used to access login storage. If null,
+ * 'save login'prompts will not be shown.
+ * @property isSaveLoginEnabled A callback invoked when a login prompt is triggered. If false,
+ * 'save login'prompts will not be shown.
+ * @property isCreditCardAutofillEnabled A callback invoked when credit card fields are detected in the webpage.
+ * If this resolves to `true` a prompt allowing the user to select the credit card details to be autocompleted
+ * will be shown.
+ * @property isAddressAutofillEnabled A callback invoked when address fields are detected in the webpage.
+ * If this resolves to `true` a prompt allowing the user to select the address details to be autocompleted
+ * will be shown.
+ * @property loginExceptionStorage An implementation of [LoginExceptions] that saves and checks origins
+ * the user does not want to see a save login dialog for.
+ * @property loginDelegate Delegate for login picker.
+ * @property creditCardDelegate Delegate for credit card picker.
+ * @property addressDelegate Delegate for address picker.
+ * @property onNeedToRequestPermissions A callback invoked when permissions
  * need to be requested before a prompt (e.g. a file picker) can be displayed.
  * Once the request is completed, [onPermissionsResult] needs to be invoked.
  */
-@Suppress("TooManyFunctions")
-class PromptFeature(
-    private val activity: Activity? = null,
-    private val fragment: Fragment? = null,
-    private val sessionManager: SessionManager,
-    private var sessionId: String? = null,
+@Suppress("LargeClass", "LongParameterList")
+class PromptFeature private constructor(
+    private val container: PromptContainer,
+    private val store: BrowserStore,
+    private var customTabId: String?,
     private val fragmentManager: FragmentManager,
-    onNeedToRequestPermissions: OnNeedToRequestPermissions
-) : LifecycleAwareFeature, PermissionsFeature {
+    private val shareDelegate: ShareDelegate,
+    override val creditCardValidationDelegate: CreditCardValidationDelegate? = null,
+    override val loginValidationDelegate: LoginValidationDelegate? = null,
+    private val isSaveLoginEnabled: () -> Boolean = { false },
+    private val isCreditCardAutofillEnabled: () -> Boolean = { false },
+    private val isAddressAutofillEnabled: () -> Boolean = { false },
+    override val loginExceptionStorage: LoginExceptions? = null,
+    private val loginDelegate: LoginDelegate = object : LoginDelegate {},
+    private val creditCardDelegate: CreditCardDelegate = object : CreditCardDelegate {},
+    private val addressDelegate: AddressDelegate = DefaultAddressDelegate(),
+    onNeedToRequestPermissions: OnNeedToRequestPermissions,
+) : LifecycleAwareFeature,
+    PermissionsFeature,
+    Prompter,
+    ActivityResultHandler,
+    UserInteractionHandler {
+    // These three scopes have identical lifetimes. We do not yet have a way of combining scopes
+    private var handlePromptScope: CoroutineScope? = null
+    private var dismissPromptScope: CoroutineScope? = null
+
+    @VisibleForTesting
+    var activePromptRequest: PromptRequest? = null
+
     internal val promptAbuserDetector = PromptAbuserDetector()
+    private val logger = Logger("PromptFeature")
+
+    @VisibleForTesting(otherwise = PRIVATE)
+    internal var activePrompt: WeakReference<PromptDialogFragment>? = null
+
+    // This set of weak references of fragments is only used for dismissing all prompts on navigation.
+    // For all other code only `activePrompt` is tracked for now.
+    @VisibleForTesting(otherwise = PRIVATE)
+    internal val activePromptsToDismiss = Collections.newSetFromMap(WeakHashMap<PromptDialogFragment, Boolean>())
 
     constructor(
         activity: Activity,
-        sessionManager: SessionManager,
-        sessionId: String? = null,
+        store: BrowserStore,
+        customTabId: String? = null,
         fragmentManager: FragmentManager,
-        onNeedToRequestPermissions: OnNeedToRequestPermissions
+        shareDelegate: ShareDelegate = DefaultShareDelegate(),
+        creditCardValidationDelegate: CreditCardValidationDelegate? = null,
+        loginValidationDelegate: LoginValidationDelegate? = null,
+        isSaveLoginEnabled: () -> Boolean = { false },
+        isCreditCardAutofillEnabled: () -> Boolean = { false },
+        isAddressAutofillEnabled: () -> Boolean = { false },
+        loginExceptionStorage: LoginExceptions? = null,
+        loginDelegate: LoginDelegate = object : LoginDelegate {},
+        creditCardDelegate: CreditCardDelegate = object : CreditCardDelegate {},
+        addressDelegate: AddressDelegate = DefaultAddressDelegate(),
+        onNeedToRequestPermissions: OnNeedToRequestPermissions,
     ) : this(
-        activity, null, sessionManager, sessionId, fragmentManager, onNeedToRequestPermissions
+        container = PromptContainer.Activity(activity),
+        store = store,
+        customTabId = customTabId,
+        fragmentManager = fragmentManager,
+        shareDelegate = shareDelegate,
+        creditCardValidationDelegate = creditCardValidationDelegate,
+        loginValidationDelegate = loginValidationDelegate,
+        isSaveLoginEnabled = isSaveLoginEnabled,
+        isCreditCardAutofillEnabled = isCreditCardAutofillEnabled,
+        isAddressAutofillEnabled = isAddressAutofillEnabled,
+        loginExceptionStorage = loginExceptionStorage,
+        onNeedToRequestPermissions = onNeedToRequestPermissions,
+        loginDelegate = loginDelegate,
+        creditCardDelegate = creditCardDelegate,
+        addressDelegate = addressDelegate,
     )
+
     constructor(
         fragment: Fragment,
-        sessionManager: SessionManager,
-        sessionId: String? = null,
+        store: BrowserStore,
+        customTabId: String? = null,
         fragmentManager: FragmentManager,
-        onNeedToRequestPermissions: OnNeedToRequestPermissions
+        shareDelegate: ShareDelegate = DefaultShareDelegate(),
+        creditCardValidationDelegate: CreditCardValidationDelegate? = null,
+        loginValidationDelegate: LoginValidationDelegate? = null,
+        isSaveLoginEnabled: () -> Boolean = { false },
+        isCreditCardAutofillEnabled: () -> Boolean = { false },
+        isAddressAutofillEnabled: () -> Boolean = { false },
+        loginExceptionStorage: LoginExceptions? = null,
+        loginDelegate: LoginDelegate = object : LoginDelegate {},
+        creditCardDelegate: CreditCardDelegate = object : CreditCardDelegate {},
+        addressDelegate: AddressDelegate = DefaultAddressDelegate(),
+        onNeedToRequestPermissions: OnNeedToRequestPermissions,
     ) : this(
-        null, fragment, sessionManager, sessionId, fragmentManager, onNeedToRequestPermissions
+        container = PromptContainer.Fragment(fragment),
+        store = store,
+        customTabId = customTabId,
+        fragmentManager = fragmentManager,
+        shareDelegate = shareDelegate,
+        creditCardValidationDelegate = creditCardValidationDelegate,
+        loginValidationDelegate = loginValidationDelegate,
+        isSaveLoginEnabled = isSaveLoginEnabled,
+        isCreditCardAutofillEnabled = isCreditCardAutofillEnabled,
+        isAddressAutofillEnabled = isAddressAutofillEnabled,
+        loginExceptionStorage = loginExceptionStorage,
+        onNeedToRequestPermissions = onNeedToRequestPermissions,
+        loginDelegate = loginDelegate,
+        creditCardDelegate = creditCardDelegate,
+        addressDelegate = addressDelegate,
     )
 
-    init {
-        if (activity == null && fragment == null) {
-            throw IllegalStateException(
-                "activity and fragment references " +
-                    "must not be both null, at least one must be initialized."
-            )
+    private val filePicker = FilePicker(container, store, customTabId, onNeedToRequestPermissions)
+
+    @VisibleForTesting(otherwise = PRIVATE)
+    internal var loginPicker =
+        with(loginDelegate) {
+            loginPickerView?.let {
+                LoginPicker(store, it, onManageLogins, customTabId)
+            }
         }
-    }
 
-    private val observer = PromptRequestObserver(sessionManager, feature = this)
+    @VisibleForTesting(otherwise = PRIVATE)
+    internal var creditCardPicker =
+        with(creditCardDelegate) {
+            creditCardPickerView?.let {
+                CreditCardPicker(
+                    store = store,
+                    creditCardSelectBar = it,
+                    manageCreditCardsCallback = onManageCreditCards,
+                    selectCreditCardCallback = onSelectCreditCard,
+                    sessionId = customTabId,
+                )
+            }
+        }
 
-    private val context get() = activity ?: requireNotNull(fragment).requireContext()
-
-    private val filePicker = if (activity != null) {
-        FilePicker(activity, sessionManager, sessionId, onNeedToRequestPermissions)
-    } else {
-        FilePicker(requireNotNull(fragment), sessionManager, sessionId, onNeedToRequestPermissions)
-    }
+    @VisibleForTesting(otherwise = PRIVATE)
+    internal var addressPicker =
+        with(addressDelegate) {
+            addressPickerView?.let {
+                AddressPicker(
+                    store = store,
+                    addressSelectBar = it,
+                    onManageAddresses = onManageAddresses,
+                    sessionId = customTabId,
+                )
+            }
+        }
 
     override val onNeedToRequestPermissions
         get() = filePicker.onNeedToRequestPermissions
@@ -124,9 +286,93 @@ class PromptFeature(
      * Starts observing the selected session to listen for prompt requests
      * and displays a dialog when needed.
      */
+    @Suppress("ComplexMethod", "LongMethod")
     override fun start() {
         promptAbuserDetector.resetJSAlertAbuseState()
-        observer.observeIdOrSelected(sessionId)
+
+        handlePromptScope = store.flowScoped { flow ->
+            flow.map { state -> state.findTabOrCustomTabOrSelectedTab(customTabId) }
+                .ifAnyChanged {
+                    arrayOf(it?.content?.promptRequests, it?.content?.loading)
+                }
+                .collect { state ->
+                    state?.content?.let { content ->
+                        if (content.promptRequests.lastOrNull() != activePromptRequest) {
+                            // Dismiss any active select login or credit card prompt if it does
+                            // not match the current prompt request for the session.
+                            when (activePromptRequest) {
+                                is SelectLoginPrompt -> {
+                                    loginPicker?.dismissCurrentLoginSelect(activePromptRequest as SelectLoginPrompt)
+                                }
+                                is SaveLoginPrompt -> {
+                                    (activePrompt?.get() as? SaveLoginDialogFragment)?.dismissAllowingStateLoss()
+                                }
+                                is SaveCreditCard -> {
+                                    (activePrompt?.get() as? CreditCardSaveDialogFragment)?.dismissAllowingStateLoss()
+                                }
+                                is SelectCreditCard -> {
+                                    creditCardPicker?.dismissSelectCreditCardRequest(
+                                        activePromptRequest as SelectCreditCard,
+                                    )
+                                }
+                                is SelectAddress -> {
+                                    addressPicker?.dismissSelectAddressRequest(
+                                        activePromptRequest as SelectAddress,
+                                    )
+                                }
+                                is SingleChoice,
+                                is MultipleChoice,
+                                is MenuChoice,
+                                -> {
+                                    (activePrompt?.get() as? ChoiceDialogFragment)?.let { dialog ->
+                                        if (dialog.isAdded) {
+                                            dialog.dismissAllowingStateLoss()
+                                        } else {
+                                            activePromptsToDismiss.remove(dialog)
+                                            activePrompt?.clear()
+                                        }
+                                    }
+                                }
+                                else -> {
+                                    // no-op
+                                }
+                            }
+
+                            onPromptRequested(state)
+                        } else if (!content.loading) {
+                            promptAbuserDetector.resetJSAlertAbuseState()
+                        } else if (content.loading) {
+                            dismissSelectPrompts()
+                        }
+
+                        activePromptRequest = content.promptRequests.lastOrNull()
+                    }
+                }
+        }
+
+        // Dismiss all prompts when page URL or session id changes. See Fenix#5326
+        dismissPromptScope = store.flowScoped { flow ->
+            flow.ifAnyChanged { state ->
+                arrayOf(
+                    state.selectedTabId,
+                    state.findTabOrCustomTabOrSelectedTab(customTabId)?.content?.url,
+                )
+            }.collect {
+                dismissSelectPrompts()
+
+                val prompt = activePrompt?.get()
+
+                store.consumeAllSessionPrompts(
+                    sessionId = prompt?.sessionId,
+                    activePrompt,
+                    predicate = { it.shouldDismissOnLoad },
+                    consume = { prompt?.dismiss() },
+                )
+
+                // Let's make sure we do not leave anything behind..
+                activePromptsToDismiss.forEach { fragment -> fragment.dismiss() }
+            }
+        }
 
         fragmentManager.findFragmentByTag(FRAGMENT_TAG)?.let { fragment ->
             // There's still a [PromptDialogFragment] visible from the last time. Re-attach this feature so that the
@@ -136,22 +382,54 @@ class PromptFeature(
         }
     }
 
-    /**
-     * Stops observing the selected session for incoming prompt requests.
-     */
     override fun stop() {
-        observer.stop()
+        // Stops observing the selected session for incoming prompt requests.
+        handlePromptScope?.cancel()
+        dismissPromptScope?.cancel()
+
+        // Dismisses the logins prompt so that it can appear on another tab
+        dismissSelectPrompts()
+    }
+
+    override fun onBackPressed(): Boolean {
+        return dismissSelectPrompts()
     }
 
     /**
      * Notifies the feature of intent results for prompt requests handled by
-     * other apps like file chooser requests.
+     * other apps like credit card and file chooser requests.
      *
      * @param requestCode The code of the app that requested the intent.
-     * @param intent The result of the request.
+     * @param data The result of the request.
+     * @param resultCode The code of the result.
      */
-    fun onActivityResult(requestCode: Int, resultCode: Int, intent: Intent?) {
-        filePicker.onActivityResult(requestCode, resultCode, intent)
+    override fun onActivityResult(requestCode: Int, data: Intent?, resultCode: Int): Boolean {
+        if (requestCode == PIN_REQUEST) {
+            if (resultCode == Activity.RESULT_OK) {
+                creditCardPicker?.onAuthSuccess()
+            } else {
+                creditCardPicker?.onAuthFailure()
+            }
+
+            return true
+        }
+
+        return filePicker.onActivityResult(requestCode, resultCode, data)
+    }
+
+    /**
+     * Notifies the feature that the biometric authentication was completed. It will then
+     * either process or dismiss the prompt request.
+     *
+     * @param isAuthenticated True if the user is authenticated successfully from the biometric
+     * authentication prompt or false otherwise.
+     */
+    fun onBiometricResult(isAuthenticated: Boolean) {
+        if (isAuthenticated) {
+            creditCardPicker?.onAuthSuccess()
+        } else {
+            creditCardPicker?.onAuthFailure()
+        }
     }
 
     /**
@@ -168,46 +446,74 @@ class PromptFeature(
 
     /**
      * Invoked when a native dialog needs to be shown.
-     * Displays a suitable dialog for the pending [promptRequest].
      *
      * @param session The session which requested the dialog.
-     * @param promptRequest The session the request the dialog.
      */
     @VisibleForTesting(otherwise = PRIVATE)
-    internal fun onPromptRequested(session: Session, promptRequest: PromptRequest) {
+    internal fun onPromptRequested(session: SessionState) {
         // Some requests are handle with intents
-        when (promptRequest) {
-            is File -> filePicker.handleFileRequest(promptRequest)
-            else -> handleDialogsRequest(promptRequest, session)
+        session.content.promptRequests.lastOrNull()?.let { promptRequest ->
+            when (promptRequest) {
+                is File -> filePicker.handleFileRequest(promptRequest)
+                is Share -> handleShareRequest(promptRequest, session)
+                is SelectCreditCard -> {
+                    emitSuccessfulCreditCardAutofillFormDetectedFact()
+                    if (isCreditCardAutofillEnabled() && promptRequest.creditCards.isNotEmpty()) {
+                        creditCardPicker?.handleSelectCreditCardRequest(promptRequest)
+                    }
+                }
+                is SelectLoginPrompt -> {
+                    if (promptRequest.logins.isNotEmpty()) {
+                        loginPicker?.handleSelectLoginRequest(promptRequest)
+                    }
+                }
+                is SelectAddress -> {
+                    emitSuccessfulAddressAutofillFormDetectedFact()
+                    if (isAddressAutofillEnabled() && promptRequest.addresses.isNotEmpty()) {
+                        addressPicker?.handleSelectAddressRequest(promptRequest)
+                    }
+                }
+                else -> handleDialogsRequest(promptRequest, session)
+            }
         }
     }
 
     /**
      * Invoked when a dialog is dismissed. This consumes the [PromptFeature]
-     * value from the [Session] indicated by [sessionId].
+     * value from the session indicated by [sessionId].
      *
      * @param sessionId this is the id of the session which requested the prompt.
+     * @param promptRequestUID identifier of the [PromptRequest] for which this dialog was shown.
+     * @param value an optional value provided by the dialog as a result of canceling the action.
      */
-    internal fun onCancel(sessionId: String) {
-        sessionManager.consumePromptFrom(sessionId) {
+    override fun onCancel(sessionId: String, promptRequestUID: String, value: Any?) {
+        store.consumePromptFrom(sessionId, promptRequestUID, activePrompt) {
             when (it) {
-                is PromptRequest.Dismissible -> it.onDismiss()
-                is PromptRequest.Popup -> it.onDeny()
+                is BeforeUnload -> it.onStay()
+                is Popup -> {
+                    val shouldNotShowMoreDialogs = value as Boolean
+                    promptAbuserDetector.userWantsMoreDialogs(!shouldNotShowMoreDialogs)
+                    it.onDeny()
+                }
+                is Dismissible -> it.onDismiss()
+                else -> {
+                    // no-op
+                }
             }
-            true
         }
     }
 
     /**
      * Invoked when the user confirms the action on the dialog. This consumes
-     * the [PromptFeature] value from the [Session] indicated by [sessionId].
+     * the [PromptFeature] value from the [SessionState] indicated by [sessionId].
      *
      * @param sessionId that requested to show the dialog.
+     * @param promptRequestUID identifier of the [PromptRequest] for which this dialog was shown.
      * @param value an optional value provided by the dialog as a result of confirming the action.
      */
     @Suppress("UNCHECKED_CAST", "ComplexMethod")
-    internal fun onConfirm(sessionId: String, value: Any? = null) {
-        sessionManager.consumePromptFrom(sessionId) {
+    override fun onConfirm(sessionId: String, promptRequestUID: String, value: Any?) {
+        store.consumePromptFrom(sessionId, promptRequestUID, activePrompt) {
             when (it) {
                 is TimeSelection -> it.onConfirm(value as Date)
                 is Color -> it.onConfirm(value as String)
@@ -218,27 +524,36 @@ class PromptFeature(
                 }
                 is SingleChoice -> it.onConfirm(value as Choice)
                 is MenuChoice -> it.onConfirm(value as Choice)
-                is PromptRequest.Popup -> it.onAllow()
+                is BeforeUnload -> it.onLeave()
+                is Popup -> {
+                    val shouldNotShowMoreDialogs = value as Boolean
+                    promptAbuserDetector.userWantsMoreDialogs(!shouldNotShowMoreDialogs)
+                    it.onAllow()
+                }
                 is MultipleChoice -> it.onConfirm(value as Array<Choice>)
 
                 is Authentication -> {
-                    val pair = value as Pair<String, String>
-                    it.onConfirm(pair.first, pair.second)
+                    val (user, password) = value as Pair<String, String>
+                    it.onConfirm(user, password)
                 }
 
                 is TextPrompt -> {
-                    val pair = value as Pair<Boolean, String>
+                    val (shouldNotShowMoreDialogs, text) = value as Pair<Boolean, String>
 
-                    val shouldNotShowMoreDialogs = pair.first
                     promptAbuserDetector.userWantsMoreDialogs(!shouldNotShowMoreDialogs)
-                    it.onConfirm(!shouldNotShowMoreDialogs, pair.second)
+                    it.onConfirm(!shouldNotShowMoreDialogs, text)
                 }
 
-                is PromptRequest.Confirm -> {
-                    val pair = value as Pair<Boolean, MultiButtonDialogFragment.ButtonType>
-                    val isCheckBoxChecked = pair.first
+                is Share -> it.onSuccess()
+
+                is SaveCreditCard -> it.onConfirm(value as CreditCardEntry)
+                is SaveLoginPrompt -> it.onConfirm(value as LoginEntry)
+
+                is Confirm -> {
+                    val (isCheckBoxChecked, buttonType) =
+                        value as Pair<Boolean, MultiButtonDialogFragment.ButtonType>
                     promptAbuserDetector.userWantsMoreDialogs(!isCheckBoxChecked)
-                    when (pair.second) {
+                    when (buttonType) {
                         MultiButtonDialogFragment.ButtonType.POSITIVE ->
                             it.onConfirmPositiveButton(!isCheckBoxChecked)
                         MultiButtonDialogFragment.ButtonType.NEGATIVE ->
@@ -247,23 +562,30 @@ class PromptFeature(
                             it.onConfirmNeutralButton(!isCheckBoxChecked)
                     }
                 }
+
+                is Repost -> it.onConfirm()
+                else -> {
+                    // no-op
+                }
             }
-            true
         }
     }
 
     /**
      * Invoked when the user is requesting to clear the selected value from the dialog.
-     * This consumes the [PromptFeature] value from the [Session] indicated by [sessionId].
+     * This consumes the [PromptFeature] value from the [SessionState] indicated by [sessionId].
      *
      * @param sessionId that requested to show the dialog.
+     * @param promptRequestUID identifier of the [PromptRequest] for which this dialog was shown.
      */
-    internal fun onClear(sessionId: String) {
-        sessionManager.consumePromptFrom(sessionId) {
+    override fun onClear(sessionId: String, promptRequestUID: String) {
+        store.consumePromptFrom(sessionId, promptRequestUID, activePrompt) {
             when (it) {
                 is TimeSelection -> it.onClear()
+                else -> {
+                    // no-op
+                }
             }
-            true
         }
     }
 
@@ -271,8 +593,8 @@ class PromptFeature(
      * Re-attaches a fragment that is still visible but not linked to this feature anymore.
      */
     private fun reattachFragment(fragment: PromptDialogFragment) {
-        val session = sessionManager.findSessionById(fragment.sessionId)
-        if (session == null || session.promptRequest.isConsumed()) {
+        val session = store.state.findTabOrCustomTab(fragment.sessionId)
+        if (session?.content?.promptRequests?.isEmpty() != false) {
             fragmentManager.beginTransaction()
                 .remove(fragment)
                 .commitAllowingStateLoss()
@@ -283,41 +605,115 @@ class PromptFeature(
         fragment.feature = this
     }
 
-    @Suppress("ComplexMethod")
+    private fun handleShareRequest(promptRequest: Share, session: SessionState) {
+        shareDelegate.showShareSheet(
+            context = container.context,
+            shareData = promptRequest.data,
+            onDismiss = { onCancel(session.id, promptRequest.uid) },
+            onSuccess = { onConfirm(session.id, promptRequest.uid, null) },
+        )
+    }
+
+    /**
+     * Called from on [onPromptRequested] to handle requests for showing native dialogs.
+     */
+    @Suppress("ComplexMethod", "LongMethod")
     @VisibleForTesting(otherwise = PRIVATE)
     internal fun handleDialogsRequest(
         promptRequest: PromptRequest,
-        session: Session
+        session: SessionState,
     ) {
         // Requests that are handled with dialogs
         val dialog = when (promptRequest) {
+            is SaveCreditCard -> {
+                if (!isCreditCardAutofillEnabled.invoke() || creditCardValidationDelegate == null) {
+                    dismissDialogRequest(promptRequest, session)
+
+                    if (creditCardValidationDelegate == null) {
+                        logger.debug(
+                            "Ignoring received SaveCreditCard because PromptFeature." +
+                                "creditCardValidationDelegate is null. If you are trying to autofill " +
+                                "credit cards, try attaching a CreditCardValidationDelegate to PromptFeature",
+                        )
+                    }
+
+                    return
+                }
+
+                emitCreditCardSaveShownFact()
+
+                CreditCardSaveDialogFragment.newInstance(
+                    sessionId = session.id,
+                    promptRequestUID = promptRequest.uid,
+                    shouldDismissOnLoad = false,
+                    creditCard = promptRequest.creditCard,
+                )
+            }
+
+            is SaveLoginPrompt -> {
+                if (!isSaveLoginEnabled.invoke() || loginValidationDelegate == null) {
+                    dismissDialogRequest(promptRequest, session)
+
+                    if (loginValidationDelegate == null) {
+                        logger.debug(
+                            "Ignoring received SaveLoginPrompt because PromptFeature." +
+                                "loginValidationDelegate is null. If you are trying to autofill logins, " +
+                                "try attaching a LoginValidationDelegate to PromptFeature",
+                        )
+                    }
+
+                    return
+                }
+
+                SaveLoginDialogFragment.newInstance(
+                    sessionId = session.id,
+                    promptRequestUID = promptRequest.uid,
+                    shouldDismissOnLoad = false,
+                    hint = promptRequest.hint,
+                    // For v1, we only handle a single login and drop all others on the floor
+                    entry = promptRequest.logins[0],
+                    icon = session.content.icon,
+                )
+            }
 
             is SingleChoice -> ChoiceDialogFragment.newInstance(
                 promptRequest.choices,
-                session.id, SINGLE_CHOICE_DIALOG_TYPE
+                session.id,
+                promptRequest.uid,
+                true,
+                SINGLE_CHOICE_DIALOG_TYPE,
             )
 
             is MultipleChoice -> ChoiceDialogFragment.newInstance(
-                promptRequest.choices, session.id, MULTIPLE_CHOICE_DIALOG_TYPE
+                promptRequest.choices,
+                session.id,
+                promptRequest.uid,
+                true,
+                MULTIPLE_CHOICE_DIALOG_TYPE,
             )
 
             is MenuChoice -> ChoiceDialogFragment.newInstance(
-                promptRequest.choices, session.id, MENU_CHOICE_DIALOG_TYPE
+                promptRequest.choices,
+                session.id,
+                promptRequest.uid,
+                true,
+                MENU_CHOICE_DIALOG_TYPE,
             )
 
             is Alert -> {
                 with(promptRequest) {
                     AlertDialogFragment.newInstance(
                         session.id,
+                        promptRequest.uid,
+                        true,
                         title,
                         message,
-                        promptAbuserDetector.areDialogsBeingAbused()
+                        promptAbuserDetector.areDialogsBeingAbused(),
                     )
                 }
             }
 
             is TimeSelection -> {
-
                 val selectionType = when (promptRequest.type) {
                     TimeSelection.Type.DATE -> TimePickerDialogFragment.SELECTION_TYPE_DATE
                     TimeSelection.Type.DATE_AND_TIME -> TimePickerDialogFragment.SELECTION_TYPE_DATE_AND_TIME
@@ -328,10 +724,13 @@ class PromptFeature(
                 with(promptRequest) {
                     TimePickerDialogFragment.newInstance(
                         session.id,
+                        promptRequest.uid,
+                        true,
                         initialDate,
                         minimumDate,
                         maximumDate,
-                        selectionType
+                        selectionType,
+                        stepValue,
                     )
                 }
             }
@@ -340,10 +739,12 @@ class PromptFeature(
                 with(promptRequest) {
                     TextPromptDialogFragment.newInstance(
                         session.id,
+                        promptRequest.uid,
+                        true,
                         title,
                         inputLabel,
                         inputValue,
-                        promptAbuserDetector.areDialogsBeingAbused()
+                        promptAbuserDetector.areDialogsBeingAbused(),
                     )
                 }
             }
@@ -352,71 +753,151 @@ class PromptFeature(
                 with(promptRequest) {
                     AuthenticationDialogFragment.newInstance(
                         session.id,
+                        promptRequest.uid,
+                        true,
                         title,
                         message,
                         userName,
                         password,
-                        onlyShowPassword
+                        onlyShowPassword,
+                        uri,
                     )
                 }
             }
 
             is Color -> ColorPickerDialogFragment.newInstance(
                 session.id,
-                promptRequest.defaultColor
+                promptRequest.uid,
+                true,
+                promptRequest.defaultColor,
             )
 
-            is PromptRequest.Popup -> {
-
-                val title = context.getString(R.string.mozac_feature_prompts_popup_dialog_title)
-                val positiveLabel = context.getString(R.string.mozac_feature_prompts_allow)
-                val negativeLabel = context.getString(R.string.mozac_feature_prompts_deny)
+            is Popup -> {
+                val title = container.getString(R.string.mozac_feature_prompts_popup_dialog_title)
+                val positiveLabel = container.getString(R.string.mozac_feature_prompts_allow)
+                val negativeLabel = container.getString(R.string.mozac_feature_prompts_deny)
 
                 ConfirmDialogFragment.newInstance(
                     sessionId = session.id,
+                    promptRequest.uid,
                     title = title,
                     message = promptRequest.targetUri,
                     positiveButtonText = positiveLabel,
-                    negativeButtonText = negativeLabel
+                    negativeButtonText = negativeLabel,
+                    hasShownManyDialogs = promptAbuserDetector.areDialogsBeingAbused(),
+                    shouldDismissOnLoad = true,
+                )
+            }
+            is BeforeUnload -> {
+                val title =
+                    container.getString(R.string.mozac_feature_prompt_before_unload_dialog_title)
+                val body =
+                    container.getString(R.string.mozac_feature_prompt_before_unload_dialog_body)
+                val leaveLabel =
+                    container.getString(R.string.mozac_feature_prompts_before_unload_leave)
+                val stayLabel =
+                    container.getString(R.string.mozac_feature_prompts_before_unload_stay)
+
+                ConfirmDialogFragment.newInstance(
+                    sessionId = session.id,
+                    promptRequest.uid,
+                    title = title,
+                    message = body,
+                    positiveButtonText = leaveLabel,
+                    negativeButtonText = stayLabel,
+                    shouldDismissOnLoad = true,
                 )
             }
 
-            is PromptRequest.Confirm -> {
+            is Confirm -> {
                 with(promptRequest) {
                     val positiveButton = if (positiveButtonTitle.isEmpty()) {
-                        context.getString(R.string.mozac_feature_prompts_ok)
+                        container.getString(R.string.mozac_feature_prompts_ok)
                     } else {
                         positiveButtonTitle
                     }
                     val negativeButton = if (positiveButtonTitle.isEmpty()) {
-                        context.getString(R.string.mozac_feature_prompts_cancel)
+                        container.getString(R.string.mozac_feature_prompts_cancel)
                     } else {
                         positiveButtonTitle
                     }
 
                     MultiButtonDialogFragment.newInstance(
                         session.id,
+                        promptRequest.uid,
                         title,
                         message,
                         promptAbuserDetector.areDialogsBeingAbused(),
+                        false,
                         positiveButton,
                         negativeButton,
-                        neutralButtonTitle
+                        neutralButtonTitle,
                     )
                 }
             }
 
-            else -> throw InvalidParameterException("Not valid prompt request type")
+            is Repost -> {
+                val title = container.context.getString(R.string.mozac_feature_prompt_repost_title)
+                val message =
+                    container.context.getString(R.string.mozac_feature_prompt_repost_message)
+                val positiveAction =
+                    container.context.getString(R.string.mozac_feature_prompt_repost_positive_button_text)
+                val negativeAction =
+                    container.context.getString(R.string.mozac_feature_prompt_repost_negative_button_text)
+
+                ConfirmDialogFragment.newInstance(
+                    sessionId = session.id,
+                    promptRequestUID = promptRequest.uid,
+                    shouldDismissOnLoad = true,
+                    title = title,
+                    message = message,
+                    positiveButtonText = positiveAction,
+                    negativeButtonText = negativeAction,
+                )
+            }
+
+            else -> throw InvalidParameterException("Not valid prompt request type $promptRequest")
         }
 
         dialog.feature = this
 
         if (canShowThisPrompt(promptRequest)) {
+            // If the ChoiceDialogFragment's choices data were updated,
+            // we need to dismiss the previous dialog
+            activePrompt?.get()?.let { promptDialog ->
+                // ChoiceDialogFragment could update their choices data,
+                // and we need to dismiss the previous UI dialog,
+                // without consuming the engine callbacks, and allow to create a new dialog with the
+                // updated data.
+                if (promptDialog is ChoiceDialogFragment &&
+                    !session.content.promptRequests.any { it.uid == promptDialog.promptRequestUID }
+                ) {
+                    // We want to avoid consuming the engine callbacks and allow a new dialog
+                    // to be created with the updated data.
+                    promptDialog.feature = null
+                    promptDialog.dismiss()
+                }
+            }
+
             dialog.show(fragmentManager, FRAGMENT_TAG)
+            activePrompt = WeakReference(dialog)
+
+            if (promptRequest.shouldDismissOnLoad) {
+                activePromptsToDismiss.add(dialog)
+            }
         } else {
-            (promptRequest as PromptRequest.Dismissible).onDismiss()
+            dismissDialogRequest(promptRequest, session)
         }
         promptAbuserDetector.updateJSDialogAbusedState()
+    }
+
+    /**
+     * Dismiss and consume the given prompt request for the session.
+     */
+    @VisibleForTesting
+    internal fun dismissDialogRequest(promptRequest: PromptRequest, session: SessionState) {
+        (promptRequest as Dismissible).onDismiss()
+        store.dispatch(ContentAction.ConsumePromptRequestAction(session.id, promptRequest))
     }
 
     private fun canShowThisPrompt(promptRequest: PromptRequest): Boolean {
@@ -428,42 +909,137 @@ class PromptFeature(
             is File,
             is Color,
             is Authentication,
-            is PromptRequest.Popup -> true
-            is Alert, is TextPrompt, is PromptRequest.Confirm -> promptAbuserDetector.shouldShowMoreDialogs
+            is BeforeUnload,
+            is SaveLoginPrompt,
+            is SelectLoginPrompt,
+            is SelectCreditCard,
+            is SaveCreditCard,
+            is SelectAddress,
+            is Share,
+            -> true
+            is Alert, is TextPrompt, is Confirm, is Repost, is Popup -> promptAbuserDetector.shouldShowMoreDialogs
         }
     }
 
     /**
-     * Observes [Session.Observer.onPromptRequested] of the selected session
-     * and notifies the feature whenever a prompt needs to be shown.
+     * Dismisses the select prompts if they are active and visible.
+     *
+     * @returns true if a select prompt was dismissed, otherwise false.
      */
-    internal class PromptRequestObserver(
-        sessionManager: SessionManager,
-        private val feature: PromptFeature
-    ) : SelectionAwareSessionObserver(sessionManager) {
+    @VisibleForTesting
+    fun dismissSelectPrompts(): Boolean {
+        var result = false
 
-        override fun onPromptRequested(session: Session, promptRequest: PromptRequest): Boolean {
-            feature.onPromptRequested(session, promptRequest)
-            return false
-        }
-
-        override fun onLoadingStateChanged(session: Session, loading: Boolean) {
-            if (!loading) {
-                feature.promptAbuserDetector.resetJSAlertAbuseState()
+        (activePromptRequest as? SelectLoginPrompt)?.let { selectLoginPrompt ->
+            loginPicker?.let { loginPicker ->
+                if (loginDelegate.loginPickerView?.asView()?.isVisible == true) {
+                    loginPicker.dismissCurrentLoginSelect(selectLoginPrompt)
+                    result = true
+                }
             }
         }
+
+        (activePromptRequest as? SelectCreditCard)?.let { selectCreditCardPrompt ->
+            creditCardPicker?.let { creditCardPicker ->
+                if (creditCardDelegate.creditCardPickerView?.asView()?.isVisible == true) {
+                    creditCardPicker.dismissSelectCreditCardRequest(selectCreditCardPrompt)
+                    result = true
+                }
+            }
+        }
+
+        (activePromptRequest as? SelectAddress)?.let { selectAddressPrompt ->
+            addressPicker?.let { addressPicker ->
+                if (addressDelegate.addressPickerView?.asView()?.isVisible == true) {
+                    addressPicker.dismissSelectAddressRequest(selectAddressPrompt)
+                    result = true
+                }
+            }
+        }
+
+        return result
     }
 
     companion object {
-        const val FILE_PICKER_ACTIVITY_REQUEST_CODE = 1234
+        // The PIN request code
+        const val PIN_REQUEST = 303
     }
 }
 
-internal fun SessionManager.consumePromptFrom(
+/**
+ * Removes the [PromptRequest] indicated by [promptRequestUID] from the current Session if it it exists
+ * and offers a [consume] callback for other optional side effects.
+ *
+ * @param sessionId Session id of the tab or custom tab in which to try consuming [PromptRequests].
+ * If the id is not provided or a tab with that id is not found the method will act on the current tab.
+ * @param promptRequestUID Id of the [PromptRequest] to be consumed.
+ * @param activePrompt The current active Prompt if known. If provided it will always be cleared,
+ * irrespective of if [PromptRequest] indicated by [promptRequestUID] is found and removed or not.
+ * @param consume callback with the [PromptRequest] if found, before being removed from the Session.
+ */
+internal fun BrowserStore.consumePromptFrom(
     sessionId: String?,
-    consumer: (PromptRequest) -> Boolean
+    promptRequestUID: String,
+    activePrompt: WeakReference<PromptDialogFragment>? = null,
+    consume: (PromptRequest) -> Unit,
 ) {
-    runWithSessionIdOrSelected(sessionId) {
-        it.promptRequest.consume(consumer)
+    state.findTabOrCustomTabOrSelectedTab(sessionId)?.let { tab ->
+        activePrompt?.clear()
+        tab.content.promptRequests.firstOrNull { it.uid == promptRequestUID }?.let {
+            consume(it)
+            dispatch(ContentAction.ConsumePromptRequestAction(tab.id, it))
+        }
+    }
+}
+
+/**
+ * Removes the most recent [PromptRequest] of type [P] from the current Session if it it exists
+ * and offers a [consume] callback for other optional side effects.
+ *
+ * @param sessionId Session id of the tab or custom tab in which to try consuming [PromptRequests].
+ * If the id is not provided or a tab with that id is not found the method will act on the current tab.
+ * @param activePrompt The current active Prompt if known. If provided it will always be cleared,
+ * irrespective of if [PromptRequest] indicated by [promptRequestUID] is found and removed or not.
+ * @param consume callback with the [PromptRequest] if found, before being removed from the Session.
+ */
+internal inline fun <reified P : PromptRequest> BrowserStore.consumePromptFrom(
+    sessionId: String?,
+    activePrompt: WeakReference<PromptDialogFragment>? = null,
+    consume: (P) -> Unit,
+) {
+    state.findTabOrCustomTabOrSelectedTab(sessionId)?.let { tab ->
+        activePrompt?.clear()
+        tab.content.promptRequests.lastOrNull { it is P }?.let {
+            consume(it as P)
+            dispatch(ContentAction.ConsumePromptRequestAction(tab.id, it))
+        }
+    }
+}
+
+/**
+ * Filters and removes all [PromptRequest]s from the current Session if it it exists
+ * and offers a [consume] callback for other optional side effects on each filtered [PromptRequest].
+ *
+ * @param sessionId Session id of the tab or custom tab in which to try consuming [PromptRequests].
+ * If the id is not provided or a tab with that id is not found the method will act on the current tab.
+ * @param activePrompt The current active Prompt if known. If provided it will always be cleared,
+ * irrespective of if [PromptRequest] indicated by [promptRequestUID] is found and removed or not.
+ * @param predicate function allowing matching only specific [PromptRequest]s from all contained in the Session.
+ * @param consume callback with the [PromptRequest] if found, before being removed from the Session.
+ */
+internal fun BrowserStore.consumeAllSessionPrompts(
+    sessionId: String?,
+    activePrompt: WeakReference<PromptDialogFragment>? = null,
+    predicate: (PromptRequest) -> Boolean,
+    consume: (PromptRequest) -> Unit = { },
+) {
+    state.findTabOrCustomTabOrSelectedTab(sessionId)?.let { tab ->
+        activePrompt?.clear()
+        tab.content.promptRequests
+            .filter { predicate(it) }
+            .forEach {
+                consume(it)
+                dispatch(ContentAction.ConsumePromptRequestAction(tab.id, it))
+            }
     }
 }

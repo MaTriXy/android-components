@@ -11,10 +11,11 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Binder
 import android.os.Bundle
+import androidx.browser.customtabs.CustomTabColorSchemeParams
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.browser.customtabs.CustomTabsIntent.EXTRA_NAVIGATION_BAR_COLOR
 import androidx.browser.customtabs.TrustedWebUtils
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import mozilla.components.browser.state.state.CustomTabConfig.Companion.EXTRA_NAVIGATION_BAR_COLOR
 import mozilla.components.support.test.mock
 import mozilla.components.support.test.robolectric.testContext
 import org.junit.Assert.assertEquals
@@ -23,12 +24,23 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.Mockito.doReturn
+import org.mockito.Mockito.spy
 import org.mockito.Mockito.`when`
 
 @RunWith(AndroidJUnit4::class)
 class CustomTabConfigHelperTest {
+
+    private lateinit var resources: Resources
+
+    @Before
+    fun setup() {
+        resources = spy(testContext.resources)
+        doReturn(24f).`when`(resources).getDimension(R.dimen.mozac_feature_customtabs_max_close_button_size)
+    }
 
     @Test
     fun isCustomTabIntent() {
@@ -45,22 +57,19 @@ class CustomTabConfigHelperTest {
         assertTrue(isTrustedWebActivityIntent(trustedWebActivityIntent))
         assertFalse(isTrustedWebActivityIntent(customTabsIntent))
         assertFalse(isTrustedWebActivityIntent(mock<Intent>()))
-        assertFalse(isTrustedWebActivityIntent(
-            Intent().putExtra(TrustedWebUtils.EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, true)
-        ))
-    }
-
-    @Test
-    fun createFromIntentAssignsId() {
-        val customTabsIntent = CustomTabsIntent.Builder().build()
-        val customTabConfig = createCustomTabConfigFromIntent(customTabsIntent.intent, testContext.resources)
-        assertTrue(customTabConfig.id.isNotBlank())
+        assertFalse(
+            isTrustedWebActivityIntent(
+                Intent().putExtra(TrustedWebUtils.EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, true),
+            ),
+        )
     }
 
     @Test
     fun createFromIntentWithToolbarColor() {
         val builder = CustomTabsIntent.Builder()
-        builder.setToolbarColor(Color.BLACK)
+        val customTabColorSchemeBuilder = CustomTabColorSchemeParams.Builder()
+        customTabColorSchemeBuilder.setToolbarColor(Color.BLACK)
+        builder.setDefaultColorSchemeParams(customTabColorSchemeBuilder.build())
 
         val customTabConfig = createCustomTabConfigFromIntent(builder.build().intent, testContext.resources)
         assertEquals(Color.BLACK, customTabConfig.toolbarColor)
@@ -135,7 +144,7 @@ class CustomTabConfigHelperTest {
     @Test
     fun createFromIntentWithUrlbarHiding() {
         val builder = CustomTabsIntent.Builder()
-        builder.enableUrlBarHiding()
+        builder.setUrlBarHidingEnabled(true)
 
         val customTabConfig = createCustomTabConfigFromIntent(builder.build().intent, testContext.resources)
         assertTrue(customTabConfig.enableUrlbarHiding)
@@ -144,10 +153,19 @@ class CustomTabConfigHelperTest {
     @Test
     fun createFromIntentWithShareMenuItem() {
         val builder = CustomTabsIntent.Builder()
-        builder.addDefaultShareMenuItem()
+        builder.setShareState(CustomTabsIntent.SHARE_STATE_ON)
 
         val customTabConfig = createCustomTabConfigFromIntent(builder.build().intent, testContext.resources)
         assertTrue(customTabConfig.showShareMenuItem)
+    }
+
+    @Test
+    fun createFromIntentWithShareState() {
+        val builder = CustomTabsIntent.Builder()
+        builder.setShareState(CustomTabsIntent.SHARE_STATE_ON)
+
+        val extraShareState = builder.build().intent.getIntExtra(CustomTabsIntent.EXTRA_SHARE_STATE, 5)
+        assertEquals(CustomTabsIntent.SHARE_STATE_ON, extraShareState)
     }
 
     @Test

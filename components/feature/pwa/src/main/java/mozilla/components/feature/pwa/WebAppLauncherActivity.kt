@@ -9,7 +9,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.annotation.VisibleForTesting
-import androidx.annotation.VisibleForTesting.PRIVATE
+import androidx.annotation.VisibleForTesting.Companion.PRIVATE
 import androidx.appcompat.app.AppCompatActivity
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
@@ -21,8 +21,8 @@ import mozilla.components.support.base.log.logger.Logger
 /**
  * This activity is launched by Web App shortcuts on the home screen.
  *
- * Based on the Web App Manifest (display) it will decide whether the app is launched in the browser or in a
- * standalone activity.
+ * Based on the Web App Manifest (display) it will decide whether the app is launched in the
+ * browser or in a standalone activity.
  */
 class WebAppLauncherActivity : AppCompatActivity() {
 
@@ -32,7 +32,7 @@ class WebAppLauncherActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        storage = ManifestStorage(this)
+        storage = ManifestStorage(applicationContext)
 
         val startUrl = intent.data ?: return finish()
 
@@ -54,7 +54,11 @@ class WebAppLauncherActivity : AppCompatActivity() {
         when (manifest?.display) {
             WebAppManifest.DisplayMode.FULLSCREEN,
             WebAppManifest.DisplayMode.STANDALONE,
-            WebAppManifest.DisplayMode.MINIMAL_UI -> launchWebAppShell(startUrl)
+            WebAppManifest.DisplayMode.MINIMAL_UI,
+            -> {
+                emitHomescreenIconTapFact()
+                launchWebAppShell(startUrl)
+            }
 
             // If no manifest is saved for this site, just open the browser.
             WebAppManifest.DisplayMode.BROWSER, null -> launchBrowser(startUrl)
@@ -64,6 +68,7 @@ class WebAppLauncherActivity : AppCompatActivity() {
     @VisibleForTesting(otherwise = PRIVATE)
     internal fun launchBrowser(startUrl: Uri) {
         val intent = Intent(Intent.ACTION_VIEW, startUrl).apply {
+            addCategory(SHORTCUT_CATEGORY)
             `package` = packageName
         }
 

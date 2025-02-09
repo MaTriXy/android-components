@@ -51,6 +51,8 @@ interface Headers : Iterable<Header> {
      */
     object Names {
         const val CONTENT_DISPOSITION = "Content-Disposition"
+        const val CONTENT_RANGE = "Content-Range"
+        const val RANGE = "Range"
         const val CONTENT_LENGTH = "Content-Length"
         const val CONTENT_TYPE = "Content-Type"
         const val COOKIE = "Cookie"
@@ -74,7 +76,7 @@ interface Headers : Iterable<Header> {
  */
 data class Header(
     val name: String,
-    val value: String
+    val value: String,
 ) {
     init {
         if (name.isEmpty()) {
@@ -91,7 +93,7 @@ class MutableHeaders(headers: List<Header>) : Headers, MutableIterable<Header> {
     private val headers = headers.toMutableList()
 
     constructor(vararg pairs: Pair<String, String>) : this(
-        pairs.map { (name, value) -> Header(name, value) }.toMutableList()
+        pairs.map { (name, value) -> Header(name, value) }.toMutableList(),
     )
 
     /**
@@ -102,13 +104,14 @@ class MutableHeaders(headers: List<Header>) : Headers, MutableIterable<Header> {
     /**
      * Returns the last value corresponding to the specified header field name. Or null if the header does not exist.
      */
-    override fun get(name: String) = headers.lastOrNull { it.name.toLowerCase() == name.toLowerCase() }?.value
+    override fun get(name: String) =
+        headers.lastOrNull { header -> header.name.equals(name, ignoreCase = true) }?.value
 
     /**
      * Returns the list of values corresponding to the specified header field name.
      */
     override fun getAll(name: String): List<String> = headers
-        .filter { header -> header.name == name }
+        .filter { header -> header.name.equals(name, ignoreCase = true) }
         .map { header -> header.value }
 
     /**
@@ -126,7 +129,8 @@ class MutableHeaders(headers: List<Header>) : Headers, MutableIterable<Header> {
     /**
      * Returns true if a [Header] with the given [name] exists.
      */
-    override operator fun contains(name: String): Boolean = headers.firstOrNull { it.name == name } != null
+    override operator fun contains(name: String): Boolean =
+        headers.any { it.name.equals(name, ignoreCase = true) }
 
     /**
      * Returns the number of headers (key / value combinations).
@@ -147,7 +151,7 @@ class MutableHeaders(headers: List<Header>) : Headers, MutableIterable<Header> {
      */
     fun set(name: String, value: String): MutableHeaders {
         headers.forEachIndexed { index, current ->
-            if (current.name == name) {
+            if (current.name.equals(name, ignoreCase = true)) {
                 headers[index] = Header(name, value)
                 return this
             }

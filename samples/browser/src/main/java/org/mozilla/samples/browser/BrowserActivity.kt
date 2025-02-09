@@ -6,23 +6,29 @@ package org.mozilla.samples.browser
 
 import android.content.ComponentCallbacks2
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.util.AttributeSet
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
-import mozilla.components.feature.intent.ext.getSessionId
-import mozilla.components.browser.tabstray.BrowserTabsTray
+import mozilla.components.browser.state.state.WebExtensionState
 import mozilla.components.concept.engine.EngineView
-import mozilla.components.concept.tabstray.TabsTray
-import mozilla.components.support.base.feature.BackHandler
+import mozilla.components.feature.contextmenu.ext.DefaultSelectionActionDelegate
+import mozilla.components.feature.intent.ext.getSessionId
+import mozilla.components.support.base.feature.UserInteractionHandler
 import mozilla.components.support.utils.SafeIntent
+import mozilla.components.support.webextensions.WebExtensionPopupFeature
+import org.mozilla.samples.browser.addons.WebExtensionActionPopupActivity
 import org.mozilla.samples.browser.ext.components
 
 /**
  * Activity that holds the [BrowserFragment].
  */
 open class BrowserActivity : AppCompatActivity(), ComponentCallbacks2 {
+    private val webExtensionPopupFeature by lazy {
+        WebExtensionPopupFeature(components.store, ::openPopup)
+    }
 
     /**
      * Returns a new instance of [BrowserFragment] to display.
@@ -41,17 +47,13 @@ open class BrowserActivity : AppCompatActivity(), ComponentCallbacks2 {
                 commit()
             }
         }
-    }
 
-    override fun onDestroy() {
-        super.onDestroy()
-
-        components.historyStorage.cleanup()
+        lifecycle.addObserver(webExtensionPopupFeature)
     }
 
     override fun onBackPressed() {
         supportFragmentManager.fragments.forEach {
-            if (it is BackHandler && it.onBackPressed()) {
+            if (it is UserInteractionHandler && it.onBackPressed()) {
                 return
             }
         }
@@ -61,13 +63,20 @@ open class BrowserActivity : AppCompatActivity(), ComponentCallbacks2 {
 
     override fun onCreateView(parent: View?, name: String, context: Context, attrs: AttributeSet): View? =
         when (name) {
-            EngineView::class.java.name -> components.engine.createView(context, attrs).asView()
-            TabsTray::class.java.name -> BrowserTabsTray(context, attrs)
+            EngineView::class.java.name -> components.engine.createView(context, attrs).apply {
+                selectionActionDelegate = DefaultSelectionActionDelegate(
+                    store = components.store,
+                    context = context,
+                )
+            }.asView()
             else -> super.onCreateView(parent, name, context, attrs)
         }
 
-    override fun onTrimMemory(level: Int) {
-        components.sessionManager.onLowMemory()
-        components.icons.onLowMemory()
+    private fun openPopup(webExtensionState: WebExtensionState) {
+        val intent = Intent(this, WebExtensionActionPopupActivity::class.java)
+        intent.putExtra("web_extension_id", webExtensionState.id)
+        intent.putExtra("web_extension_name", webExtensionState.name)
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        startActivity(intent)
     }
 }

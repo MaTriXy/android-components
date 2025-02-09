@@ -13,13 +13,12 @@ import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.withContentDescription
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withText
+import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.rule.ActivityTestRule
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiSelector
-import mozilla.components.support.android.test.leaks.LeakDetectionRule
 import mozilla.components.support.android.test.rules.WebserverRule
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -33,59 +32,64 @@ private const val WAIT_FOR_WEB_CONTENT_SECONDS = 15L
 /**
  * A collection of "smoke tests" to verify that the basic browsing functionality is working.
  */
+
 @RunWith(AndroidJUnit4::class)
 @LargeTest
 class SmokeTests {
     @get:Rule
-    val activityRule: ActivityTestRule<BrowserActivity> = ActivityTestRule(BrowserActivity::class.java)
+    val activityRule: ActivityScenarioRule<BrowserActivity> = ActivityScenarioRule(BrowserActivity::class.java)
 
     @get:Rule
     val webserverRule: WebserverRule = WebserverRule()
-
-    @get:Rule
-    val leakDetectionRule: LeakDetectionRule = LeakDetectionRule()
 
     /**
      * This test loads a website from a local webserver by typing into the URL bar. After that it verifies that the
      * web content is visible.
      */
+
     @Test
     fun loadWebsiteTest() {
-        waitForIdle()
+        // Disable on API21 - https://github.com/mozilla-mobile/android-components/issues/6482
+        if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.LOLLIPOP) {
+            waitForIdle()
 
-        enterUrl(webserverRule.url())
+            enterUrl(webserverRule.url())
 
-        verifyWebsiteContent("Hello World!")
-        verifyUrlInToolbar(webserverRule.url())
+            verifyWebsiteContent("Hello World!")
+            verifyUrlInToolbar(webserverRule.url())
+        }
     }
 
     @Test
     fun loadWebsitesInMultipleTabsTest() {
-        waitForIdle()
+        // Disable on API21 - https://github.com/mozilla-mobile/android-components/issues/6482
+        if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.LOLLIPOP) {
+            waitForIdle()
 
-        enterUrl(webserverRule.url())
+            enterUrl(webserverRule.url())
 
-        verifyWebsiteContent("Hello World!")
-        verifyUrlInToolbar(webserverRule.url())
+            verifyWebsiteContent("Hello World!")
+            verifyUrlInToolbar(webserverRule.url())
 
-        navigateToTabsTray()
-        openNewTabInTabsTray()
+            navigateToTabsTray()
+            openNewTabInTabsTray()
 
-        enterUrl(webserverRule.url())
+            enterUrl(webserverRule.url())
 
-        verifyWebsiteContent("Hello World!")
-        verifyUrlInToolbar(webserverRule.url())
+            verifyWebsiteContent("Hello World!")
+            verifyUrlInToolbar(webserverRule.url())
 
-        navigateToTabsTray()
-        openNewTabInTabsTray()
+            navigateToTabsTray()
+            openNewTabInTabsTray()
 
-        enterUrl(webserverRule.url())
+            enterUrl(webserverRule.url())
 
-        verifyWebsiteContent("Hello World!")
-        verifyUrlInToolbar(webserverRule.url())
+            verifyWebsiteContent("Hello World!")
+            verifyUrlInToolbar(webserverRule.url())
 
-        navigateToTabsTray()
-        openNewTabInTabsTray()
+            navigateToTabsTray()
+            openNewTabInTabsTray()
+        }
     }
 }
 
@@ -125,8 +129,12 @@ private fun verifyWebsiteContent(text: String) {
 
     val waitingTime: Long = TimeUnit.SECONDS.toMillis(WAIT_FOR_WEB_CONTENT_SECONDS)
 
-    assertTrue(device
-        .findObject(UiSelector()
-        .textContains(text))
-        .waitForExists(waitingTime))
+    assertTrue(
+        device
+            .findObject(
+                UiSelector()
+                    .textContains(text),
+            )
+            .waitForExists(waitingTime),
+    )
 }

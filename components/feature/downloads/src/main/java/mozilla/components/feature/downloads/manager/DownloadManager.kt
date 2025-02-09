@@ -6,15 +6,16 @@ package mozilla.components.feature.downloads.manager
 
 import android.content.Context
 import mozilla.components.browser.state.state.content.DownloadState
+import mozilla.components.browser.state.state.content.DownloadState.Status
 import mozilla.components.support.ktx.android.content.isPermissionGranted
 
-typealias OnDownloadCompleted = (DownloadState, Long) -> Unit
+typealias onDownloadStopped = (DownloadState, String, Status) -> Unit
 
 interface DownloadManager {
 
     val permissions: Array<String>
 
-    var onDownloadCompleted: OnDownloadCompleted
+    var onDownloadStopped: onDownloadStopped
 
     /**
      * Schedules a download through the [DownloadManager].
@@ -24,8 +25,16 @@ interface DownloadManager {
      */
     fun download(
         download: DownloadState,
-        cookie: String = ""
-    ): Long?
+        cookie: String = "",
+    ): String?
+
+    /**
+     * Schedules another attempt at downloading the given download.
+     * @param downloadId the id of the previously attempted download
+     */
+    fun tryAgain(
+        downloadId: String,
+    )
 
     fun unregisterListeners() = Unit
 }
@@ -36,4 +45,4 @@ fun DownloadManager.validatePermissionGranted(context: Context) {
     }
 }
 
-internal val noop: OnDownloadCompleted = { _, _ -> }
+internal val noop: onDownloadStopped = { _, _, _ -> }

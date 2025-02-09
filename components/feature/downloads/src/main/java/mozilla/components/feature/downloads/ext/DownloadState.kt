@@ -10,6 +10,7 @@ import mozilla.components.concept.fetch.Headers
 import mozilla.components.concept.fetch.Headers.Names.CONTENT_DISPOSITION
 import mozilla.components.concept.fetch.Headers.Names.CONTENT_LENGTH
 import mozilla.components.concept.fetch.Headers.Names.CONTENT_TYPE
+import mozilla.components.support.ktx.kotlin.sanitizeFileName
 import mozilla.components.support.utils.DownloadUtils
 import java.io.InputStream
 import java.net.URLConnection
@@ -35,13 +36,14 @@ internal fun DownloadState.withResponse(headers: Headers, stream: InputStream?):
         contentType = headers[CONTENT_TYPE]
     }
 
+    val newFileName = if (fileName.isNullOrBlank()) {
+        DownloadUtils.guessFileName(contentDisposition, destinationDirectory, url, contentType)
+    } else {
+        fileName
+    }
     return copy(
-        fileName = if (fileName.isNullOrBlank()) {
-            DownloadUtils.guessFileName(contentDisposition, url, contentType)
-        } else {
-            fileName
-        },
+        fileName = newFileName?.sanitizeFileName(),
         contentType = contentType,
-        contentLength = contentLength ?: headers[CONTENT_LENGTH]?.toLongOrNull()
+        contentLength = contentLength ?: headers[CONTENT_LENGTH]?.toLongOrNull(),
     )
 }

@@ -4,18 +4,20 @@
 
 package mozilla.components.concept.engine
 
+import android.content.Intent
 import android.graphics.Bitmap
 import androidx.annotation.CallSuper
-import mozilla.components.concept.engine.EngineSession.TrackingProtectionPolicy.Companion.RECOMMENDED
 import mozilla.components.concept.engine.EngineSession.TrackingProtectionPolicy.CookiePolicy.ACCEPT_ALL
 import mozilla.components.concept.engine.EngineSession.TrackingProtectionPolicy.CookiePolicy.ACCEPT_NON_TRACKERS
 import mozilla.components.concept.engine.content.blocking.Tracker
+import mozilla.components.concept.engine.history.HistoryItem
 import mozilla.components.concept.engine.manifest.WebAppManifest
-import mozilla.components.concept.engine.media.Media
 import mozilla.components.concept.engine.media.RecordingDevice
+import mozilla.components.concept.engine.mediasession.MediaSession
 import mozilla.components.concept.engine.permission.PermissionRequest
 import mozilla.components.concept.engine.prompt.PromptRequest
 import mozilla.components.concept.engine.window.WindowRequest
+import mozilla.components.concept.fetch.Response
 import mozilla.components.support.base.observer.Observable
 import mozilla.components.support.base.observer.ObserverRegistry
 
@@ -26,14 +28,22 @@ import mozilla.components.support.base.observer.ObserverRegistry
  */
 @Suppress("TooManyFunctions")
 abstract class EngineSession(
-    private val delegate: Observable<EngineSession.Observer> = ObserverRegistry()
-) : Observable<EngineSession.Observer> by delegate {
+    private val delegate: Observable<Observer> = ObserverRegistry(),
+) : Observable<EngineSession.Observer> by delegate, DataCleanable {
     /**
      * Interface to be implemented by classes that want to observe this engine session.
      */
     interface Observer {
         fun onLocationChange(url: String) = Unit
         fun onTitleChange(title: String) = Unit
+
+        /**
+         * Event to indicate a preview image URL was discovered in the content after the content loaded.
+         *
+         * @param previewImageUrl The preview image URL sent from the content.
+         */
+        fun onPreviewImageChange(previewImageUrl: String) = Unit
+
         fun onProgress(progress: Int) = Unit
         fun onLoadingStateChange(loading: Boolean) = Unit
         fun onNavigationStateChange(canGoBack: Boolean? = null, canGoForward: Boolean? = null) = Unit
@@ -41,24 +51,139 @@ abstract class EngineSession(
         fun onTrackerBlockingEnabledChange(enabled: Boolean) = Unit
         fun onTrackerBlocked(tracker: Tracker) = Unit
         fun onTrackerLoaded(tracker: Tracker) = Unit
+        fun onNavigateBack() = Unit
+
+        /**
+         * Event to indicate whether or not this [EngineSession] should be [excluded] from tracking protection.
+         */
+        fun onExcludedOnTrackingProtectionChange(excluded: Boolean) = Unit
+
+        /**
+         * Event to indicate that this session has had it's first engine contentful paint of page content.
+         */
+        fun onFirstContentfulPaint() = Unit
+
+        /**
+         * Event to indicate that this session has had it's paint status reset.
+         */
+        fun onPaintStatusReset() = Unit
         fun onLongPress(hitResult: HitResult) = Unit
         fun onDesktopModeChange(enabled: Boolean) = Unit
         fun onFind(text: String) = Unit
         fun onFindResult(activeMatchOrdinal: Int, numberOfMatches: Int, isDoneCounting: Boolean) = Unit
         fun onFullScreenChange(enabled: Boolean) = Unit
+
+        /**
+         * @param layoutInDisplayCutoutMode value of defined in https://developer.android.com/reference/android/view/WindowManager.LayoutParams#layoutInDisplayCutoutMode
+         */
+        fun onMetaViewportFitChanged(layoutInDisplayCutoutMode: Int) = Unit
         fun onThumbnailChange(bitmap: Bitmap?) = Unit
         fun onAppPermissionRequest(permissionRequest: PermissionRequest) = permissionRequest.reject()
         fun onContentPermissionRequest(permissionRequest: PermissionRequest) = permissionRequest.reject()
         fun onCancelContentPermissionRequest(permissionRequest: PermissionRequest) = Unit
         fun onPromptRequest(promptRequest: PromptRequest) = Unit
-        fun onOpenWindowRequest(windowRequest: WindowRequest) = Unit
-        fun onCloseWindowRequest(windowRequest: WindowRequest) = Unit
-        fun onMediaAdded(media: Media) = Unit
-        fun onMediaRemoved(media: Media) = Unit
+
+        /**
+         * The engine has requested a prompt be dismissed.
+         */
+        fun onPromptDismissed(promptRequest: PromptRequest) = Unit
+
+        /**
+         * The engine has requested a prompt update.
+         */
+        fun onPromptUpdate(previousPromptRequestUid: String, promptRequest: PromptRequest) = Unit
+
+        /**
+         * User cancelled a repost prompt. Page will not be reloaded.
+         */
+        fun onRepostPromptCancelled() = Unit
+
+        /**
+         * User cancelled a beforeunload prompt. Navigating to another page is cancelled.
+         */
+        fun onBeforeUnloadPromptDenied() = Unit
+
+        /**
+         * The engine received a request to open or close a window.
+         *
+         * @param windowRequest the request to describing the required window action.
+         */
+        fun onWindowRequest(windowRequest: WindowRequest) = Unit
+
+        /**
+         * Based on the webpage current state the toolbar should be expanded to it's full height
+         * previously specified in [EngineView.setDynamicToolbarMaxHeight].
+         */
+        fun onShowDynamicToolbar() = Unit
+
+        /**
+         * Notify that the given media session has become active.
+         *
+         * @param mediaSessionController The associated [MediaSession.Controller].
+         */
+        fun onMediaActivated(mediaSessionController: MediaSession.Controller) = Unit
+
+        /**
+         * Notify that the given media session has become inactive.
+         * Inactive media sessions can not be controlled.
+         */
+        fun onMediaDeactivated() = Unit
+
+        /**
+         * Notify on updated metadata.
+         *
+         * @param metadata The updated [MediaSession.Metadata].
+         */
+        fun onMediaMetadataChanged(metadata: MediaSession.Metadata) = Unit
+
+        /**
+         * Notify on updated supported features.
+         *
+         * @param features A combination of [MediaSession.Feature].
+         */
+        fun onMediaFeatureChanged(features: MediaSession.Feature) = Unit
+
+        /**
+         * Notify that playback has changed for the given media session.
+         *
+         * @param playbackState The updated [MediaSession.PlaybackState].
+         */
+        fun onMediaPlaybackStateChanged(playbackState: MediaSession.PlaybackState) = Unit
+
+        /**
+         * Notify on updated position state.
+         *
+         * @param positionState The updated [MediaSession.PositionState].
+         */
+        fun onMediaPositionStateChanged(positionState: MediaSession.PositionState) = Unit
+
+        /**
+         * Notify changed audio mute state.
+         *
+         * @param muted True if audio of this media session is muted.
+         */
+        fun onMediaMuteChanged(muted: Boolean) = Unit
+
+        /**
+         * Notify on changed fullscreen state.
+         *
+         * @param fullscreen True when this media session in in fullscreen mode.
+         * @param elementMetadata An instance of [MediaSession.ElementMetadata], if enabled.
+         */
+        fun onMediaFullscreenChanged(
+            fullscreen: Boolean,
+            elementMetadata: MediaSession.ElementMetadata?,
+        ) = Unit
+
         fun onWebAppManifestLoaded(manifest: WebAppManifest) = Unit
         fun onCrash() = Unit
         fun onProcessKilled() = Unit
         fun onRecordingStateChanged(devices: List<RecordingDevice>) = Unit
+
+        /**
+         * Event to indicate that a new saved [EngineSessionState] is available.
+         */
+        fun onStateUpdated(state: EngineSessionState) = Unit
 
         /**
          * The engine received a request to load a request.
@@ -67,9 +192,42 @@ abstract class EngineSession(
          * @param triggeredByRedirect True if and only if the request was triggered by an HTTP redirect.
          * @param triggeredByWebContent True if and only if the request was triggered from within
          * web content (as opposed to via the browser chrome).
+         *
+         * Unlike the name LoadRequest.isRedirect may imply this flag is not about http redirects.
+         * The flag is "True if and only if the request was triggered by an HTTP redirect."
+         * See: https://bugzilla.mozilla.org/show_bug.cgi?id=1545170
          */
-        fun onLoadRequest(url: String, triggeredByRedirect: Boolean, triggeredByWebContent: Boolean) = Unit
+        fun onLoadRequest(
+            url: String,
+            triggeredByRedirect: Boolean,
+            triggeredByWebContent: Boolean,
+        ) = Unit
 
+        /**
+         * The engine received a request to launch a app intent.
+         *
+         * @param url The string url that was requested.
+         * @param appIntent The Android Intent that was requested.
+         * web content (as opposed to via the browser chrome).
+         */
+        fun onLaunchIntentRequest(
+            url: String,
+            appIntent: Intent?,
+        ) = Unit
+
+        /**
+         * The engine received a request to download a file.
+         *
+         * @param url The string url that was requested.
+         * @param fileName The file name.
+         * @param contentLength The size of the file to be downloaded.
+         * @param contentType The type of content to be downloaded.
+         * @param cookie The cookie related to request.
+         * @param userAgent The user agent of the engine.
+         * @param isPrivate Indicates if the download was requested from a private session.
+         * @param response A response object associated with this request, when provided can be
+         * used instead of performing a manual a download.
+         */
         @Suppress("LongParameterList")
         fun onExternalResource(
             url: String,
@@ -77,8 +235,18 @@ abstract class EngineSession(
             contentLength: Long? = null,
             contentType: String? = null,
             cookie: String? = null,
-            userAgent: String? = null
+            userAgent: String? = null,
+            isPrivate: Boolean = false,
+            response: Response? = null,
         ) = Unit
+
+        /**
+         * Event to indicate that this session has changed its history state.
+         *
+         * @param historyList The list of items in the session history.
+         * @param currentIndex Index of the current page in the history list.
+         */
+        fun onHistoryStateChanged(historyList: List<HistoryItem>, currentIndex: Int) = Unit
     }
 
     /**
@@ -117,7 +285,7 @@ abstract class EngineSession(
         /**
          * Blocks all unsafe sites.
          */
-        RECOMMENDED(MALWARE.id + UNWANTED.id + HARMFUL.id + PHISHING.id)
+        RECOMMENDED(MALWARE.id + UNWANTED.id + HARMFUL.id + PHISHING.id),
     }
 
     /**
@@ -126,12 +294,15 @@ abstract class EngineSession(
      * a [TrackingProtectionPolicy] is applicable to all session types (see
      * [TrackingProtectionPolicyForSessionTypes]).
      */
+    @Suppress("LongParameterList")
     open class TrackingProtectionPolicy internal constructor(
         val trackingCategories: Array<TrackingCategory> = arrayOf(TrackingCategory.RECOMMENDED),
         val useForPrivateSessions: Boolean = true,
         val useForRegularSessions: Boolean = true,
         val cookiePolicy: CookiePolicy = ACCEPT_NON_TRACKERS,
-        val strictSocialTrackingProtection: Boolean? = null
+        val cookiePolicyPrivateMode: CookiePolicy = cookiePolicy,
+        val strictSocialTrackingProtection: Boolean? = null,
+        val cookiePurging: Boolean = false,
     ) {
 
         /**
@@ -167,7 +338,14 @@ abstract class EngineSession(
              * to block cookies which are not associated with the domain of the visited
              * site set by known trackers.
              */
-            ACCEPT_NON_TRACKERS(4)
+            ACCEPT_NON_TRACKERS(4),
+
+            /**
+             * Enable dynamic first party isolation (dFPI); this will block third-party tracking
+             * cookies in accordance with the ETP level and isolate non-tracking third-party
+             * cookies.
+             */
+            ACCEPT_FIRST_PARTY_AND_ISOLATE_OTHERS(5),
         }
 
         @Suppress("MagicNumber")
@@ -217,25 +395,23 @@ abstract class EngineSession(
             /**
              * Blocks content like scripts and sub-resources.
              */
-            SCRIPTS_AND_SUB_RESOURCES(1 shl 9999),
+            SCRIPTS_AND_SUB_RESOURCES(1 shl 31),
 
-            RECOMMENDED(AD.id + ANALYTICS.id + SOCIAL.id + TEST.id + MOZILLA_SOCIAL.id +
-                CRYPTOMINING.id),
+            RECOMMENDED(
+                AD.id + ANALYTICS.id + SOCIAL.id + TEST.id + MOZILLA_SOCIAL.id +
+                    CRYPTOMINING.id + FINGERPRINTING.id,
+            ),
 
             /**
-             * Combining the [RECOMMENDED] categories plus [SCRIPTS_AND_SUB_RESOURCES]
-             * and [FINGERPRINTING].
+             * Combining the [RECOMMENDED] categories plus [SCRIPTS_AND_SUB_RESOURCES].
              */
-            STRICT(RECOMMENDED.id + SCRIPTS_AND_SUB_RESOURCES.id + FINGERPRINTING.id)
+            STRICT(RECOMMENDED.id + SCRIPTS_AND_SUB_RESOURCES.id),
         }
 
         companion object {
-
-            internal val RECOMMENDED = TrackingProtectionPolicy()
-
             fun none() = TrackingProtectionPolicy(
                 trackingCategories = arrayOf(TrackingCategory.NONE),
-                cookiePolicy = ACCEPT_ALL
+                cookiePolicy = ACCEPT_ALL,
             )
 
             /**
@@ -246,7 +422,8 @@ abstract class EngineSession(
             fun strict() = TrackingProtectionPolicyForSessionTypes(
                 trackingCategory = arrayOf(TrackingCategory.STRICT),
                 cookiePolicy = ACCEPT_NON_TRACKERS,
-                strictSocialTrackingProtection = true
+                strictSocialTrackingProtection = true,
+                cookiePurging = true,
             )
 
             /**
@@ -257,17 +434,36 @@ abstract class EngineSession(
             fun recommended() = TrackingProtectionPolicyForSessionTypes(
                 trackingCategory = arrayOf(TrackingCategory.RECOMMENDED),
                 cookiePolicy = ACCEPT_NON_TRACKERS,
-                strictSocialTrackingProtection = false
+                strictSocialTrackingProtection = false,
+                cookiePurging = true,
             )
 
+            /**
+             *  Creates a custom [TrackingProtectionPolicyForSessionTypes] using the provide values .
+             *  @param trackingCategories a list of tracking categories to apply.
+             *  @param cookiePolicy indicates how cookies should behave for this policy.
+             *  @param cookiePolicyPrivateMode indicates how cookies should behave in private mode for this policy,
+             *  default to [cookiePolicy] if not set.
+             *  @param strictSocialTrackingProtection indicate  if content should be blocked from the
+             *  social-tracking-protection-digest256 list, when given a null value,
+             *  it is only applied when the [EngineSession.TrackingProtectionPolicy.TrackingCategory.STRICT]
+             *  is set.
+             *  @param cookiePurging Whether or not to automatically purge tracking cookies. This will
+             *  purge cookies from tracking sites that do not have recent user interaction provided.
+             */
+            @Suppress("LongParameterList")
             fun select(
                 trackingCategories: Array<TrackingCategory> = arrayOf(TrackingCategory.RECOMMENDED),
                 cookiePolicy: CookiePolicy = ACCEPT_NON_TRACKERS,
-                strictSocialTrackingProtection: Boolean? = null
+                cookiePolicyPrivateMode: CookiePolicy = cookiePolicy,
+                strictSocialTrackingProtection: Boolean? = null,
+                cookiePurging: Boolean = false,
             ) = TrackingProtectionPolicyForSessionTypes(
-                trackingCategories,
-                cookiePolicy,
-                strictSocialTrackingProtection
+                trackingCategory = trackingCategories,
+                cookiePolicy = cookiePolicy,
+                cookiePolicyPrivateMode = cookiePolicyPrivateMode,
+                strictSocialTrackingProtection = strictSocialTrackingProtection,
+                cookiePurging = cookiePurging,
             )
         }
 
@@ -277,33 +473,64 @@ abstract class EngineSession(
             if (hashCode() != other.hashCode()) return false
             if (useForPrivateSessions != other.useForPrivateSessions) return false
             if (useForRegularSessions != other.useForRegularSessions) return false
+            if (cookiePurging != other.cookiePurging) return false
+            if (cookiePolicyPrivateMode != other.cookiePolicyPrivateMode) return false
+            if (strictSocialTrackingProtection != other.strictSocialTrackingProtection) return false
             return true
         }
 
-        override fun hashCode() = trackingCategories.sumBy { it.id } + cookiePolicy.id
+        override fun hashCode() = trackingCategories.sumOf { it.id } + cookiePolicy.id
 
         fun contains(category: TrackingCategory) =
-            (trackingCategories.sumBy { it.id } and category.id) != 0
+            (trackingCategories.sumOf { it.id } and category.id) != 0
+    }
+
+    /**
+     * Represents settings options for cookie banner handling.
+     */
+    enum class CookieBannerHandlingMode(val mode: Int) {
+        /**
+         * The feature is turned off and cookie banners are not handled
+         */
+        DISABLED(0),
+
+        /**
+         * Reject cookies if possible
+         */
+        REJECT_ALL(1),
+
+        /**
+         * Reject cookies if possible. If rejecting is not possible, accept cookies
+         */
+        REJECT_OR_ACCEPT_ALL(2),
     }
 
     /**
      * Subtype of [TrackingProtectionPolicy] to control the type of session this policy
      * should be applied to. By default, a policy will be applied to all sessions.
      *  @param trackingCategory a list of tracking categories to apply.
-     *  @param cookiePolicy indicate how cookies should behave for this policy.
+     *  @param cookiePolicy indicates how cookies should behave for this policy.
+     *  @param cookiePolicyPrivateMode indicates how cookies should behave in private mode for this policy,
+     *  default to [cookiePolicy] if not set.
      *  @param strictSocialTrackingProtection indicate  if content should be blocked from the
      *  social-tracking-protection-digest256 list, when given a null value,
      *  it is only applied when the [EngineSession.TrackingProtectionPolicy.TrackingCategory.STRICT]
      *  is set.
+     *  @param cookiePurging Whether or not to automatically purge tracking cookies. This will
+     *  purge cookies from tracking sites that do not have recent user interaction provided.
      */
     class TrackingProtectionPolicyForSessionTypes internal constructor(
         trackingCategory: Array<TrackingCategory> = arrayOf(TrackingCategory.RECOMMENDED),
         cookiePolicy: CookiePolicy = ACCEPT_NON_TRACKERS,
-        strictSocialTrackingProtection: Boolean? = null
+        cookiePolicyPrivateMode: CookiePolicy = cookiePolicy,
+        strictSocialTrackingProtection: Boolean? = null,
+        cookiePurging: Boolean = false,
     ) : TrackingProtectionPolicy(
         trackingCategories = trackingCategory,
         cookiePolicy = cookiePolicy,
-        strictSocialTrackingProtection = strictSocialTrackingProtection
+        cookiePolicyPrivateMode = cookiePolicyPrivateMode,
+        strictSocialTrackingProtection = strictSocialTrackingProtection,
+        cookiePurging = cookiePurging,
     ) {
         /**
          * Marks this policy to be used for private sessions only.
@@ -312,7 +539,10 @@ abstract class EngineSession(
             trackingCategories = trackingCategories,
             useForPrivateSessions = true,
             useForRegularSessions = false,
-            cookiePolicy = cookiePolicy
+            cookiePolicy = cookiePolicy,
+            cookiePolicyPrivateMode = cookiePolicyPrivateMode,
+            strictSocialTrackingProtection = strictSocialTrackingProtection,
+            cookiePurging = cookiePurging,
         )
 
         /**
@@ -322,7 +552,10 @@ abstract class EngineSession(
             trackingCategories = trackingCategories,
             useForPrivateSessions = false,
             useForRegularSessions = true,
-            cookiePolicy = cookiePolicy
+            cookiePolicy = cookiePolicy,
+            cookiePolicyPrivateMode = cookiePolicyPrivateMode,
+            strictSocialTrackingProtection = strictSocialTrackingProtection,
+            cookiePurging = cookiePurging,
         )
     }
 
@@ -337,7 +570,12 @@ abstract class EngineSession(
             const val EXTERNAL: Int = 1 shl 2
             const val ALLOW_POPUPS: Int = 1 shl 3
             const val BYPASS_CLASSIFIER: Int = 1 shl 4
-            internal const val ALL = BYPASS_CACHE + BYPASS_PROXY + EXTERNAL + ALLOW_POPUPS + BYPASS_CLASSIFIER
+            const val LOAD_FLAGS_FORCE_ALLOW_DATA_URI: Int = 1 shl 5
+            const val LOAD_FLAGS_REPLACE_HISTORY: Int = 1 shl 6
+            const val ALLOW_JAVASCRIPT_URL: Int = 1 shl 16
+            internal const val ALL = BYPASS_CACHE + BYPASS_PROXY + EXTERNAL + ALLOW_POPUPS +
+                BYPASS_CLASSIFIER + LOAD_FLAGS_FORCE_ALLOW_DATA_URI + LOAD_FLAGS_REPLACE_HISTORY +
+                ALLOW_JAVASCRIPT_URL
 
             fun all() = LoadUrlFlags(ALL)
             fun none() = LoadUrlFlags(NONE)
@@ -358,12 +596,38 @@ abstract class EngineSession(
     }
 
     /**
+     * Represents a session priority, which signals to the engine that it should give
+     * a different prioritization to a given session.
+     */
+    @Suppress("MagicNumber")
+    enum class SessionPriority(val id: Int) {
+        /**
+         * Signals to the engine that this session has a default priority.
+         */
+        DEFAULT(0),
+
+        /**
+         * Signals to the engine that this session is important, and the Engine should keep
+         * the session alive for as long as possible.
+         */
+        HIGH(1),
+    }
+
+    /**
      * Loads the given URL.
      *
      * @param url the url to load.
-     * @param flags the [LoadUrlFlags] to use when loading the provider url.
+     * @param parent the parent (referring) [EngineSession] i.e. the session that
+     * triggered creating this one.
+     * @param flags the [LoadUrlFlags] to use when loading the provided url.
+     * @param additionalHeaders the extra headers to use when loading the provided url.
      */
-    abstract fun loadUrl(url: String, flags: LoadUrlFlags = LoadUrlFlags.none())
+    abstract fun loadUrl(
+        url: String,
+        parent: EngineSession? = null,
+        flags: LoadUrlFlags = LoadUrlFlags.none(),
+        additionalHeaders: Map<String, String>? = null,
+    )
 
     /**
      * Loads the data with the given mimeType.
@@ -385,75 +649,69 @@ abstract class EngineSession(
     abstract fun loadData(data: String, mimeType: String = "text/html", encoding: String = "UTF-8")
 
     /**
+     * Requests the [EngineSession] to download the current session's contents as a PDF.
+     *
+     * A typical implementation would have the same flow that feeds into [EngineSession.Observer.onExternalResource].
+     */
+    abstract fun requestPdfToDownload()
+
+    /**
      * Stops loading the current session.
      */
     abstract fun stopLoading()
 
     /**
      * Reloads the current URL.
+     *
+     * @param flags the [LoadUrlFlags] to use when reloading the current url.
      */
-    abstract fun reload()
+    abstract fun reload(flags: LoadUrlFlags = LoadUrlFlags.none())
 
     /**
      * Navigates back in the history of this session.
+     *
+     * @param userInteraction informs the engine whether the action was user invoked.
      */
-    abstract fun goBack()
+    abstract fun goBack(userInteraction: Boolean = true)
 
     /**
      * Navigates forward in the history of this session.
-     */
-    abstract fun goForward()
-
-    /**
-     * Saves and returns the engine state. Engine implementations are not required
-     * to persist the state anywhere else than in the returned map. Engines that
-     * already provide a serialized state can use a single entry in this map to
-     * provide this state. The only requirement is that the same map can be used
-     * to restore the original state. See [restoreState] and the specific
-     * engine implementation for details.
-     */
-    abstract fun saveState(): EngineSessionState
-
-    /**
-     * Restores the engine state as provided by [saveState].
      *
-     * @param state state retrieved from [saveState]
+     * @param userInteraction informs the engine whether the action was user invoked.
      */
-    abstract fun restoreState(state: EngineSessionState)
+    abstract fun goForward(userInteraction: Boolean = true)
 
     /**
-     * Enables tracking protection for this engine session.
+     * Navigates to the specified index in the [HistoryState] of this session. The current index of
+     * this session's [HistoryState] will be updated but the items within it will be unchanged.
+     * Invalid index values are ignored.
+     *
+     * @param index the index of the session's [HistoryState] to navigate to
+     */
+    abstract fun goToHistoryIndex(index: Int)
+
+    /**
+     * Restore a saved state; only data that is saved (history, scroll position, zoom, and form data)
+     * will be restored.
+     *
+     * @param state A saved session state.
+     * @return true if the engine session has successfully been restored with the provided state,
+     * false otherwise.
+     */
+    abstract fun restoreState(state: EngineSessionState): Boolean
+
+    /**
+     * Updates the tracking protection [policy] for this engine session.
+     * If you want to disable tracking protection use [TrackingProtectionPolicy.none].
      *
      * @param policy the tracking protection policy to use, defaults to blocking all trackers.
      */
-    abstract fun enableTrackingProtection(policy: TrackingProtectionPolicy = TrackingProtectionPolicy.strict())
-
-    /**
-     * Disables tracking protection for this engine session.
-     */
-    abstract fun disableTrackingProtection()
+    abstract fun updateTrackingProtection(policy: TrackingProtectionPolicy = TrackingProtectionPolicy.strict())
 
     /**
      * Enables/disables Desktop Mode with an optional ability to reload the session right after.
      */
     abstract fun toggleDesktopMode(enable: Boolean, reload: Boolean = false)
-
-    /**
-     * Clears browsing data stored by the engine.
-     *
-     * @param data the type of data that should be cleared.
-     * @param host (optional) name of the host for which data should be cleared. If
-     * omitted data will be cleared for all hosts.
-     * @param onSuccess (optional) callback invoked if the data was cleared successfully.
-     * @param onError (optional) callback invoked if clearing the data caused an exception.
-     */
-    open fun clearData(
-        data: Engine.BrowsingData = Engine.BrowsingData.all(),
-        host: String? = null,
-        onSuccess: (() -> Unit) = { },
-        onError: ((Throwable) -> Unit) = { }
-    ): Unit = onError(UnsupportedOperationException("Clearing browsing data is not supported by this engine. " +
-            "Check both the engine and engine session implementation."))
 
     /**
      * Finds and highlights all occurrences of the provided String and highlights them asynchronously.
@@ -481,11 +739,24 @@ abstract class EngineSession(
     abstract fun exitFullScreenMode()
 
     /**
-     * Tries to recover from a crash by restoring the last know state.
+     * Marks this session active/inactive for web extensions to support
+     * tabs.query({active: true}).
      *
-     * Returns true if a last known state was restored, otherwise false.
+     * @param active whether this session should be marked as active or inactive.
      */
-    abstract fun recoverFromCrash(): Boolean
+    open fun markActiveForWebExtensions(active: Boolean) = Unit
+
+    /**
+     * Updates the priority for this session.
+     *
+     * @param priority the new priority for this session.
+     */
+    open fun updateSessionPriority(priority: SessionPriority) = Unit
+
+    /**
+     * Purges the history for the session (back and forward history).
+     */
+    abstract fun purgeHistory()
 
     /**
      * Close the session. This may free underlying objects. Call this when you are finished using
@@ -493,4 +764,9 @@ abstract class EngineSession(
      */
     @CallSuper
     open fun close() = delegate.unregisterObservers()
+
+    /**
+     * Returns the list of URL schemes that are blocked from loading.
+     */
+    open fun getBlockedSchemes(): List<String> = emptyList()
 }

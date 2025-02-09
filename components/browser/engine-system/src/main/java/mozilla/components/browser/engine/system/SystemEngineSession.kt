@@ -5,7 +5,6 @@
 package mozilla.components.browser.engine.system
 
 import android.content.Context
-import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -13,42 +12,47 @@ import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebViewDatabase
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import mozilla.components.browser.errorpages.ErrorType
 import mozilla.components.concept.engine.Engine.BrowsingData
 import mozilla.components.concept.engine.EngineSession
-import mozilla.components.concept.engine.EngineSession.LoadUrlFlags
 import mozilla.components.concept.engine.EngineSessionState
 import mozilla.components.concept.engine.Settings
 import mozilla.components.concept.engine.history.HistoryTrackingDelegate
 import mozilla.components.concept.engine.request.RequestInterceptor
 import kotlin.reflect.KProperty
 
-internal val additionalHeaders = mapOf(
+internal val xRequestHeader = mapOf(
     // For every request WebView sends a "X-requested-with" header with the package name of the
     // application. We can't really prevent that but we can at least send an empty value.
     // Unfortunately the additional headers will not be propagated to subsequent requests
     // (e.g. redirects). See issue #696.
-    "X-Requested-With" to ""
+    "X-Requested-With" to "",
 )
 
 /**
  * WebView-based EngineSession implementation.
  */
-@Suppress("TooManyFunctions")
+@Suppress("LargeClass", "TooManyFunctions")
 class SystemEngineSession(
     context: Context,
-    private val defaultSettings: Settings? = null
+    private val defaultSettings: Settings? = null,
 ) : EngineSession() {
     private val resources = context.resources
+
     @Volatile internal lateinit var internalSettings: Settings
+
     @Volatile internal var historyTrackingDelegate: HistoryTrackingDelegate? = null
+
     @Volatile internal var trackingProtectionPolicy: TrackingProtectionPolicy? = null
+
     @Volatile internal var webFontsEnabled = true
+
     @Volatile internal var currentUrl = ""
+
     @Volatile internal var useWideViewPort: Boolean? = null // See [toggleDesktopMode]
     @Volatile internal var fullScreenCallback: WebChromeClient.CustomViewCallback? = null
 
@@ -68,10 +72,22 @@ class SystemEngineSession(
      * See [EngineSession.loadUrl]. Note that [LoadUrlFlags] are ignored in this engine
      * implementation.
      */
-    override fun loadUrl(url: String, flags: LoadUrlFlags) {
+    override fun loadUrl(
+        url: String,
+        parent: EngineSession?,
+        flags: LoadUrlFlags,
+        additionalHeaders: Map<String, String>?,
+    ) {
+        val headers =
+            if (additionalHeaders == null) {
+                xRequestHeader
+            } else {
+                xRequestHeader + additionalHeaders
+            }
+
         if (!url.isEmpty()) {
             currentUrl = url
-            webView.loadUrl(url, additionalHeaders)
+            webView.loadUrl(url, headers)
         }
     }
 
@@ -80,6 +96,10 @@ class SystemEngineSession(
      */
     override fun loadData(data: String, mimeType: String, encoding: String) {
         webView.loadData(data, mimeType, encoding)
+    }
+
+    override fun requestPdfToDownload() {
+        throw UnsupportedOperationException("PDF support is not available in this engine")
     }
 
     /**
@@ -91,52 +111,52 @@ class SystemEngineSession(
 
     /**
      * See [EngineSession.reload]
+     * @param flags currently not supported in `SystemEngineSession`.
      */
-    override fun reload() {
+    override fun reload(flags: LoadUrlFlags) {
         webView.reload()
     }
 
     /**
      * See [EngineSession.goBack]
      */
-    override fun goBack() {
+    override fun goBack(userInteraction: Boolean) {
         webView.goBack()
+        if (webView.canGoBack()) {
+            notifyObservers { onNavigateBack() }
+        }
     }
 
     /**
      * See [EngineSession.goForward]
      */
-    override fun goForward() {
+    override fun goForward(userInteraction: Boolean) {
         webView.goForward()
     }
 
     /**
-     * See [EngineSession.saveState]
+     * See [EngineSession.goToHistoryIndex]
      */
-    override fun saveState(): EngineSessionState {
-        return runBlocking(Dispatchers.Main) {
-            val state = Bundle()
-            webView.saveState(state)
-
-            SystemEngineSessionState(state)
-        }
+    override fun goToHistoryIndex(index: Int) {
+        val historyList = webView.copyBackForwardList()
+        webView.goBackOrForward(index - historyList.currentIndex)
     }
 
     /**
      * See [EngineSession.restoreState]
      */
-    override fun restoreState(state: EngineSessionState) {
+    override fun restoreState(state: EngineSessionState): Boolean {
         if (state !is SystemEngineSessionState) {
             throw IllegalArgumentException("Can only restore from SystemEngineSessionState")
         }
 
-        webView.restoreState(state.bundle)
+        return state.bundle?.let { webView.restoreState(it) } != null
     }
 
     /**
-     * See [EngineSession.enableTrackingProtection]
+     * See [EngineSession.updateTrackingProtection]
      */
-    override fun enableTrackingProtection(policy: TrackingProtectionPolicy) {
+    override fun updateTrackingProtection(policy: TrackingProtectionPolicy) {
         // Make sure Url matcher is preloaded now that tracking protection is enabled
         CoroutineScope(Dispatchers.IO).launch {
             SystemEngineView.getOrCreateUrlMatcher(resources, policy)
@@ -149,10 +169,8 @@ class SystemEngineSession(
         notifyObservers { onTrackerBlockingEnabledChange(true) }
     }
 
-    /**
-     * See [EngineSession.disableTrackingProtection]
-     */
-    override fun disableTrackingProtection() {
+    @VisibleForTesting
+    internal fun disableTrackingProtection() {
         trackingProtectionPolicy = null
         notifyObservers { onTrackerBlockingEnabledChange(false) }
     }
@@ -224,13 +242,10 @@ class SystemEngineSession(
     }
 
     /**
-     * This method is a no-op.
+     * Clears the internal back/forward list.
      */
-    override fun recoverFromCrash(): Boolean {
-        // Do nothing.
-        // Technically we could remember saved states and restore the last one we saw. But for that to be useful we
-        // would need to implement and handle onRenderProcessGone() first.
-        return false
+    override fun purgeHistory() {
+        webView.clearHistory()
     }
 
     /**
@@ -244,23 +259,27 @@ class SystemEngineSession(
         operator fun setValue(thisRef: Any?, property: KProperty<*>, value: T) = set(value)
     }
 
-    private fun initSettings() {
-        webView.settings?.let { webSettings ->
+    @VisibleForTesting
+    internal fun initSettings() {
+        webView.settings.apply {
             // Explicitly set global defaults.
-            webSettings.setAppCacheEnabled(false)
-            webSettings.databaseEnabled = false
 
-            setDeprecatedWebSettings(webSettings)
+            @Suppress("DEPRECATION")
+            // Deprecation will be handled in https://github.com/mozilla-mobile/android-components/issues/8512
+            setAppCacheEnabled(false)
+            databaseEnabled = false
+
+            setDeprecatedWebSettings(this)
 
             // We currently don't implement the callback to support turning this on.
-            webSettings.setGeolocationEnabled(false)
+            setGeolocationEnabled(false)
 
             // webViewSettings built-in zoom controls are the only supported ones,
             // so they should be turned on but hidden.
-            webSettings.builtInZoomControls = true
-            webSettings.displayZoomControls = false
+            builtInZoomControls = true
+            displayZoomControls = false
 
-            initSettings(webView, webSettings)
+            initSettings(webView, this)
         }
     }
 
@@ -291,14 +310,29 @@ class SystemEngineSession(
                 get() = this@SystemEngineSession.useWideViewPort
                 set(value) = setUseWideViewPort(s, value)
             override var supportMultipleWindows by WebSetting(s::supportMultipleWindows, s::setSupportMultipleWindows)
+
+            @Suppress("DEPRECATION")
+            // Deprecation will be handled in https://github.com/mozilla-mobile/android-components/issues/8513
             override var allowFileAccessFromFileURLs by WebSetting(
-                    s::getAllowFileAccessFromFileURLs, s::setAllowFileAccessFromFileURLs)
+                s::getAllowFileAccessFromFileURLs,
+                s::setAllowFileAccessFromFileURLs,
+            )
+
+            @Suppress("DEPRECATION")
+            // Deprecation will be handled in https://github.com/mozilla-mobile/android-components/issues/8514
             override var allowUniversalAccessFromFileURLs by WebSetting(
-                    s::getAllowUniversalAccessFromFileURLs, s::setAllowUniversalAccessFromFileURLs)
+                s::getAllowUniversalAccessFromFileURLs,
+                s::setAllowUniversalAccessFromFileURLs,
+            )
+
             override var mediaPlaybackRequiresUserGesture by WebSetting(
-                    s::getMediaPlaybackRequiresUserGesture, s::setMediaPlaybackRequiresUserGesture)
+                s::getMediaPlaybackRequiresUserGesture,
+                s::setMediaPlaybackRequiresUserGesture,
+            )
             override var javaScriptCanOpenWindowsAutomatically by WebSetting(
-                    s::getJavaScriptCanOpenWindowsAutomatically, s::setJavaScriptCanOpenWindowsAutomatically)
+                s::getJavaScriptCanOpenWindowsAutomatically,
+                s::setJavaScriptCanOpenWindowsAutomatically,
+            )
 
             override var verticalScrollBarEnabled
                 get() = webView.isVerticalScrollBarEnabled
@@ -314,7 +348,7 @@ class SystemEngineSession(
 
             override var trackingProtectionPolicy: TrackingProtectionPolicy?
                 get() = this@SystemEngineSession.trackingProtectionPolicy
-                set(value) = value?.let { enableTrackingProtection(it) } ?: disableTrackingProtection()
+                set(value) = value?.let { updateTrackingProtection(it) } ?: disableTrackingProtection()
 
             override var historyTrackingDelegate: HistoryTrackingDelegate?
                 get() = this@SystemEngineSession.historyTrackingDelegate

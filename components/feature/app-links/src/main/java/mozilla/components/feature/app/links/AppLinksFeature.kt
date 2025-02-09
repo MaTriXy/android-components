@@ -4,140 +4,138 @@
 
 package mozilla.components.feature.app.links
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.webkit.URLUtil
 import androidx.annotation.VisibleForTesting
 import androidx.fragment.app.FragmentManager
-import mozilla.components.browser.session.SelectionAwareSessionObserver
-import mozilla.components.browser.session.Session
-import mozilla.components.browser.session.SessionManager
-import mozilla.components.concept.engine.request.RequestInterceptor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.mapNotNull
+import mozilla.components.browser.state.action.ContentAction
+import mozilla.components.browser.state.selector.findTabOrCustomTabOrSelectedTab
+import mozilla.components.browser.state.state.SessionState
+import mozilla.components.browser.state.store.BrowserStore
+import mozilla.components.concept.engine.EngineSession
+import mozilla.components.feature.app.links.AppLinksUseCases.Companion.ENGINE_SUPPORTED_SCHEMES
 import mozilla.components.feature.app.links.RedirectDialogFragment.Companion.FRAGMENT_TAG
+import mozilla.components.feature.session.SessionUseCases
+import mozilla.components.lib.state.ext.flowScoped
 import mozilla.components.support.base.feature.LifecycleAwareFeature
-import mozilla.components.support.ktx.android.net.hostWithoutCommonPrefixes
+import mozilla.components.support.ktx.kotlinx.coroutines.flow.ifChanged
 
 /**
- * This feature implements use cases for detecting and handling redirects to external apps. The user
- * is asked to confirm her intention before leaving the app. These include the Android Intents,
- * custom schemes and support for [Intent.CATEGORY_BROWSABLE] `http(s)` URLs.
- *
- * In the case of Android Intents that are not installed, and with no fallback, the user is prompted
- * to search the installed market place.
- *
- * It provides use cases to detect and open links openable in third party non-browser apps.
- *
- * It provides a [RequestInterceptor] to do the detection and asking of consent.
+ * This feature implements observer for handling redirects to external apps. The users are asked to
+ * confirm their intention before leaving the app if in private session.  These include the Android
+ * Intents, custom schemes and support for [Intent.CATEGORY_BROWSABLE] `http(s)` URLs.
  *
  * It requires: a [Context], and a [FragmentManager].
  *
- * A [Boolean] flag is provided at construction to allow the feature and use cases to be landed without
- * adjoining UI. The UI will be activated in https://github.com/mozilla-mobile/android-components/issues/2974
- * and https://github.com/mozilla-mobile/android-components/issues/2975.
- *
- * @param alwaysAllowedSchemes List of schemes that will always be allowed to be opened in a third-party
- * app even if [interceptLinkClicks] is `false`.
- * @param alwaysDeniedSchemes List of schemes that will never be opened in a third-party app even if
- * [interceptLinkClicks] is `true`.
- */
+ * @param context Context the feature is associated with.
+ * @param store Reference to the application's [BrowserStore].
+ * @param sessionId The session ID to observe.
+ * @param fragmentManager FragmentManager for interacting with fragments.
+ * @param dialog The dialog for redirect.
+ * @param launchInApp If {true} then launch app links in third party app(s). Default to false because
+ * of security concerns.
+ * @param useCases These use cases allow for the detection of, and opening of links that other apps
+ * have registered to open.
+ * @param failedToLaunchAction Action to perform when failing to launch in third party app.
+ * @param loadUrlUseCase Used to load URL if user decides not to launch in third party app.
+ **/
+@Suppress("LongParameterList")
 class AppLinksFeature(
     private val context: Context,
-    private val sessionManager: SessionManager,
+    private val store: BrowserStore,
     private val sessionId: String? = null,
-    private val interceptLinkClicks: Boolean = false,
-    private val alwaysAllowedSchemes: Set<String> = setOf("mailto", "market", "sms", "tel"),
-    private val alwaysDeniedSchemes: Set<String> = setOf("javascript"),
     private val fragmentManager: FragmentManager? = null,
-    private var dialog: RedirectDialogFragment = SimpleRedirectDialogFragment.newInstance(),
-    private val useCases: AppLinksUseCases = AppLinksUseCases(context)
+    private var dialog: RedirectDialogFragment? = null,
+    private val launchInApp: () -> Boolean = { false },
+    private val useCases: AppLinksUseCases = AppLinksUseCases(context, launchInApp),
+    private val failedToLaunchAction: () -> Unit = {},
+    private val loadUrlUseCase: SessionUseCases.DefaultLoadUrlUseCase? = null,
+    private val engineSupportedSchemes: Set<String> = ENGINE_SUPPORTED_SCHEMES,
 ) : LifecycleAwareFeature {
 
-    @VisibleForTesting
-    internal val observer: SelectionAwareSessionObserver = object : SelectionAwareSessionObserver(sessionManager) {
-        override fun onLoadRequest(
-            session: Session,
-            url: String,
-            triggeredByRedirect: Boolean,
-            triggeredByWebContent: Boolean
-        ) {
-            handleLoadRequest(session, url, triggeredByWebContent)
-        }
-    }
+    private var scope: CoroutineScope? = null
 
     /**
      * Starts observing app links on the selected session.
      */
     override fun start() {
-        if (interceptLinkClicks || alwaysAllowedSchemes.isNotEmpty()) {
-            observer.observeIdOrSelected(sessionId)
+        scope = store.flowScoped { flow ->
+            flow.mapNotNull { state -> state.findTabOrCustomTabOrSelectedTab(sessionId) }
+                .ifChanged {
+                    it.content.appIntent
+                }
+                .collect { tab ->
+                    tab.content.appIntent?.let {
+                        handleAppIntent(tab, it.url, it.appIntent)
+                        store.dispatch(ContentAction.ConsumeAppIntentAction(tab.id))
+                    }
+                }
         }
+
         findPreviousDialogFragment()?.let {
-            reAttachOnConfirmRedirectListener(it)
+            fragmentManager?.beginTransaction()?.remove(it)?.commit()
         }
     }
 
     override fun stop() {
-        if (interceptLinkClicks || alwaysAllowedSchemes.isNotEmpty()) {
-            observer.stop()
-        }
+        scope?.cancel()
     }
 
-    @VisibleForTesting
-    internal fun handleLoadRequest(session: Session, url: String, triggeredByWebContent: Boolean) {
-        if (!triggeredByWebContent) {
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal fun handleAppIntent(tab: SessionState, url: String, appIntent: Intent?) {
+        if (appIntent == null) {
             return
         }
 
-        // If we're already on the site, and we're clicking around then
-        // let's not go to an external app.
-        if (url.hostname() == session.url.hostname()) {
-            return
-        }
-
-        val redirect = useCases.interceptedAppLinkRedirect(url)
-
-        if (redirect.isRedirect()) {
-            handleRedirect(redirect, session)
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    @VisibleForTesting
-    internal fun handleRedirect(redirect: AppLinkRedirect, session: Session) {
-        if (!redirect.hasExternalApp()) {
-            handleFallback(redirect, session)
-            return
-        }
-
-        redirect.appIntent?.data?.scheme?.let { scheme ->
-            if ((!interceptLinkClicks && !alwaysAllowedSchemes.contains(scheme)) ||
-                alwaysDeniedSchemes.contains(scheme)) {
-                return
-            }
+        val doNotOpenApp = {
+            loadUrlIfSchemeSupported(tab, url)
         }
 
         val doOpenApp = {
-            useCases.openAppLink(redirect)
+            useCases.openAppLink(
+                appIntent,
+                failedToLaunchAction = failedToLaunchAction,
+            )
         }
 
-        if (!session.private || fragmentManager == null) {
+        if (!tab.content.private || fragmentManager == null) {
             doOpenApp()
             return
         }
 
-        dialog.setAppLinkRedirect(redirect)
+        val dialog = getOrCreateDialog()
+        dialog.setAppLinkRedirectUrl(url)
         dialog.onConfirmRedirect = doOpenApp
+        dialog.onCancelRedirect = doNotOpenApp
 
         if (!isAlreadyADialogCreated()) {
-            dialog.show(fragmentManager, FRAGMENT_TAG)
+            dialog.showNow(fragmentManager, FRAGMENT_TAG)
         }
     }
 
-    private fun handleFallback(redirect: AppLinkRedirect, session: Session) {
-        redirect.webUrl?.let {
-            sessionManager.getOrCreateEngineSession(session).loadUrl(it)
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal fun getOrCreateDialog(): RedirectDialogFragment {
+        val existingDialog = dialog
+        if (existingDialog != null) {
+            return existingDialog
+        }
+
+        SimpleRedirectDialogFragment.newInstance().also {
+            dialog = it
+            return it
+        }
+    }
+
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal fun loadUrlIfSchemeSupported(tab: SessionState, url: String) {
+        val schemeSupported = engineSupportedSchemes.contains(Uri.parse(url).scheme)
+        if (schemeSupported) {
+            loadUrlUseCase?.invoke(url, tab.id, EngineSession.LoadUrlFlags.none())
         }
     }
 
@@ -145,21 +143,7 @@ class AppLinksFeature(
         return findPreviousDialogFragment() != null
     }
 
-    @VisibleForTesting
-    internal fun reAttachOnConfirmRedirectListener(previousDialog: RedirectDialogFragment?) {
-        previousDialog?.apply {
-            this@AppLinksFeature.dialog = this
-        }
-    }
-
     private fun findPreviousDialogFragment(): RedirectDialogFragment? {
         return fragmentManager?.findFragmentByTag(FRAGMENT_TAG) as? RedirectDialogFragment
     }
-
-    private fun String.hostname() =
-        if (URLUtil.isValidUrl(this)) {
-            Uri.parse(this).hostWithoutCommonPrefixes
-        } else {
-            null
-        }
 }

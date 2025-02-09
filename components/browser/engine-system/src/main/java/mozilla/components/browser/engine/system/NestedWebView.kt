@@ -6,17 +6,20 @@ package mozilla.components.browser.engine.system
 
 import android.annotation.SuppressLint
 import android.content.Context
-import androidx.core.view.NestedScrollingChild
-import androidx.core.view.NestedScrollingChildHelper
 import android.view.MotionEvent
-import android.view.MotionEvent.ACTION_MOVE
-import android.view.MotionEvent.ACTION_DOWN
-import android.view.MotionEvent.ACTION_UP
 import android.view.MotionEvent.ACTION_CANCEL
+import android.view.MotionEvent.ACTION_DOWN
+import android.view.MotionEvent.ACTION_MOVE
+import android.view.MotionEvent.ACTION_UP
 import android.view.MotionEvent.obtain
 import android.webkit.WebView
 import androidx.annotation.VisibleForTesting
+import androidx.core.view.NestedScrollingChild
+import androidx.core.view.NestedScrollingChildHelper
 import androidx.core.view.ViewCompat
+import mozilla.components.concept.engine.INPUT_HANDLED
+import mozilla.components.concept.engine.INPUT_UNHANDLED
+import mozilla.components.concept.engine.InputResultDetail
 
 /**
  * WebView that supports nested scrolls (for using in a CoordinatorLayout).
@@ -28,7 +31,6 @@ import androidx.core.view.ViewCompat
  * Based on:
  * https://github.com/takahirom/webview-in-coordinatorlayout
  */
-
 class NestedWebView(context: Context) : WebView(context), NestedScrollingChild {
 
     @VisibleForTesting
@@ -44,6 +46,13 @@ class NestedWebView(context: Context) : WebView(context), NestedScrollingChild {
 
     @VisibleForTesting
     internal var childHelper: NestedScrollingChildHelper = NestedScrollingChildHelper(this)
+
+    /**
+     * How user's MotionEvent will be handled.
+     *
+     * @see InputResultDetail
+     */
+    internal var inputResultDetail = InputResultDetail.newInstance()
 
     init {
         isNestedScrollingEnabled = true
@@ -90,12 +99,18 @@ class NestedWebView(context: Context) : WebView(context), NestedScrollingChild {
         }
 
         // Execute event handler from parent class in all cases
-        val eventHandled = super.onTouchEvent(event)
+        val eventHandled = callSuperOnTouchEvent(event)
+        updateInputResult(eventHandled)
 
         // Recycle previously obtained event
         event.recycle()
 
         return eventHandled
+    }
+
+    @VisibleForTesting
+    internal fun callSuperOnTouchEvent(event: MotionEvent): Boolean {
+        return super.onTouchEvent(event)
     }
 
     // NestedScrollingChild
@@ -125,7 +140,7 @@ class NestedWebView(context: Context) : WebView(context), NestedScrollingChild {
         dyConsumed: Int,
         dxUnconsumed: Int,
         dyUnconsumed: Int,
-        offsetInWindow: IntArray?
+        offsetInWindow: IntArray?,
     ): Boolean {
         return childHelper.dispatchNestedScroll(dxConsumed, dyConsumed, dxUnconsumed, dyUnconsumed, offsetInWindow)
     }
@@ -140,5 +155,16 @@ class NestedWebView(context: Context) : WebView(context), NestedScrollingChild {
 
     override fun dispatchNestedPreFling(velocityX: Float, velocityY: Float): Boolean {
         return childHelper.dispatchNestedPreFling(velocityX, velocityY)
+    }
+
+    @VisibleForTesting
+    internal fun updateInputResult(eventHandled: Boolean) {
+        inputResultDetail = inputResultDetail.copy(
+            if (eventHandled) {
+                INPUT_HANDLED
+            } else {
+                INPUT_UNHANDLED
+            },
+        )
     }
 }

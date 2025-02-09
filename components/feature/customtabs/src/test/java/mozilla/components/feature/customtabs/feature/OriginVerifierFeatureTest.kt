@@ -10,7 +10,7 @@ import androidx.browser.customtabs.CustomTabsSessionToken
 import androidx.core.net.toUri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.runBlockingTest
+import kotlinx.coroutines.test.runTest
 import mozilla.components.feature.customtabs.store.CustomTabState
 import mozilla.components.feature.customtabs.store.CustomTabsServiceStore
 import mozilla.components.feature.customtabs.store.OriginRelationPair
@@ -36,26 +36,24 @@ import org.mockito.Mockito.verify
 @ExperimentalCoroutinesApi
 class OriginVerifierFeatureTest {
 
-    private val apiKey = "XXXXXXXXX"
-
     @Test
-    fun `verify fails if no creatorPackageName is saved`() = runBlockingTest {
-        val feature = OriginVerifierFeature(mock(), mock(), apiKey, mock())
+    fun `verify fails if no creatorPackageName is saved`() = runTest {
+        val feature = OriginVerifierFeature(mock(), mock(), mock())
 
         assertFalse(feature.verify(CustomTabState(), mock(), RELATION_HANDLE_ALL_URLS, mock()))
     }
 
     @Test
-    fun `verify returns existing relationship`() = runBlockingTest {
-        val feature = OriginVerifierFeature(mock(), mock(), apiKey, mock())
+    fun `verify returns existing relationship`() = runTest {
+        val feature = OriginVerifierFeature(mock(), mock(), mock())
         val origin = "https://example.com".toUri()
         val state = CustomTabState(
             creatorPackageName = "com.example.twa",
             relationships = mapOf(
                 OriginRelationPair(origin, RELATION_HANDLE_ALL_URLS) to SUCCESS,
                 OriginRelationPair(origin, RELATION_USE_AS_ORIGIN) to FAILURE,
-                OriginRelationPair("https://sample.com".toUri(), RELATION_HANDLE_ALL_URLS) to PENDING
-            )
+                OriginRelationPair("https://sample.com".toUri(), RELATION_HANDLE_ALL_URLS) to PENDING,
+            ),
         )
 
         assertTrue(feature.verify(state, mock(), RELATION_HANDLE_ALL_URLS, origin))
@@ -63,10 +61,10 @@ class OriginVerifierFeatureTest {
     }
 
     @Test
-    fun `verify checks new relationships`() = runBlockingTest {
+    fun `verify checks new relationships`() = runTest {
         val store: CustomTabsServiceStore = mock()
         val verifier: OriginVerifier = mock()
-        val feature = spy(OriginVerifierFeature(mock(), mock(), apiKey) { store.dispatch(it) })
+        val feature = spy(OriginVerifierFeature(mock(), mock()) { store.dispatch(it) })
         doReturn(verifier).`when`(feature).getVerifier(anyString(), anyInt())
         doReturn(true).`when`(verifier).verifyOrigin(any())
 

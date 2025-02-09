@@ -4,7 +4,6 @@
 
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
-apply plugin: 'kotlin-android-extensions'
 
 android {
     compileSdkVersion config.compileSdkVersion
@@ -25,20 +24,30 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+
+    buildFeatures {
+        viewBinding true
+    }
 }
 
 
 dependencies {
+    implementation project(':concept-engine')
+    implementation project(':concept-menu')
     implementation project(':browser-toolbar')
     implementation project(':browser-menu')
+    implementation project(':browser-menu2')
     implementation project(':browser-domains')
 
     implementation project(':ui-colors')
+    implementation project(':ui-tabcounter')
     implementation project(':ui-icons')
 
     implementation project(':feature-toolbar')
 
     implementation project(':support-ktx')
+
+    implementation project(':support-utils')
 
     implementation Dependencies.kotlin_stdlib
     implementation Dependencies.kotlin_coroutines

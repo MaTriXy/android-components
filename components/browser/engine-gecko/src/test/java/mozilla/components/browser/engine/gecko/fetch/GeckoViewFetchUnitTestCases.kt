@@ -7,6 +7,7 @@ package mozilla.components.browser.engine.gecko.fetch
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import mozilla.components.concept.fetch.Client
 import mozilla.components.concept.fetch.Request
+import mozilla.components.concept.fetch.Response
 import mozilla.components.support.test.any
 import mozilla.components.support.test.eq
 import mozilla.components.support.test.mock
@@ -19,6 +20,7 @@ import okhttp3.mockwebserver.RecordedRequest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.ArgumentCaptor
@@ -69,25 +71,7 @@ class GeckoViewFetchUnitTestCases : FetchTestCases() {
     }
 
     @Test
-    override fun get200WithDefaultHeaders() {
-        val server = mock<MockWebServer>()
-        whenever(server.url(any())).thenReturn(mock())
-        val host = server.url("/").host()
-        val port = server.url("/").port()
-        val headerMap = mapOf(
-            "Host" to "$host:$port",
-            "Accept" to "*/*",
-            "Accept-Language" to "*/*",
-            "Accept-Encoding" to "gzip",
-            "Connection" to "keep-alive",
-            "User-Agent" to "test")
-        mockRequest(headerMap)
-        mockResponse(200)
-
-        super.get200WithDefaultHeaders()
-    }
-
-    @Test
+    @Ignore("With Java 11 Mockito can't mock MockWebServer classes")
     override fun get200WithDuplicatedCacheControlRequestHeaders() {
         val headerMap = mapOf("Cache-Control" to "no-cache, no-store")
         mockRequest(headerMap)
@@ -97,10 +81,11 @@ class GeckoViewFetchUnitTestCases : FetchTestCases() {
     }
 
     @Test
+    @Ignore("With Java 11 Mockito can't mock MockWebServer classes")
     override fun get200WithDuplicatedCacheControlResponseHeaders() {
         val responseHeaderMap = mapOf(
             "Cache-Control" to "no-cache, no-store",
-            "Content-Length" to "16"
+            "Content-Length" to "16",
         )
         mockResponse(200, responseHeaderMap)
 
@@ -108,12 +93,14 @@ class GeckoViewFetchUnitTestCases : FetchTestCases() {
     }
 
     @Test
+    @Ignore("With Java 11 Mockito can't mock MockWebServer classes")
     override fun get200OverridingDefaultHeaders() {
         val headerMap = mapOf(
             "Accept" to "text/html",
             "Accept-Encoding" to "deflate",
             "User-Agent" to "SuperBrowser/1.0",
-            "Connection" to "close")
+            "Connection" to "close",
+        )
         mockRequest(headerMap)
         mockResponse(200)
 
@@ -121,6 +108,7 @@ class GeckoViewFetchUnitTestCases : FetchTestCases() {
     }
 
     @Test
+    @Ignore("With Java 11 Mockito can't mock MockWebServer classes")
     override fun get200WithGzippedBody() {
         val responseHeaderMap = mapOf("Content-Encoding" to "gzip")
         mockRequest()
@@ -130,13 +118,14 @@ class GeckoViewFetchUnitTestCases : FetchTestCases() {
     }
 
     @Test
+    @Ignore("With Java 11 Mockito can't mock MockWebServer classes")
     override fun get200WithHeaders() {
         val requestHeaders = mapOf(
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Encoding" to "gzip, deflate",
             "Accept-Language" to "en-US,en;q=0.5",
             "Connection" to "keep-alive",
-            "User-Agent" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.14; rv:65.0) Gecko/20100101 Firefox/65.0"
+            "User-Agent" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.14; rv:65.0) Gecko/20100101 Firefox/65.0",
         )
         mockRequest(requestHeaders)
         mockResponse(200)
@@ -145,6 +134,7 @@ class GeckoViewFetchUnitTestCases : FetchTestCases() {
     }
 
     @Test
+    @Ignore("With Java 11 Mockito can't mock MockWebServer classes")
     override fun get200WithReadTimeout() {
         mockRequest()
         mockResponse(200)
@@ -158,18 +148,12 @@ class GeckoViewFetchUnitTestCases : FetchTestCases() {
     }
 
     @Test
+    @Ignore("With Java 11 Mockito can't mock MockWebServer classes")
     override fun get200WithStringBody() {
         mockRequest()
         mockResponse(200, body = "Hello World")
 
         super.get200WithStringBody()
-    }
-
-    @Test
-    override fun get200WithUserAgent() {
-        mockRequest(mapOf("User-Agent" to "MozacFetch/"))
-        mockResponse(200)
-        super.get200WithUserAgent()
     }
 
     @Test
@@ -199,6 +183,7 @@ class GeckoViewFetchUnitTestCases : FetchTestCases() {
     }
 
     @Test
+    @Ignore("With Java 11 Mockito can't mock MockWebServer classes")
     override fun get404WithBody() {
         mockRequest()
         mockResponse(404, body = "Error")
@@ -206,6 +191,7 @@ class GeckoViewFetchUnitTestCases : FetchTestCases() {
     }
 
     @Test
+    @Ignore("With Java 11 Mockito can't mock MockWebServer classes")
     override fun post200WithBody() {
         mockRequest(method = "POST", body = "Hello World")
         mockResponse(200)
@@ -213,6 +199,7 @@ class GeckoViewFetchUnitTestCases : FetchTestCases() {
     }
 
     @Test
+    @Ignore("With Java 11 Mockito can't mock MockWebServer classes")
     override fun put201FileUpload() {
         mockRequest(method = "PUT", headerMap = mapOf("Content-Type" to "image/png"), body = "I am an image file!")
         mockResponse(201, headerMap = mapOf("Location" to "/your-image.png"), body = "Thank you!")
@@ -248,15 +235,30 @@ class GeckoViewFetchUnitTestCases : FetchTestCases() {
     }
 
     @Test
+    fun performPrivateRequest() {
+        mockResponse(200)
+
+        val request = mock<Request>()
+        whenever(request.url).thenReturn("https://mozilla.org")
+        whenever(request.method).thenReturn(Request.Method.GET)
+        whenever(request.private).thenReturn(true)
+        createNewClient().fetch(request)
+
+        verify(geckoWebExecutor)!!.fetch(any(), eq(GeckoWebExecutor.FETCH_FLAGS_PRIVATE))
+    }
+
+    @Test
     override fun get200WithContentTypeCharset() {
         val request = mock<Request>()
         whenever(request.url).thenReturn("https://mozilla.org")
         whenever(request.method).thenReturn(Request.Method.GET)
 
-        mockResponse(200,
-                headerMap = mapOf("Content-Type" to "text/html; charset=ISO-8859-1"),
-                body = "ÄäÖöÜü",
-                charset = Charsets.ISO_8859_1)
+        mockResponse(
+            200,
+            headerMap = mapOf("Content-Type" to "text/html; charset=ISO-8859-1"),
+            body = "ÄäÖöÜü",
+            charset = Charsets.ISO_8859_1,
+        )
 
         val response = createNewClient().fetch(request)
         assertEquals("ÄäÖöÜü", response.body.string())
@@ -287,6 +289,18 @@ class GeckoViewFetchUnitTestCases : FetchTestCases() {
         createNewClient().fetch(Request(""))
     }
 
+    @Test
+    fun toResponseMustReturn200ForBlobUrls() {
+        val builder = WebResponse.Builder("blob:https://mdn.mozillademos.org/d518464c-5075-9046-aef2-9c313214ed53").statusCode(0).build()
+        assertEquals(Response.SUCCESS, builder.toResponse().status)
+    }
+
+    @Test
+    fun toResponseMustReturn200ForDataUrls() {
+        val builder = WebResponse.Builder("data:,Hello%2C%20World!").statusCode(0).build()
+        assertEquals(Response.SUCCESS, builder.toResponse().status)
+    }
+
     private fun mockRequest(headerMap: Map<String, String>? = null, body: String? = null, method: String = "GET") {
         val server = mock<MockWebServer>()
         whenever(server.url(any())).thenReturn(mock())
@@ -312,7 +326,7 @@ class GeckoViewFetchUnitTestCases : FetchTestCases() {
         statusCode: Int,
         headerMap: Map<String, String>? = null,
         body: String? = null,
-        charset: Charset = Charsets.UTF_8
+        charset: Charset = Charsets.UTF_8,
     ) {
         val executor = mock<GeckoWebExecutor>()
         val builder = WebResponse.Builder("").statusCode(statusCode)

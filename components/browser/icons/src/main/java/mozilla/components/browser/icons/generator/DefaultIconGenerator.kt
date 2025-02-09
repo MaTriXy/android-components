@@ -11,7 +11,6 @@ import android.graphics.Bitmap.Config.ARGB_8888
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
-import android.net.Uri
 import android.util.TypedValue
 import androidx.annotation.ArrayRes
 import androidx.annotation.ColorInt
@@ -21,7 +20,8 @@ import androidx.core.content.ContextCompat
 import mozilla.components.browser.icons.Icon
 import mozilla.components.browser.icons.IconRequest
 import mozilla.components.browser.icons.R
-import mozilla.components.support.ktx.android.net.hostWithoutCommonPrefixes
+import mozilla.components.support.ktx.kotlin.getRepresentativeCharacter
+import mozilla.components.support.ktx.kotlin.getRepresentativeSnippet
 import kotlin.math.abs
 
 /**
@@ -31,7 +31,7 @@ import kotlin.math.abs
 class DefaultIconGenerator(
     @DimenRes private val cornerRadiusDimen: Int? = R.dimen.mozac_browser_icons_generator_default_corner_radius,
     @ColorRes private val textColorRes: Int = R.color.mozac_browser_icons_generator_default_text_color,
-    @ArrayRes private val backgroundColorsRes: Int = R.array.mozac_browser_icons_photon_palette
+    @ArrayRes private val backgroundColorsRes: Int = R.array.mozac_browser_icons_photon_palette,
 ) : IconGenerator {
 
     override fun generate(context: Context, request: IconRequest): Icon {
@@ -50,14 +50,14 @@ class DefaultIconGenerator(
         val cornerRadius = cornerRadiusDimen?.let { context.resources.getDimension(it) } ?: 0f
         canvas.drawRoundRect(sizeRect, cornerRadius, cornerRadius, paint)
 
-        val character = getRepresentativeCharacter(request.url)
+        val character = request.url.getRepresentativeCharacter()
 
         // The text size is calculated dynamically based on the target icon size (1/8th). For an icon
         // size of 112dp we'd use a text size of 14dp (112 / 8).
         val textSize = TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_DIP,
             size * TARGET_ICON_RATIO,
-            context.resources.displayMetrics
+            context.resources.displayMetrics,
         )
 
         paint.color = ContextCompat.getColor(context, textColorRes)
@@ -69,14 +69,14 @@ class DefaultIconGenerator(
             character,
             canvas.width / 2f,
             (canvas.height / 2f) - ((paint.descent() + paint.ascent()) / 2f),
-            paint
+            paint,
         )
 
         return Icon(
             bitmap = bitmap,
             color = backgroundColor,
             source = Icon.Source.GENERATOR,
-            maskable = cornerRadius == 0f
+            maskable = cornerRadius == 0f,
         )
     }
 
@@ -90,7 +90,7 @@ class DefaultIconGenerator(
         val color = if (url.isEmpty()) {
             backgroundColors.getColor(0, 0)
         } else {
-            val snippet = getRepresentativeSnippet(url)
+            val snippet = url.getRepresentativeSnippet()
             val index = abs(snippet.hashCode() % backgroundColors.length())
 
             backgroundColors.getColor(index, 0)
@@ -98,44 +98,6 @@ class DefaultIconGenerator(
 
         backgroundColors.recycle()
         return color
-    }
-
-    /**
-     * Get the representative part of the URL. Usually this is the eTLD part of the host.
-     *
-     * For example this method will return "facebook.com" for "https://www.facebook.com/foobar".
-     */
-    private fun getRepresentativeSnippet(url: String): String {
-        val uri = Uri.parse(url)
-
-        val host = uri.hostWithoutCommonPrefixes
-        if (!host.isNullOrEmpty()) {
-            return host
-        }
-
-        val path = uri.path
-        if (!path.isNullOrEmpty()) {
-            return path
-        }
-
-        return url
-    }
-
-    /**
-     * Get a representative character for the given URL.
-     *
-     * For example this method will return "f" for "https://m.facebook.com/foobar".
-     */
-    internal fun getRepresentativeCharacter(url: String): String {
-        val snippet = getRepresentativeSnippet(url)
-
-        snippet.forEach { character ->
-            if (character.isLetterOrDigit()) {
-                return character.toUpperCase().toString()
-            }
-        }
-
-        return "?"
     }
 
     companion object {

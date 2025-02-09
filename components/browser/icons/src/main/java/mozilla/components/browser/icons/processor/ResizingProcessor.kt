@@ -7,16 +7,16 @@ package mozilla.components.browser.icons.processor
 import android.content.Context
 import android.graphics.Bitmap
 import androidx.annotation.VisibleForTesting
-import mozilla.components.browser.icons.DesiredSize
 import mozilla.components.browser.icons.Icon
 import mozilla.components.browser.icons.IconRequest
+import mozilla.components.support.images.DesiredSize
 import kotlin.math.roundToInt
 
 /**
  * [IconProcessor] implementation for resizing the loaded icon based on the target size.
  */
 class ResizingProcessor(
-    private val discardSmallIcons: Boolean = true
+    private val discardSmallIcons: Boolean = true,
 ) : IconProcessor {
 
     override fun process(
@@ -24,11 +24,11 @@ class ResizingProcessor(
         request: IconRequest,
         resource: IconRequest.Resource?,
         icon: Icon,
-        desiredSize: DesiredSize
+        desiredSize: DesiredSize,
     ): Icon? {
         val originalBitmap = icon.bitmap
         val size = originalBitmap.width
-        val (targetSize, _, maxScaleFactor) = desiredSize
+        val (targetSize, _, _, maxScaleFactor) = desiredSize
 
         // The bitmap has exactly the size we are looking for.
         if (size == targetSize) return icon

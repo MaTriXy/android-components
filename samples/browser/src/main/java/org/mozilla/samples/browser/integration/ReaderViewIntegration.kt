@@ -7,35 +7,37 @@ package org.mozilla.samples.browser.integration
 import android.content.Context
 import androidx.core.content.ContextCompat
 import com.google.android.material.floatingactionbutton.FloatingActionButton
-import mozilla.components.browser.session.SessionManager
+import mozilla.components.browser.state.selector.selectedTab
+import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.browser.toolbar.BrowserToolbar
 import mozilla.components.concept.engine.Engine
 import mozilla.components.feature.readerview.ReaderViewFeature
 import mozilla.components.feature.readerview.view.ReaderViewControlsView
-import mozilla.components.support.base.feature.BackHandler
 import mozilla.components.support.base.feature.LifecycleAwareFeature
+import mozilla.components.support.base.feature.UserInteractionHandler
 import org.mozilla.samples.browser.R
 
+@Suppress("UndocumentedPublicClass")
 class ReaderViewIntegration(
     context: Context,
     engine: Engine,
-    sessionManager: SessionManager,
+    store: BrowserStore,
     toolbar: BrowserToolbar,
     view: ReaderViewControlsView,
-    readerViewAppearanceButton: FloatingActionButton
-) : LifecycleAwareFeature, BackHandler {
+    readerViewAppearanceButton: FloatingActionButton,
+) : LifecycleAwareFeature, UserInteractionHandler {
 
     private var readerViewButtonVisible = false
 
     private val readerViewButton: BrowserToolbar.ToggleButton = BrowserToolbar.ToggleButton(
-        image = context.getDrawable(R.drawable.mozac_ic_reader_mode)!!,
-        imageSelected = context.getDrawable(R.drawable.mozac_ic_reader_mode)!!.mutate().apply {
+        image = ContextCompat.getDrawable(context, R.drawable.mozac_ic_reader_mode)!!,
+        imageSelected = ContextCompat.getDrawable(context, R.drawable.mozac_ic_reader_mode)!!.mutate().apply {
             setTint(ContextCompat.getColor(context, R.color.photonBlue40))
         },
         contentDescription = context.getString(R.string.mozac_reader_view_description),
         contentDescriptionSelected = context.getString(R.string.mozac_reader_view_description_selected),
-        selected = sessionManager.selectedSession?.readerMode ?: false,
-        visible = { readerViewButtonVisible }
+        selected = store.state.selectedTab?.readerState?.active ?: false,
+        visible = { readerViewButtonVisible },
     ) { enabled ->
         if (enabled) {
             feature.showReaderView()
@@ -52,18 +54,11 @@ class ReaderViewIntegration(
         readerViewAppearanceButton.setOnClickListener { feature.showControls() }
     }
 
-    private val feature = ReaderViewFeature(context, engine, sessionManager, view) { available ->
+    private val feature = ReaderViewFeature(context, engine, store, view) { available, active ->
         readerViewButtonVisible = available
+        readerViewButton.setSelected(active)
 
-        // We've got an update on reader view availability e.g. because the page
-        // was refreshed or a new session selected. Let's make sure to also update
-        // the selected state of the reader mode toolbar button and show the
-        // appearance controls button if needed.
-        val readerModeActive = sessionManager.selectedSession?.readerMode ?: false
-        readerViewButton.setSelected(readerModeActive)
-
-        if (readerModeActive) readerViewAppearanceButton.show() else readerViewAppearanceButton.hide()
-
+        if (active) readerViewAppearanceButton.show() else readerViewAppearanceButton.hide()
         toolbar.invalidateActions()
     }
 

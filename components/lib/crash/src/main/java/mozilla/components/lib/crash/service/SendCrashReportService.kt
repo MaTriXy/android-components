@@ -10,59 +10,60 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.annotation.VisibleForTesting
+import androidx.annotation.VisibleForTesting.Companion.PRIVATE
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import mozilla.components.lib.crash.Crash
 import mozilla.components.lib.crash.CrashReporter
 import mozilla.components.lib.crash.R
 import mozilla.components.lib.crash.notification.CrashNotification
-import mozilla.components.lib.crash.notification.NOTIFICATION_TAG
-import mozilla.components.support.base.ids.NotificationIds
-import mozilla.components.support.base.ids.cancel
-import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.EmptyCoroutineContext
+import mozilla.components.support.base.ids.SharedIdsHelper
+
+private const val NOTIFICATION_TAG = "mozac.lib.crash.sendcrash"
+private const val NOTIFICATION_ID = 1
+
+@VisibleForTesting(otherwise = PRIVATE)
+internal const val NOTIFICATION_TAG_KEY = "mozac.lib.crash.notification.tag"
+
+@VisibleForTesting(otherwise = PRIVATE)
+internal const val NOTIFICATION_ID_KEY = "mozac.lib.crash.notification.id"
 
 class SendCrashReportService : Service() {
     private val crashReporter: CrashReporter by lazy { CrashReporter.requireInstance }
-    private var reporterCoroutineContext: CoroutineContext = EmptyCoroutineContext
 
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
+        intent.getStringExtra(NOTIFICATION_TAG_KEY)?.apply {
+            NotificationManagerCompat.from(applicationContext)
+                .cancel(this, intent.getIntExtra(NOTIFICATION_ID_KEY, 0))
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = CrashNotification.ensureChannelExists(this)
             val notification = NotificationCompat.Builder(this, channel)
-                    .setContentTitle(getString(R.string.mozac_lib_send_crash_report_in_progress,
-                            crashReporter.promptConfiguration.organizationName))
-                    .setSmallIcon(R.drawable.mozac_lib_crash_notification)
-                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                    .setCategory(NotificationCompat.CATEGORY_ERROR)
-                    .setAutoCancel(true)
-                    .setProgress(0, 0, true)
-                    .build()
+                .setContentTitle(
+                    getString(
+                        R.string.mozac_lib_send_crash_report_in_progress,
+                        crashReporter.promptConfiguration.organizationName,
+                    ),
+                )
+                .setSmallIcon(R.drawable.mozac_lib_crash_notification)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setCategory(NotificationCompat.CATEGORY_ERROR)
+                .setAutoCancel(true)
+                .setProgress(0, 0, true)
+                .build()
 
-            val notificationId = NotificationIds.getIdForTag(this, NOTIFICATION_TAG)
+            val notificationId = SharedIdsHelper.getIdForTag(this, NOTIFICATION_TAG)
             startForeground(notificationId, notification)
         }
 
-        NotificationManagerCompat.from(this).cancel(this, NOTIFICATION_TAG)
-        crashReporter.submitReport(Crash.fromIntent(intent))
-        stopSelf()
+        NotificationManagerCompat.from(this).cancel(NOTIFICATION_TAG, NOTIFICATION_ID)
+        val crash = Crash.fromIntent(intent)
+        crashReporter.submitReport(crash) {
+            stopSelf()
+        }
 
         return START_NOT_STICKY
-    }
-
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-    internal fun sendCrashReport(crash: Crash, then: () -> Unit) {
-        GlobalScope.launch(reporterCoroutineContext) {
-            crashReporter.submitReport(crash)
-
-            withContext(Dispatchers.Main) {
-                then()
-            }
-        }
     }
 
     override fun onBind(intent: Intent): IBinder? {
@@ -71,8 +72,19 @@ class SendCrashReportService : Service() {
     }
 
     companion object {
-        fun createReportIntent(context: Context, crash: Crash): Intent {
+        fun createReportIntent(
+            context: Context,
+            crash: Crash,
+            notificationTag: String? = null,
+            notificationId: Int = 0,
+        ): Intent {
             val intent = Intent(context, SendCrashReportService::class.java)
+
+            notificationTag?.apply {
+                intent.putExtra(NOTIFICATION_TAG_KEY, notificationTag)
+                intent.putExtra(NOTIFICATION_ID_KEY, notificationId)
+            }
+
             crash.fillIn(intent)
 
             return intent

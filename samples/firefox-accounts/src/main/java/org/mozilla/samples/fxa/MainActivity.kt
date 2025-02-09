@@ -5,14 +5,14 @@
 package org.mozilla.samples.fxa
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import androidx.browser.customtabs.CustomTabsIntent
 import android.view.View
-import android.content.Intent
 import android.widget.CheckBox
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.app.ActivityCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,13 +24,12 @@ import mozilla.components.lib.fetch.httpurlconnection.HttpURLConnectionClient
 import mozilla.components.service.fxa.FirefoxAccount
 import mozilla.components.service.fxa.FxaException
 import mozilla.components.service.fxa.ServerConfig
-import mozilla.components.support.rusthttp.RustHttpConfig
 import mozilla.components.support.base.log.Log
 import mozilla.components.support.base.log.sink.AndroidLogSink
+import mozilla.components.support.rusthttp.RustHttpConfig
 import mozilla.components.support.rustlog.RustLog
 import kotlin.coroutines.CoroutineContext
 
-@Suppress("TooManyFunctions")
 open class MainActivity : AppCompatActivity(), LoginFragment.OnLoginCompleteListener, CoroutineScope {
     private lateinit var account: FirefoxAccount
     private var scopesWithoutKeys: Set<String> = setOf("profile")
@@ -54,6 +53,7 @@ open class MainActivity : AppCompatActivity(), LoginFragment.OnLoginCompleteList
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        RustLog.disable()
         RustLog.enable()
         RustHttpConfig.setClient(lazy { HttpURLConnectionClient() })
 
@@ -71,25 +71,26 @@ open class MainActivity : AppCompatActivity(), LoginFragment.OnLoginCompleteList
             },
             onScanResult = { pairingUrl ->
                 launch {
-                    val url = account.beginPairingFlowAsync(pairingUrl, scopes).await()
+                    val url = account.beginPairingFlow(pairingUrl, scopes)
                     if (url == null) {
                         Log.log(
                             Log.Priority.ERROR,
                             tag = "mozac-samples-fxa",
-                            message = "Pairing flow failed for $pairingUrl"
+                            message = "Pairing flow failed for $pairingUrl",
                         )
                         return@launch
                     }
                     openWebView(url.url)
                 }
-            }
+            },
+            scanMessage = R.string.pair_instructions_message,
         )
 
         lifecycle.addObserver(qrFeature)
 
         findViewById<View>(R.id.buttonCustomTabs).setOnClickListener {
             launch {
-                account.beginOAuthFlowAsync(scopes).await()?.let {
+                account.beginOAuthFlow(scopes)?.let {
                     openTab(it.url)
                 }
             }
@@ -97,7 +98,7 @@ open class MainActivity : AppCompatActivity(), LoginFragment.OnLoginCompleteList
 
         findViewById<View>(R.id.buttonWebView).setOnClickListener {
             launch {
-                account.beginOAuthFlowAsync(scopes).await()?.let {
+                account.beginOAuthFlow(scopes)?.let {
                     openWebView(it.url)
                 }
             }
@@ -121,8 +122,8 @@ open class MainActivity : AppCompatActivity(), LoginFragment.OnLoginCompleteList
     private fun initAccount(): FirefoxAccount {
         getAuthenticatedAccount()?.let {
             launch {
-                it.getProfileAsync(true).await()?.let {
-                    displayProfile(it)
+                it.getProfile(true)?.let { profile ->
+                    displayProfile(profile)
                 }
             }
             return it
@@ -160,7 +161,7 @@ open class MainActivity : AppCompatActivity(), LoginFragment.OnLoginCompleteList
         val savedJSON = getSharedPreferences(FXA_STATE_PREFS_KEY, Context.MODE_PRIVATE).getString(FXA_STATE_KEY, "")
         return savedJSON?.let {
             try {
-                FirefoxAccount.fromJSONString(it)
+                FirefoxAccount.fromJSONString(it, null)
             } catch (e: FxaException) {
                 null
             }
@@ -169,9 +170,9 @@ open class MainActivity : AppCompatActivity(), LoginFragment.OnLoginCompleteList
 
     private fun openTab(url: String) {
         val customTabsIntent = CustomTabsIntent.Builder()
-                .addDefaultShareMenuItem()
-                .setShowTitle(true)
-                .build()
+            .setShareState(CustomTabsIntent.SHARE_STATE_ON)
+            .setShowTitle(true)
+            .build()
 
         customTabsIntent.intent.data = Uri.parse(url)
         customTabsIntent.launchUrl(this@MainActivity, Uri.parse(url))
@@ -187,13 +188,13 @@ open class MainActivity : AppCompatActivity(), LoginFragment.OnLoginCompleteList
 
     private fun displayAndPersistProfile(code: String, state: String) {
         launch {
-            account.completeOAuthFlowAsync(code, state).await()
-            account.getProfileAsync().await()?.let {
+            account.completeOAuthFlow(code, state)
+            account.getProfile()?.let {
                 displayProfile(it)
             }
             account.toJSONString().let {
                 getSharedPreferences(FXA_STATE_PREFS_KEY, Context.MODE_PRIVATE)
-                        .edit().putString(FXA_STATE_KEY, it).apply()
+                    .edit().putString(FXA_STATE_KEY, it).apply()
             }
         }
     }
@@ -206,6 +207,7 @@ open class MainActivity : AppCompatActivity(), LoginFragment.OnLoginCompleteList
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         when (requestCode) {
             REQUEST_CODE_CAMERA_PERMISSIONS -> qrFeature.onPermissionsResult(permissions, grantResults)
+            else -> super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         }
     }
 

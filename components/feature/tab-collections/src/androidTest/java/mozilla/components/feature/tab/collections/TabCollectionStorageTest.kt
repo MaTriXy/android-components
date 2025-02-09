@@ -5,39 +5,33 @@
 package mozilla.components.feature.tab.collections
 
 import android.content.Context
-import android.util.AttributeSet
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
 import androidx.paging.PagedList
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
-import mozilla.components.browser.session.Session
-import mozilla.components.browser.session.SessionManager
-import mozilla.components.concept.engine.DefaultSettings
-import mozilla.components.concept.engine.Engine
-import mozilla.components.concept.engine.EngineSession
-import mozilla.components.concept.engine.EngineSessionState
-import mozilla.components.concept.engine.EngineView
-import mozilla.components.concept.engine.Settings
-import mozilla.components.concept.engine.utils.EngineVersion
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import mozilla.components.browser.state.state.TabSessionState
+import mozilla.components.browser.state.state.createTab
+import mozilla.components.browser.state.state.recover.RecoverableTab
 import mozilla.components.feature.tab.collections.db.TabCollectionDatabase
 import mozilla.components.feature.tab.collections.db.TabEntity
-import mozilla.components.support.android.test.awaitValue
 import mozilla.components.support.ktx.java.io.truncateDirectory
-import org.json.JSONObject
+import mozilla.components.support.test.fakes.engine.FakeEngine
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
+@ExperimentalCoroutinesApi // for runTest
 @Suppress("LargeClass") // Large test is large
 class TabCollectionStorageTest {
     private lateinit var context: Context
-    private lateinit var sessionManager: SessionManager
     private lateinit var storage: TabCollectionStorage
     private lateinit var executor: ExecutorService
 
@@ -51,10 +45,7 @@ class TabCollectionStorageTest {
         context = ApplicationProvider.getApplicationContext()
         val database = Room.inMemoryDatabaseBuilder(context, TabCollectionDatabase::class.java).build()
 
-        val engine = FakeEngine()
-
-        sessionManager = SessionManager(engine)
-        storage = TabCollectionStorage(context, sessionManager)
+        storage = TabCollectionStorage(context)
         storage.database = lazy { database }
     }
 
@@ -68,10 +59,13 @@ class TabCollectionStorageTest {
     @Test
     fun testCreatingCollections() {
         storage.createCollection("Empty")
-        storage.createCollection("Recipes", listOf(
-            Session("https://www.mozilla.org").apply { title = "Mozilla" },
-            Session("https://www.firefox.com").apply { title = "Firefox" }
-        ))
+        storage.createCollection(
+            "Recipes",
+            listOf(
+                createTab("https://www.mozilla.org", title = "Mozilla"),
+                createTab("https://www.firefox.com", title = "Firefox"),
+            ),
+        )
 
         val collections = getAllCollections()
 
@@ -80,10 +74,10 @@ class TabCollectionStorageTest {
         assertEquals("Recipes", collections[0].title)
         assertEquals(2, collections[0].tabs.size)
 
-        assertEquals("https://www.mozilla.org", collections[0].tabs[0].url)
-        assertEquals("Mozilla", collections[0].tabs[0].title)
-        assertEquals("https://www.firefox.com", collections[0].tabs[1].url)
-        assertEquals("Firefox", collections[0].tabs[1].title)
+        assertEquals("https://www.firefox.com", collections[0].tabs[0].url)
+        assertEquals("Firefox", collections[0].tabs[0].title)
+        assertEquals("https://www.mozilla.org", collections[0].tabs[1].url)
+        assertEquals("Mozilla", collections[0].tabs[1].title)
 
         assertEquals("Empty", collections[1].title)
         assertEquals(0, collections[1].tabs.size)
@@ -92,34 +86,42 @@ class TabCollectionStorageTest {
     @Test
     fun testAddingTabsToExistingCollection() {
         storage.createCollection("Articles")
+        var id: Long?
 
         getAllCollections().let { collections ->
             assertEquals(1, collections.size)
             assertEquals(0, collections[0].tabs.size)
 
-            storage.addTabsToCollection(collections[0], listOf(
-                Session("https://www.mozilla.org").apply { title = "Mozilla" },
-                Session("https://www.firefox.com").apply { title = "Firefox" }
-            ))
+            id = storage.addTabsToCollection(
+                collections[0],
+                listOf(
+                    createTab("https://www.mozilla.org", title = "Mozilla"),
+                    createTab("https://www.firefox.com", title = "Firefox"),
+                ),
+            )
         }
 
         getAllCollections().let { collections ->
+            assertEquals(1L, id)
             assertEquals(1, collections.size)
             assertEquals(2, collections[0].tabs.size)
 
-            assertEquals("https://www.mozilla.org", collections[0].tabs[0].url)
-            assertEquals("Mozilla", collections[0].tabs[0].title)
-            assertEquals("https://www.firefox.com", collections[0].tabs[1].url)
-            assertEquals("Firefox", collections[0].tabs[1].title)
+            assertEquals("https://www.firefox.com", collections[0].tabs[0].url)
+            assertEquals("Firefox", collections[0].tabs[0].title)
+            assertEquals("https://www.mozilla.org", collections[0].tabs[1].url)
+            assertEquals("Mozilla", collections[0].tabs[1].title)
         }
     }
 
     @Test
     fun testRemovingTabsFromCollection() {
-        storage.createCollection("Articles", listOf(
-            Session("https://www.mozilla.org").apply { title = "Mozilla" },
-            Session("https://www.firefox.com").apply { title = "Firefox" }
-        ))
+        storage.createCollection(
+            "Articles",
+            listOf(
+                createTab("https://www.mozilla.org", title = "Mozilla"),
+                createTab("https://www.firefox.com", title = "Firefox"),
+            ),
+        )
 
         getAllCollections().let { collections ->
             assertEquals(1, collections.size)
@@ -132,8 +134,8 @@ class TabCollectionStorageTest {
             assertEquals(1, collections.size)
             assertEquals(1, collections[0].tabs.size)
 
-            assertEquals("https://www.firefox.com", collections[0].tabs[0].url)
-            assertEquals("Firefox", collections[0].tabs[0].title)
+            assertEquals("https://www.mozilla.org", collections[0].tabs[0].url)
+            assertEquals("Mozilla", collections[0].tabs[0].title)
         }
     }
 
@@ -174,8 +176,8 @@ class TabCollectionStorageTest {
 
     @Test
     fun testCreatingCollectionAndRestoringState() {
-        val session1 = Session("https://www.mozilla.org").apply { title = "Mozilla" }
-        val session2 = Session("https://www.firefox.com").apply { title = "Firefox" }
+        val session1 = createTab("https://www.mozilla.org", title = "Mozilla")
+        val session2 = createTab("https://www.firefox.com", title = "Firefox")
 
         storage.createCollection("Articles", listOf(session1, session2))
 
@@ -188,11 +190,11 @@ class TabCollectionStorageTest {
             assertEquals(2, sessions.size)
 
             // We restored the same sessions
-            assertEquals(session1, sessions[0])
-            assertEquals(session2, sessions[1])
+            matches(session1, sessions[0])
+            matches(session2, sessions[1])
 
-            assertEquals(session1.id, sessions[0].id)
-            assertEquals(session2.id, sessions[1].id)
+            assertEquals(session1.id, sessions[0].state.id)
+            assertEquals(session2.id, sessions[1].state.id)
         }
 
         getAllCollections().let { collections ->
@@ -207,53 +209,56 @@ class TabCollectionStorageTest {
             assertNotEquals(session1, sessions[0])
             assertNotEquals(session2, sessions[1])
 
-            assertNotEquals(session1.id, sessions[0].id)
-            assertNotEquals(session2.id, sessions[1].id)
+            assertNotEquals(session1.id, sessions[0].state.id)
+            assertNotEquals(session2.id, sessions[1].state.id)
 
-            assertEquals(session1.url, sessions[0].url)
-            assertEquals(session2.url, sessions[1].url)
+            assertEquals(session1.content.url, sessions[0].state.url)
+            assertEquals(session2.content.url, sessions[1].state.url)
 
-            assertEquals(session1.title, sessions[0].title)
-            assertEquals(session2.title, sessions[1].title)
+            assertEquals(session1.content.title, sessions[0].state.title)
+            assertEquals(session2.content.title, sessions[1].state.title)
         }
     }
 
     @Test
     @Suppress("ComplexMethod")
-    fun testGettingCollectionsWithLimit() {
+    fun testGettingCollections() = runTest {
         storage.createCollection(
-            "Articles", listOf(
-                Session("https://www.mozilla.org").apply { title = "Mozilla" }
-            )
+            "Articles",
+            listOf(
+                createTab("https://www.mozilla.org", title = "Mozilla"),
+            ),
         )
         storage.createCollection(
-            "Recipes", listOf(
-                Session("https://www.firefox.com").apply { title = "Firefox" }
-            )
+            "Recipes",
+            listOf(
+                createTab("https://www.firefox.com", title = "Firefox"),
+            ),
         )
         storage.createCollection(
-            "Books", listOf(
-                Session("https://www.youtube.com").apply { title = "YouTube" },
-                Session("https://www.amazon.com").apply { title = "Amazon" }
-            )
+            "Books",
+            listOf(
+                createTab("https://www.youtube.com", title = "YouTube"),
+                createTab("https://www.amazon.com", title = "Amazon"),
+            ),
         )
         storage.createCollection(
-            "News", listOf(
-                Session("https://www.google.com").apply { title = "Google" },
-                Session("https://www.facebook.com").apply { title = "Facebook" }
-            )
+            "News",
+            listOf(
+                createTab("https://www.google.com", title = "Google"),
+                createTab("https://www.facebook.com", title = "Facebook"),
+            ),
         )
         storage.createCollection(
-            "Blogs", listOf(
-                Session("https://www.wikipedia.org").apply { title = "Wikipedia" }
-            )
+            "Blogs",
+            listOf(
+                createTab("https://www.wikipedia.org", title = "Wikipedia"),
+            ),
         )
 
-        val collections = storage.getCollections(limit = 4)
-            .awaitValue()
+        val collections = storage.getCollections().first()
 
-        assertNotNull(collections!!)
-        assertEquals(4, collections.size)
+        assertEquals(5, collections.size)
 
         with(collections[0]) {
             assertEquals("Blogs", title)
@@ -265,19 +270,19 @@ class TabCollectionStorageTest {
         with(collections[1]) {
             assertEquals("News", title)
             assertEquals(2, tabs.size)
-            assertEquals("https://www.google.com", tabs[0].url)
-            assertEquals("Google", tabs[0].title)
-            assertEquals("https://www.facebook.com", tabs[1].url)
-            assertEquals("Facebook", tabs[1].title)
+            assertEquals("https://www.facebook.com", tabs[0].url)
+            assertEquals("Facebook", tabs[0].title)
+            assertEquals("https://www.google.com", tabs[1].url)
+            assertEquals("Google", tabs[1].title)
         }
 
         with(collections[2]) {
             assertEquals("Books", title)
             assertEquals(2, tabs.size)
-            assertEquals("https://www.youtube.com", tabs[0].url)
-            assertEquals("YouTube", tabs[0].title)
-            assertEquals("https://www.amazon.com", tabs[1].url)
-            assertEquals("Amazon", tabs[1].title)
+            assertEquals("https://www.amazon.com", tabs[0].url)
+            assertEquals("Amazon", tabs[0].title)
+            assertEquals("https://www.youtube.com", tabs[1].url)
+            assertEquals("YouTube", tabs[1].title)
         }
 
         with(collections[3]) {
@@ -287,28 +292,117 @@ class TabCollectionStorageTest {
             assertEquals("https://www.firefox.com", tabs[0].url)
             assertEquals("Firefox", tabs[0].title)
         }
+
+        with(collections[4]) {
+            assertEquals("Articles", title)
+            assertEquals(1, tabs.size)
+
+            assertEquals("https://www.mozilla.org", tabs[0].url)
+            assertEquals("Mozilla", tabs[0].title)
+        }
     }
 
     @Test
-    fun testGettingTabCollectionCount() {
+    @Suppress("ComplexMethod")
+    fun testGettingCollectionsList() = runTest {
+        storage.createCollection(
+            "Articles",
+            listOf(
+                createTab("https://www.mozilla.org", title = "Mozilla"),
+            ),
+        )
+        storage.createCollection(
+            "Recipes",
+            listOf(
+                createTab("https://www.firefox.com", title = "Firefox"),
+            ),
+        )
+        storage.createCollection(
+            "Books",
+            listOf(
+                createTab("https://www.youtube.com", title = "YouTube"),
+                createTab("https://www.amazon.com", title = "Amazon"),
+            ),
+        )
+        storage.createCollection(
+            "News",
+            listOf(
+                createTab("https://www.google.com", title = "Google"),
+                createTab("https://www.facebook.com", title = "Facebook"),
+            ),
+        )
+        storage.createCollection(
+            "Blogs",
+            listOf(
+                createTab("https://www.wikipedia.org", title = "Wikipedia"),
+            ),
+        )
+
+        val collections = storage.getCollectionsList()
+        assertEquals(5, collections.size)
+
+        with(collections[0]) {
+            assertEquals("Blogs", title)
+            assertEquals(1, tabs.size)
+            assertEquals("https://www.wikipedia.org", tabs[0].url)
+            assertEquals("Wikipedia", tabs[0].title)
+        }
+
+        with(collections[1]) {
+            assertEquals("News", title)
+            assertEquals(2, tabs.size)
+            assertEquals("https://www.facebook.com", tabs[0].url)
+            assertEquals("Facebook", tabs[0].title)
+            assertEquals("https://www.google.com", tabs[1].url)
+            assertEquals("Google", tabs[1].title)
+        }
+
+        with(collections[2]) {
+            assertEquals("Books", title)
+            assertEquals(2, tabs.size)
+            assertEquals("https://www.amazon.com", tabs[0].url)
+            assertEquals("Amazon", tabs[0].title)
+            assertEquals("https://www.youtube.com", tabs[1].url)
+            assertEquals("YouTube", tabs[1].title)
+        }
+
+        with(collections[3]) {
+            assertEquals("Recipes", title)
+            assertEquals(1, tabs.size)
+
+            assertEquals("https://www.firefox.com", tabs[0].url)
+            assertEquals("Firefox", tabs[0].title)
+        }
+
+        with(collections[4]) {
+            assertEquals("Articles", title)
+            assertEquals(1, tabs.size)
+
+            assertEquals("https://www.mozilla.org", tabs[0].url)
+            assertEquals("Mozilla", tabs[0].title)
+        }
+    }
+
+    @Test
+    fun testGettingTabCollectionCount() = runTest {
         assertEquals(0, storage.getTabCollectionsCount())
 
         storage.createCollection(
-            "Articles", listOf(
-                Session("https://www.mozilla.org").apply { title = "Mozilla" }
-            )
+            "Articles",
+            listOf(
+                createTab("https://www.mozilla.org", title = "Mozilla"),
+            ),
         )
         storage.createCollection(
-            "Recipes", listOf(
-                Session("https://www.firefox.com").apply { title = "Firefox" }
-            )
+            "Recipes",
+            listOf(
+                createTab("https://www.firefox.com", title = "Firefox"),
+            ),
         )
 
         assertEquals(2, storage.getTabCollectionsCount())
 
-        val collections = storage.getCollections(limit = 2)
-            .awaitValue()
-        assertNotNull(collections!!)
+        val collections = storage.getCollections().first()
         assertEquals(2, collections.size)
 
         storage.removeCollection(collections[0])
@@ -319,14 +413,16 @@ class TabCollectionStorageTest {
     @Test
     fun testRemovingAllCollections() {
         storage.createCollection(
-            "Articles", listOf(
-                Session("https://www.mozilla.org").apply { title = "Mozilla" }
-            )
+            "Articles",
+            listOf(
+                createTab("https://www.mozilla.org", title = "Mozilla"),
+            ),
         )
         storage.createCollection(
-            "Recipes", listOf(
-                Session("https://www.firefox.com").apply { title = "Firefox" }
-            )
+            "Recipes",
+            listOf(
+                createTab("https://www.firefox.com", title = "Firefox"),
+            ),
         )
 
         assertEquals(2, storage.getTabCollectionsCount())
@@ -351,6 +447,7 @@ class TabCollectionStorageTest {
     }
 }
 
+/*
 class FakeEngine : Engine {
     override val version: EngineVersion
         get() = throw NotImplementedError("Not needed for test")
@@ -358,10 +455,16 @@ class FakeEngine : Engine {
     override fun createView(context: Context, attrs: AttributeSet?): EngineView =
         throw UnsupportedOperationException()
 
-    override fun createSession(private: Boolean): EngineSession =
+    override fun createSession(private: Boolean, contextId: String?): EngineSession =
         throw UnsupportedOperationException()
 
     override fun createSessionState(json: JSONObject) = FakeEngineSessionState()
+
+    override fun createSessionStateFrom(reader: JsonReader): EngineSessionState {
+        reader.beginObject()
+        reader.endObject()
+        return FakeEngineSessionState()
+    }
 
     override fun name(): String =
         throw UnsupportedOperationException()
@@ -369,9 +472,26 @@ class FakeEngine : Engine {
     override fun speculativeConnect(url: String) =
         throw UnsupportedOperationException()
 
+    override val profiler: Profiler?
+        get() = throw NotImplementedError("Not needed for test")
+
     override val settings: Settings = DefaultSettings()
 }
 
 class FakeEngineSessionState : EngineSessionState {
-    override fun toJSON() = JSONObject()
+    override fun writeTo(writer: JsonWriter) {
+        writer.beginObject()
+        writer.endObject()
+    }
+}
+ */
+
+private fun matches(state: TabSessionState, tab: RecoverableTab) {
+    assertEquals(state.content.url, tab.state.url)
+    assertEquals(state.content.title, tab.state.title)
+    assertEquals(state.id, tab.state.id)
+    assertEquals(state.parentId, tab.state.parentId)
+    assertEquals(state.contextId, tab.state.contextId)
+    assertEquals(state.lastAccess, tab.state.lastAccess)
+    assertEquals(state.readerState, tab.state.readerState)
 }

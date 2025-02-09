@@ -5,7 +5,8 @@
 package mozilla.components.service.location
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.runTest
 import mozilla.components.concept.fetch.Client
 import mozilla.components.concept.fetch.MutableHeaders
 import mozilla.components.concept.fetch.Request
@@ -30,6 +31,7 @@ import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import java.io.IOException
 
+@ExperimentalCoroutinesApi // for runTest
 @RunWith(AndroidJUnit4::class)
 class MozillaLocationServiceTest {
     @Before
@@ -39,7 +41,7 @@ class MozillaLocationServiceTest {
     }
 
     @Test
-    fun `WHEN calling fetchRegion AND the service returns a region THEN a Region object is returned`() {
+    fun `WHEN calling fetchRegion AND the service returns a region THEN a Region object is returned`() = runTest {
         val server = MockWebServer()
         server.enqueue(MockResponse().setBody("{\"country_name\": \"Germany\", \"country_code\": \"DE\"}"))
 
@@ -50,10 +52,10 @@ class MozillaLocationServiceTest {
                 testContext,
                 HttpURLConnectionClient(),
                 apiKey = "test",
-                serviceUrl = server.url("/").toString()
+                serviceUrl = server.url("/").toString(),
             )
 
-            val region = runBlocking { service.fetchRegion() }
+            val region = service.fetchRegion()
 
             assertNotNull(region!!)
 
@@ -69,29 +71,29 @@ class MozillaLocationServiceTest {
     }
 
     @Test
-    fun `WHEN client throws IOException THEN the returned region is null`() {
+    fun `WHEN client throws IOException THEN the returned region is null`() = runTest {
         val client: Client = mock()
         doThrow(IOException()).`when`(client).fetch(any())
 
         val service = MozillaLocationService(testContext, client, apiKey = "test")
-        val region = runBlocking { service.fetchRegion() }
+        val region = service.fetchRegion()
 
         assertNull(region)
     }
 
     @Test
-    fun `WHEN fetching region THEN request is sent to the location service`() {
+    fun `WHEN fetching region THEN request is sent to the location service`() = runTest {
         val client: Client = mock()
         val response = Response(
             url = "http://example.org",
             status = 200,
             headers = MutableHeaders(),
-            body = Response.Body("{\"country_name\": \"France\", \"country_code\": \"FR\"}".byteInputStream())
+            body = Response.Body("{\"country_name\": \"France\", \"country_code\": \"FR\"}".byteInputStream()),
         )
         doReturn(response).`when`(client).fetch(any())
 
         val service = MozillaLocationService(testContext, client, apiKey = "test")
-        val region = runBlocking { service.fetchRegion() }
+        val region = service.fetchRegion()
 
         assertNotNull(region!!)
 
@@ -106,104 +108,104 @@ class MozillaLocationServiceTest {
     }
 
     @Test
-    fun `WHEN fetching region AND service returns 404 THEN region is null`() {
+    fun `WHEN fetching region AND service returns 404 THEN region is null`() = runTest {
         val client: Client = mock()
         val response = Response(
             url = "http://example.org",
             status = 404,
             headers = MutableHeaders(),
-            body = Response.Body.empty()
+            body = Response.Body.empty(),
         )
         doReturn(response).`when`(client).fetch(any())
 
         val service = MozillaLocationService(testContext, client, apiKey = "test")
-        val region = runBlocking { service.fetchRegion() }
+        val region = service.fetchRegion()
 
         assertNull(region)
     }
 
     @Test
-    fun `WHEN fetching region AND service returns 500 THEN region is null`() {
+    fun `WHEN fetching region AND service returns 500 THEN region is null`() = runTest {
         val client: Client = mock()
         val response = Response(
             url = "http://example.org",
             status = 500,
             headers = MutableHeaders(),
-            body = Response.Body("Internal Server Error".byteInputStream())
+            body = Response.Body("Internal Server Error".byteInputStream()),
         )
         doReturn(response).`when`(client).fetch(any())
 
         val service = MozillaLocationService(testContext, client, apiKey = "test")
-        val region = runBlocking { service.fetchRegion() }
+        val region = service.fetchRegion()
 
         assertNull(region)
     }
 
     @Test
-    fun `WHEN fetching region AND service returns broken JSON THEN region is null`() {
+    fun `WHEN fetching region AND service returns broken JSON THEN region is null`() = runTest {
         val client: Client = mock()
         val response = Response(
             url = "http://example.org",
             status = 200,
             headers = MutableHeaders(),
-            body = Response.Body("{\"country_name\": \"France\",".byteInputStream())
+            body = Response.Body("{\"country_name\": \"France\",".byteInputStream()),
         )
         doReturn(response).`when`(client).fetch(any())
 
         val service = MozillaLocationService(testContext, client, apiKey = "test")
-        val region = runBlocking { service.fetchRegion() }
+        val region = service.fetchRegion()
 
         assertNull(region)
     }
 
     @Test
-    fun `WHEN fetching region AND service returns empty JSON object THEN region is null`() {
+    fun `WHEN fetching region AND service returns empty JSON object THEN region is null`() = runTest {
         val client: Client = mock()
         val response = Response(
             url = "http://example.org",
             status = 200,
             headers = MutableHeaders(),
-            body = Response.Body("{}".byteInputStream())
+            body = Response.Body("{}".byteInputStream()),
         )
         doReturn(response).`when`(client).fetch(any())
 
         val service = MozillaLocationService(testContext, client, apiKey = "test")
-        val region = runBlocking { service.fetchRegion() }
+        val region = service.fetchRegion()
 
         assertNull(region)
     }
 
     @Test
-    fun `WHEN fetching region AND service returns incomplete JSON THEN region is null`() {
+    fun `WHEN fetching region AND service returns incomplete JSON THEN region is null`() = runTest {
         val client: Client = mock()
         val response = Response(
             url = "http://example.org",
             status = 200,
             headers = MutableHeaders(),
-            body = Response.Body("{\"country_code\": \"DE\"}".byteInputStream())
+            body = Response.Body("{\"country_code\": \"DE\"}".byteInputStream()),
         )
         doReturn(response).`when`(client).fetch(any())
 
         val service = MozillaLocationService(testContext, client, apiKey = "test")
-        val region = runBlocking { service.fetchRegion() }
+        val region = service.fetchRegion()
 
         assertNull(region)
     }
 
     @Test
-    fun `WHEN fetching region for the second time THEN region is read from cache`() {
+    fun `WHEN fetching region for the second time THEN region is read from cache`() = runTest {
         run {
             val client: Client = mock()
             val response = Response(
                 url = "http://example.org",
                 status = 200,
                 headers = MutableHeaders(),
-                body = Response.Body("{\"country_name\": \"Nepal\", \"country_code\": \"NP\"}".byteInputStream())
+                body = Response.Body("{\"country_name\": \"Nepal\", \"country_code\": \"NP\"}".byteInputStream()),
             )
             doReturn(response).`when`(client).fetch(any())
 
             val service = MozillaLocationService(testContext, client, apiKey = "test")
-            val region = runBlocking { service.fetchRegion() }
+            val region = service.fetchRegion()
 
             assertNotNull(region!!)
 
@@ -217,7 +219,7 @@ class MozillaLocationServiceTest {
             val client: Client = mock()
 
             val service = MozillaLocationService(testContext, client, apiKey = "test")
-            val region = runBlocking { service.fetchRegion() }
+            val region = service.fetchRegion()
 
             assertNotNull(region!!)
 
@@ -229,19 +231,19 @@ class MozillaLocationServiceTest {
     }
 
     @Test
-    fun `WHEN fetching region for the second time and setting readFromCache = false THEN request is sent again`() {
+    fun `WHEN fetching region for the second time and setting readFromCache = false THEN request is sent again`() = runTest {
         run {
             val client: Client = mock()
             val response = Response(
                 url = "http://example.org",
                 status = 200,
                 headers = MutableHeaders(),
-                body = Response.Body("{\"country_name\": \"Nepal\", \"country_code\": \"NP\"}".byteInputStream())
+                body = Response.Body("{\"country_name\": \"Nepal\", \"country_code\": \"NP\"}".byteInputStream()),
             )
             doReturn(response).`when`(client).fetch(any())
 
             val service = MozillaLocationService(testContext, client, apiKey = "test")
-            val region = runBlocking { service.fetchRegion() }
+            val region = service.fetchRegion()
 
             assertNotNull(region!!)
 
@@ -257,12 +259,12 @@ class MozillaLocationServiceTest {
                 url = "http://example.org",
                 status = 200,
                 headers = MutableHeaders(),
-                body = Response.Body("{\"country_name\": \"Liberia\", \"country_code\": \"LR\"}".byteInputStream())
+                body = Response.Body("{\"country_name\": \"Liberia\", \"country_code\": \"LR\"}".byteInputStream()),
             )
             doReturn(response).`when`(client).fetch(any())
 
             val service = MozillaLocationService(testContext, client, apiKey = "test")
-            val region = runBlocking { service.fetchRegion(readFromCache = false) }
+            val region = service.fetchRegion(readFromCache = false)
 
             assertNotNull(region!!)
 

@@ -5,21 +5,26 @@
 package mozilla.components.concept.toolbar
 
 import android.graphics.drawable.Drawable
-import android.util.TypedValue
 import android.view.View
+import android.view.View.NO_ID
 import android.view.ViewGroup
 import android.widget.ImageButton
+import android.widget.ImageView
+import androidx.annotation.ColorRes
+import androidx.annotation.Dimension
+import androidx.annotation.Dimension.Companion.DP
 import androidx.annotation.DrawableRes
 import androidx.appcompat.widget.AppCompatImageButton
 import androidx.appcompat.widget.AppCompatImageView
+import androidx.core.content.ContextCompat
 import mozilla.components.support.base.android.Padding
+import mozilla.components.support.ktx.android.content.res.resolveAttribute
 import mozilla.components.support.ktx.android.view.setPadding
 import java.lang.ref.WeakReference
 
 /**
  * Interface to be implemented by components that provide browser toolbar functionality.
  */
-@Suppress("TooManyFunctions")
 interface Toolbar {
     /**
      * Sets/Gets the title to be displayed on the toolbar.
@@ -43,6 +48,11 @@ interface Toolbar {
      * Sets/Gets the site security to be displayed on the toolbar.
      */
     var siteSecure: SiteSecurity
+
+    /**
+     * Sets/Gets the highlight icon to be displayed on the toolbar.
+     */
+    var highlight: Highlight
 
     /**
      * Sets/Gets the site tracking protection state to be displayed on the toolbar.
@@ -100,6 +110,36 @@ interface Toolbar {
     fun addBrowserAction(action: Action)
 
     /**
+     * Removes a previously added browser action (see [addBrowserAction]). If the the provided
+     * actions was never added, this method has no effect.
+     *
+     * @param action the action to remove.
+     */
+    fun removeBrowserAction(action: Action)
+
+    /**
+     * Removes a previously added page action (see [addBrowserAction]). If the the provided
+     * actions was never added, this method has no effect.
+     *
+     * @param action the action to remove.
+     */
+    fun removePageAction(action: Action)
+
+    /**
+     * Removes a previously added navigation action (see [addNavigationAction]). If the the provided
+     * actions was never added, this method has no effect.
+     *
+     * @param action the action to remove.
+     */
+    fun removeNavigationAction(action: Action)
+
+    /**
+     * Declare that the actions (navigation actions, browser actions, page actions) have changed and
+     * should be updated if needed.
+     */
+    fun invalidateActions()
+
+    /**
      * Adds an action to be displayed on the right side of the URL in display mode.
      *
      * Related:
@@ -113,9 +153,19 @@ interface Toolbar {
     fun addNavigationAction(action: Action)
 
     /**
-     * Adds an action to be displayed in edit mode.
+     * Adds an action to be displayed at the start of the URL in edit mode.
      */
-    fun addEditAction(action: Action)
+    fun addEditActionStart(action: Action)
+
+    /**
+     * Adds an action to be displayed at the end of the URL in edit mode.
+     */
+    fun addEditActionEnd(action: Action)
+
+    /**
+     * Removes an action at the end of the URL in edit mode.
+     */
+    fun removeEditActionEnd(action: Action)
 
     /**
      * Casts this toolbar to an Android View object.
@@ -136,6 +186,34 @@ interface Toolbar {
      * Switches to URL editing mode (from displaying mode) if supported by the toolbar implementation.
      */
     fun editMode()
+
+    /**
+     * Dismisses the display toolbar popup menu
+     */
+    fun dismissMenu()
+
+    /**
+     * Enable scrolling of the dynamic toolbar. Restore this functionality after [disableScrolling] stopped it.
+     *
+     * The toolbar may have other intrinsic checks depending on which the toolbar will be animated or not.
+     */
+    fun enableScrolling()
+
+    /**
+     * Completely disable scrolling of the dynamic toolbar.
+     * Use [enableScrolling] to restore the functionality.
+     */
+    fun disableScrolling()
+
+    /**
+     * Force the toolbar to expand.
+     */
+    fun expand()
+
+    /**
+     * Force the toolbar to collapse. Only if dynamic.
+     */
+    fun collapse()
 
     /**
      * Listener to be invoked when the user edits the URL.
@@ -169,6 +247,9 @@ interface Toolbar {
         val visible: () -> Boolean
             get() = { true }
 
+        val autoHide: () -> Boolean
+            get() = { false }
+
         fun createView(parent: ViewGroup): View
 
         fun bind(view: View)
@@ -180,34 +261,43 @@ interface Toolbar {
      * @param imageDrawable The drawable to be shown.
      * @param contentDescription The content description to use.
      * @param visible Lambda that returns true or false to indicate whether this button should be shown.
+     * @param autoHide Lambda that returns true or false to indicate whether this button should auto hide.
      * @param padding A optional custom padding.
+     * @param iconTintColorResource Optional ID of color resource to tint the icon.
+     * @param longClickListener Callback that will be invoked whenever the button is long-pressed.
      * @param listener Callback that will be invoked whenever the button is pressed
      */
+    @Suppress("LongParameterList")
     open class ActionButton(
         val imageDrawable: Drawable? = null,
         val contentDescription: String,
         override val visible: () -> Boolean = { true },
+        override val autoHide: () -> Boolean = { false },
         private val background: Int = 0,
         private val padding: Padding? = null,
-        private val listener: () -> Unit
+        @ColorRes val iconTintColorResource: Int = ViewGroup.NO_ID,
+        private val longClickListener: (() -> Unit)? = null,
+        private val listener: () -> Unit,
     ) : Action {
 
         override fun createView(parent: ViewGroup): View = AppCompatImageButton(parent.context).also { imageButton ->
             imageButton.setImageDrawable(imageDrawable)
             imageButton.contentDescription = contentDescription
+            imageButton.setTintResource(iconTintColorResource)
             imageButton.setOnClickListener { listener.invoke() }
-
-            if (background == 0) {
-                val outValue = TypedValue()
-                parent.context.theme.resolveAttribute(
-                    android.R.attr.selectableItemBackgroundBorderless,
-                    outValue,
-                    true
-                )
-                imageButton.setBackgroundResource(outValue.resourceId)
-            } else {
-                imageButton.setBackgroundResource(background)
+            imageButton.setOnLongClickListener {
+                longClickListener?.invoke()
+                true
             }
+            imageButton.isLongClickable = longClickListener != null
+
+            val backgroundResource = if (background == 0) {
+                parent.context.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless)
+            } else {
+                background
+            }
+
+            imageButton.setBackgroundResource(backgroundResource)
             padding?.let { imageButton.setPadding(it) }
         }
 
@@ -236,29 +326,26 @@ interface Toolbar {
         private var selected: Boolean = false,
         @DrawableRes private val background: Int = 0,
         private val padding: Padding? = null,
-        private val listener: (Boolean) -> Unit
+        private val listener: (Boolean) -> Unit,
     ) : Action {
         private var view: WeakReference<ImageButton>? = null
 
         override fun createView(parent: ViewGroup): View = AppCompatImageButton(parent.context).also { imageButton ->
             view = WeakReference(imageButton)
 
+            imageButton.scaleType = ImageView.ScaleType.CENTER
             imageButton.setOnClickListener { toggle() }
             imageButton.isSelected = selected
 
             updateViewState()
 
-            if (background == 0) {
-                val outValue = TypedValue()
-                parent.context.theme.resolveAttribute(
-                    android.R.attr.selectableItemBackgroundBorderless,
-                    outValue,
-                    true)
-
-                imageButton.setBackgroundResource(outValue.resourceId)
+            val backgroundResource = if (background == 0) {
+                parent.context.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless)
             } else {
-                imageButton.setBackgroundResource(background)
+                background
             }
+
+            imageButton.setBackgroundResource(backgroundResource)
             padding?.let { imageButton.setPadding(it) }
         }
 
@@ -320,8 +407,8 @@ interface Toolbar {
      * @param padding A optional custom padding.
      */
     open class ActionSpace(
-        private val desiredWidth: Int,
-        private val padding: Padding? = null
+        @Dimension(unit = DP) private val desiredWidth: Int,
+        private val padding: Padding? = null,
     ) : Action {
         override fun createView(parent: ViewGroup): View = View(parent.context).apply {
             minimumWidth = desiredWidth
@@ -343,7 +430,7 @@ interface Toolbar {
     open class ActionImage(
         private val imageDrawable: Drawable,
         private val contentDescription: String? = null,
-        private val padding: Padding? = null
+        private val padding: Padding? = null,
     ) : Action {
 
         override fun createView(parent: ViewGroup): View = AppCompatImageView(parent.context).also { image ->
@@ -375,17 +462,41 @@ interface Toolbar {
          * The site has tracking protection enabled, but none trackers have been blocked or detected.
          */
         ON_NO_TRACKERS_BLOCKED,
+
         /**
          * The site has tracking protection enabled, and trackers have been blocked or detected.
          */
         ON_TRACKERS_BLOCKED,
+
         /**
          * Tracking protection has been disabled for a specific site.
          */
         OFF_FOR_A_SITE,
+
         /**
          * Tracking protection has been disabled for all sites.
          */
         OFF_GLOBALLY,
+    }
+
+    /**
+     * Indicates the reason why a highlight icon is shown or hidden.
+     */
+    enum class Highlight {
+        /**
+         * The site has changed its permissions from their default values.
+         */
+        PERMISSIONS_CHANGED,
+
+        /**
+         * The site does not show a dot indicator.
+         */
+        NONE,
+    }
+}
+
+private fun AppCompatImageButton.setTintResource(@ColorRes tintColorResource: Int) {
+    if (tintColorResource != NO_ID) {
+        imageTintList = ContextCompat.getColorStateList(context, tintColorResource)
     }
 }

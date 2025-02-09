@@ -7,26 +7,18 @@ package mozilla.components.lib.state
 import android.os.Handler
 import android.os.Looper
 import androidx.annotation.CheckResult
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import mozilla.components.lib.state.internal.ReducerChainBuilder
+import mozilla.components.lib.state.internal.StoreThreadFactory
 import java.lang.ref.WeakReference
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
-
-/**
- * Reducers specify how the application's [State] changes in response to [Action]s sent to the [Store].
- *
- * Remember that actions only describe what happened, but don't describe how the application's state changes.
- * Reducers will commonly consist of a `when` statement returning different copies of the [State].
- */
-typealias Reducer<S, A> = (S, A) -> S
-
-/**
- * Listener called when the state changes in the [Store].
- */
-typealias Observer<S> = (S) -> Unit
 
 /**
  * A generic store holding an immutable [State].
@@ -36,14 +28,23 @@ typealias Observer<S> = (S) -> Unit
  *
  * @param initialState The initial state until a dispatched [Action] creates a new state.
  * @param reducer A function that gets the current [State] and [Action] passed in and will return a new [State].
+ * @param middleware Optional list of [Middleware] sitting between the [Store] and the [Reducer].
+ * @param threadNamePrefix Optional prefix with which to name threads for the [Store]. If not provided,
+ * the naming scheme will be deferred to [Executors.defaultThreadFactory]
  */
 open class Store<S : State, A : Action>(
     initialState: S,
-    private val reducer: Reducer<S, A>
+    reducer: Reducer<S, A>,
+    middleware: List<Middleware<S, A>> = emptyList(),
+    threadNamePrefix: String? = null,
 ) {
-    private val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+    private val threadFactory = StoreThreadFactory(threadNamePrefix)
+    private val dispatcher = Executors.newSingleThreadExecutor(threadFactory).asCoroutineDispatcher()
+    private val reducerChainBuilder = ReducerChainBuilder(threadFactory, reducer, middleware)
     private val scope = CoroutineScope(dispatcher)
-    private val subscriptions = mutableSetOf<Subscription<S, A>>()
+
+    @VisibleForTesting
+    internal val subscriptions = Collections.newSetFromMap(ConcurrentHashMap<Subscription<S, A>, Boolean>())
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         // We want exceptions in the reducer to crash the app and not get silently ignored. Therefore we rethrow the
         // exception on the main thread.
@@ -56,13 +57,13 @@ open class Store<S : State, A : Action>(
         scope.cancel()
     }
     private val dispatcherWithExceptionHandler = dispatcher + exceptionHandler
-    private var currentState = initialState
+
+    @Volatile private var currentState = initialState
 
     /**
      * The current [State].
      */
     val state: S
-        @Synchronized
         get() = currentState
 
     /**
@@ -82,10 +83,7 @@ open class Store<S : State, A : Action>(
     @Synchronized
     fun observeManually(observer: Observer<S>): Subscription<S, A> {
         val subscription = Subscription(observer, store = this)
-
-        synchronized(subscriptions) {
-            subscriptions.add(subscription)
-        }
+        subscriptions.add(subscription)
 
         return subscription
     }
@@ -94,29 +92,26 @@ open class Store<S : State, A : Action>(
      * Dispatch an [Action] to the store in order to trigger a [State] change.
      */
     fun dispatch(action: A) = scope.launch(dispatcherWithExceptionHandler) {
-        dispatchInternal(action)
+        synchronized(this@Store) {
+            reducerChainBuilder.get(this@Store).invoke(action)
+        }
     }
 
-    @Synchronized
-    private fun dispatchInternal(action: A) {
-        val newState = reducer(currentState, action)
-
-        if (newState == currentState) {
+    /**
+     * Transitions from the current [State] to the passed in [state] and notifies all observers.
+     */
+    internal fun transitionTo(state: S) {
+        if (state == currentState) {
             // Nothing has changed.
             return
         }
 
-        currentState = newState
-
-        synchronized(subscriptions) {
-            subscriptions.forEach { subscription -> subscription.dispatch(newState) }
-        }
+        currentState = state
+        subscriptions.forEach { subscription -> subscription.dispatch(state) }
     }
 
     private fun removeSubscription(subscription: Subscription<S, A>) {
-        synchronized(subscriptions) {
-            subscriptions.remove(subscription)
-        }
+        subscriptions.remove(subscription)
     }
 
     /**
@@ -125,7 +120,7 @@ open class Store<S : State, A : Action>(
      */
     class Subscription<S : State, A : Action> internal constructor(
         internal val observer: Observer<S>,
-        store: Store<S, A>
+        store: Store<S, A>,
     ) {
         private val storeReference = WeakReference(store)
         internal var binding: Binding? = null
@@ -151,6 +146,11 @@ open class Store<S : State, A : Action>(
             active = false
         }
 
+        /**
+         * Notifies this subscription's observer of a state change.
+         *
+         * @param state the updated state.
+         */
         @Synchronized
         internal fun dispatch(state: S) {
             if (active) {
@@ -184,4 +184,4 @@ open class Store<S : State, A : Action>(
  * Exception for otherwise unhandled errors caught while reducing state or
  * while managing/notifying observers.
  */
-class StoreException(val msg: String, val e: Throwable? = null) : Exception(msg, e)
+class StoreException(msg: String, val e: Throwable? = null) : Exception(msg, e)

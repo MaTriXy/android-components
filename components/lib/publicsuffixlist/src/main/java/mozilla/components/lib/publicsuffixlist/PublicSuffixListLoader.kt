@@ -12,7 +12,7 @@ private const val PUBLIC_SUFFIX_LIST_FILE = "publicsuffixes"
 
 internal object PublicSuffixListLoader {
     fun load(context: Context): PublicSuffixListData = context.assets.open(
-        PUBLIC_SUFFIX_LIST_FILE
+        PUBLIC_SUFFIX_LIST_FILE,
     ).buffered().use { stream ->
         val publicSuffixSize = stream.readInt()
         val publicSuffixBytes = stream.readFully(publicSuffixSize)
@@ -26,10 +26,12 @@ internal object PublicSuffixListLoader {
 
 @Suppress("MagicNumber")
 private fun BufferedInputStream.readInt(): Int {
-    return (read() and 0xff shl 24
-        or (read() and 0xff shl 16)
-        or (read() and 0xff shl 8)
-        or (read() and 0xff))
+    return (
+        read() and 0xff shl 24
+            or (read() and 0xff shl 16)
+            or (read() and 0xff shl 8)
+            or (read() and 0xff)
+        )
 }
 
 private fun BufferedInputStream.readFully(size: Int): ByteArray {

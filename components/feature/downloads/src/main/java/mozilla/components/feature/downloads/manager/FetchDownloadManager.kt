@@ -7,23 +7,25 @@ package mozilla.components.feature.downloads.manager
 import android.Manifest.permission.FOREGROUND_SERVICE
 import android.Manifest.permission.INTERNET
 import android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+import android.annotation.SuppressLint
 import android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE
 import android.app.DownloadManager.EXTRA_DOWNLOAD_ID
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.os.Build.VERSION.SDK_INT
 import android.os.Build.VERSION_CODES.P
-import android.util.LongSparseArray
-import androidx.core.util.isEmpty
-import androidx.core.util.set
+import androidx.annotation.VisibleForTesting
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import mozilla.components.browser.state.action.DownloadAction
 import mozilla.components.browser.state.state.content.DownloadState
+import mozilla.components.browser.state.state.content.DownloadState.Status
+import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.feature.downloads.AbstractFetchDownloadService
+import mozilla.components.feature.downloads.AbstractFetchDownloadService.Companion.EXTRA_DOWNLOAD_STATUS
 import mozilla.components.feature.downloads.ext.isScheme
-import mozilla.components.feature.downloads.ext.putDownloadExtra
-import kotlin.random.Random
 import kotlin.reflect.KClass
 
 /**
@@ -34,19 +36,27 @@ import kotlin.reflect.KClass
  */
 class FetchDownloadManager<T : AbstractFetchDownloadService>(
     private val applicationContext: Context,
+    private val store: BrowserStore,
     private val service: KClass<T>,
     private val broadcastManager: LocalBroadcastManager = LocalBroadcastManager.getInstance(applicationContext),
-    override var onDownloadCompleted: OnDownloadCompleted = noop
+    override var onDownloadStopped: onDownloadStopped = noop,
 ) : BroadcastReceiver(), DownloadManager {
 
-    private val queuedDownloads = LongSparseArray<DownloadState>()
     private var isSubscribedReceiver = false
 
-    override val permissions = if (SDK_INT >= P) {
-        arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE, FOREGROUND_SERVICE)
-    } else {
-        arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE)
-    }
+    // Do not require WRITE_EXTERNAL_STORAGE permission on API 29 and above (using scoped storage)
+    override val permissions
+        @SuppressLint("InlinedApi")
+        get() = if (getSDKVersion() >= Build.VERSION_CODES.Q) {
+            arrayOf(INTERNET, FOREGROUND_SERVICE)
+        } else if (getSDKVersion() >= P) {
+            arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE, FOREGROUND_SERVICE)
+        } else {
+            arrayOf(INTERNET, WRITE_EXTERNAL_STORAGE)
+        }
+
+    @VisibleForTesting
+    internal fun getSDKVersion() = SDK_INT
 
     /**
      * Schedules a download through the [AbstractFetchDownloadService].
@@ -54,27 +64,28 @@ class FetchDownloadManager<T : AbstractFetchDownloadService>(
      * @param cookie any additional cookie to add as part of the download request.
      * @return the id reference of the scheduled download.
      */
-    override fun download(download: DownloadState, cookie: String): Long? {
-        if (!download.isScheme(listOf("http", "https"))) {
-            // We are ignoring everything that is not http or https. This is a limitation of
-            // GeckoView: https://bugzilla.mozilla.org/show_bug.cgi?id=1501735 and
-            // https://bugzilla.mozilla.org/show_bug.cgi?id=1432949
+    override fun download(download: DownloadState, cookie: String): String? {
+        if (!download.isScheme(listOf("http", "https", "data", "blob"))) {
             return null
         }
-
         validatePermissionGranted(applicationContext)
 
-        val downloadID = Random.nextLong()
-        queuedDownloads[downloadID] = download
+        // The middleware will notify the service to start the download
+        // once this action is processed.
+        store.dispatch(DownloadAction.AddDownloadAction(download))
+
+        registerBroadcastReceiver()
+        return download.id
+    }
+
+    override fun tryAgain(downloadId: String) {
+        val download = store.state.downloads[downloadId] ?: return
 
         val intent = Intent(applicationContext, service.java)
-        intent.putExtra(EXTRA_DOWNLOAD_ID, downloadID)
-        intent.putDownloadExtra(download)
+        intent.putExtra(EXTRA_DOWNLOAD_ID, download.id)
         applicationContext.startService(intent)
 
         registerBroadcastReceiver()
-
-        return downloadID
     }
 
     /**
@@ -84,7 +95,6 @@ class FetchDownloadManager<T : AbstractFetchDownloadService>(
         if (isSubscribedReceiver) {
             broadcastManager.unregisterReceiver(this)
             isSubscribedReceiver = false
-            queuedDownloads.clear()
         }
     }
 
@@ -97,20 +107,17 @@ class FetchDownloadManager<T : AbstractFetchDownloadService>(
     }
 
     /**
-     * Invoked when a download is complete. Calls [onDownloadCompleted] and unregisters the
-     * broadcast receiver if there are no more queued downloads.
+     * Invoked when a download is complete. Notifies [onDownloadStopped] and removes the queued
+     * download if it's complete.
      */
     override fun onReceive(context: Context, intent: Intent) {
-        if (queuedDownloads.isEmpty()) unregisterListeners()
-
-        val downloadID = intent.getLongExtra(EXTRA_DOWNLOAD_ID, -1)
-        val download = queuedDownloads[downloadID]
+        val downloadID = intent.getStringExtra(EXTRA_DOWNLOAD_ID) ?: ""
+        val download = store.state.downloads[downloadID]
+        val downloadStatus = intent.getSerializableExtra(EXTRA_DOWNLOAD_STATUS)
+            as Status
 
         if (download != null) {
-            onDownloadCompleted(download, downloadID)
-            queuedDownloads.remove(downloadID)
+            onDownloadStopped(download, downloadID, downloadStatus)
         }
-
-        if (queuedDownloads.isEmpty()) unregisterListeners()
     }
 }

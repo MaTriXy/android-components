@@ -5,6 +5,7 @@
 package mozilla.components.support.base.observer
 
 import android.app.Activity
+import android.os.Looper.getMainLooper
 import android.view.View
 import android.view.WindowManager
 import androidx.lifecycle.Lifecycle
@@ -25,6 +26,7 @@ import org.mockito.Mockito.spy
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.robolectric.Robolectric
+import org.robolectric.Shadows.shadowOf
 
 @RunWith(AndroidJUnit4::class)
 class ObserverRegistryTest {
@@ -43,6 +45,29 @@ class ObserverRegistryTest {
         }
 
         assertTrue(observer.notified)
+    }
+
+    @Test
+    fun `observer gets queued notifications when registered`() {
+        val registry = ObserverRegistry<TestIntObserver>()
+
+        val observer = TestIntObserver()
+        val anotherObserver = TestIntObserver()
+        registry.notifyAtLeastOneObserver {
+            somethingChanged(1)
+        }
+        registry.notifyAtLeastOneObserver {
+            somethingChanged(2)
+        }
+        registry.notifyAtLeastOneObserver {
+            somethingChanged(3)
+        }
+        assertEquals(emptyList<Int>(), observer.notified)
+
+        registry.register(observer)
+        registry.register(anotherObserver)
+        assertEquals(listOf(1, 2, 3), observer.notified)
+        assertEquals(emptyList<Int>(), anotherObserver.notified)
     }
 
     @Test
@@ -119,7 +144,11 @@ class ObserverRegistryTest {
 
     @Test
     fun `observer will not get registered if lifecycle state is DESTROYED`() {
-        val owner = MockedLifecycleOwner(Lifecycle.State.DESTROYED)
+        val owner = MockedLifecycleOwner(Lifecycle.State.STARTED)
+
+        // We cannot set initial DESTROYED state for LifecycleRegistry
+        // so we simulate lifecycle getting destroyed.
+        owner.lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
 
         val registry = ObserverRegistry<TestObserver>()
         val observer = TestObserver()
@@ -204,6 +233,7 @@ class ObserverRegistryTest {
         registry.register(observer3, MockedLifecycleOwner(Lifecycle.State.CREATED))
         registry.register(observer4, view)
         activity.windowManager.addView(view, WindowManager.LayoutParams(100, 100))
+        shadowOf(getMainLooper()).idle()
 
         assertFalse(observer1.notified)
         assertFalse(observer2.notified)
@@ -329,6 +359,7 @@ class ObserverRegistryTest {
         assertFalse(observer.notified)
 
         activity.windowManager.addView(view, WindowManager.LayoutParams(100, 100))
+        shadowOf(getMainLooper()).idle()
         assertTrue(view.isAttachedToWindow)
 
         registry.notifyObservers {
@@ -343,6 +374,7 @@ class ObserverRegistryTest {
         val activity = Robolectric.buildActivity(Activity::class.java).create().get()
         val view = View(testContext)
         activity.windowManager.addView(view, WindowManager.LayoutParams(100, 100))
+        shadowOf(getMainLooper()).idle()
 
         val registry = ObserverRegistry<TestObserver>()
         val observer = TestObserver()
@@ -362,6 +394,8 @@ class ObserverRegistryTest {
         observer.notified = false
 
         activity.windowManager.removeView(view)
+        shadowOf(getMainLooper()).idle()
+
         assertFalse(view.isAttachedToWindow)
 
         registry.notifyObservers {
@@ -602,7 +636,7 @@ class ObserverRegistryTest {
     }
 
     private class TestConsumingObserver(
-        private val shouldConsume: Boolean
+        private val shouldConsume: Boolean,
     ) {
         var notified: Boolean = false
         var notifiedWith: Int? = null

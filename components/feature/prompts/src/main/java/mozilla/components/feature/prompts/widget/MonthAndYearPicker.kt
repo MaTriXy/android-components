@@ -24,11 +24,12 @@ internal class MonthAndYearPicker @JvmOverloads constructor(
     private val selectedDate: Calendar = now(),
     private val maxDate: Calendar = getDefaultMaxDate(),
     private val minDate: Calendar = getDefaultMinDate(),
-    internal var dateSetListener: OnDateSetListener? = null
+    internal var dateSetListener: OnDateSetListener? = null,
 ) : ScrollView(context), NumberPicker.OnValueChangeListener {
 
     @VisibleForTesting
     internal val monthView: NumberPicker
+
     @VisibleForTesting
     internal val yearView: NumberPicker
     private val monthsLabels: Array<out String>
@@ -153,7 +154,6 @@ internal class MonthAndYearPicker @JvmOverloads constructor(
 
         private const val SPEED_MONTH_SPINNER = 200L
         private const val SPEED_YEAR_SPINNER = 100L
-        private const val DEFAULT_VALUE = -1
 
         @VisibleForTesting
         internal const val DEFAULT_MAX_YEAR = 9999

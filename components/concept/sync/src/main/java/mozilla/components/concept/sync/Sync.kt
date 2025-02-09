@@ -16,7 +16,7 @@ sealed class SyncStatus {
     /**
      * Sync completed with an error.
      */
-    data class Error(val exception: Throwable) : SyncStatus()
+    data class Error(val exception: Exception) : SyncStatus()
 }
 
 /**
@@ -39,7 +39,7 @@ data class SyncAuthInfo(
     val fxaAccessToken: String,
     val fxaAccessTokenExpiresAt: Long,
     val syncKey: String,
-    val tokenServerUrl: String
+    val tokenServerUrl: String,
 )
 
 /**
@@ -47,16 +47,7 @@ data class SyncAuthInfo(
  */
 interface SyncableStore {
     /**
-     * Performs a sync.
-     *
-     * @param authInfo Auth information necessary for syncing this store.
-     * @return [SyncStatus] A status object describing how sync went.
+     * Registers this storage with a sync manager.
      */
-    suspend fun sync(authInfo: SyncAuthInfo): SyncStatus
+    fun registerWithSyncManager()
 }
-
-/**
- * A set of results of running a sync operation for multiple instances of [SyncableStore].
- */
-typealias SyncResult = Map<String, StoreSyncStatus>
-data class StoreSyncStatus(val status: SyncStatus)

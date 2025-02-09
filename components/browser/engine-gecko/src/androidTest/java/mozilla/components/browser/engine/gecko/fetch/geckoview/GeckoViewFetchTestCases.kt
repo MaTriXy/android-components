@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-package mozilla.components.lib.fetch.geckoview
+package mozilla.components.browser.engine.gecko.fetch.geckoview
 
 import androidx.test.annotation.UiThreadTest
 import androidx.test.core.app.ApplicationProvider
@@ -13,7 +13,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @MediumTest
-@Suppress("TooManyFunctions")
 class GeckoViewFetchTestCases : mozilla.components.tooling.fetch.tests.FetchTestCases() {
     override fun createNewClient(): Client = GeckoViewFetchClient(ApplicationProvider.getApplicationContext())
 
@@ -21,12 +20,6 @@ class GeckoViewFetchTestCases : mozilla.components.tooling.fetch.tests.FetchTest
     @UiThreadTest
     fun clientInstance() {
         assertTrue(createNewClient() is GeckoViewFetchClient)
-    }
-
-    @Test
-    @UiThreadTest
-    override fun get200WithDefaultHeaders() {
-        super.get200WithDefaultHeaders()
     }
 
     @Test
@@ -39,12 +32,6 @@ class GeckoViewFetchTestCases : mozilla.components.tooling.fetch.tests.FetchTest
     @UiThreadTest
     override fun get200OverridingDefaultHeaders() {
         super.get200OverridingDefaultHeaders()
-    }
-
-    @Test
-    @UiThreadTest
-    override fun get200WithUserAgent() {
-        super.get200WithUserAgent()
     }
 
     @Test
@@ -129,5 +116,11 @@ class GeckoViewFetchTestCases : mozilla.components.tooling.fetch.tests.FetchTest
     @UiThreadTest
     override fun getThrowsIOExceptionWhenHostNotReachable() {
         super.getThrowsIOExceptionWhenHostNotReachable()
+    }
+
+    @Test
+    @UiThreadTest
+    override fun getDataUri() {
+        super.getDataUri()
     }
 }

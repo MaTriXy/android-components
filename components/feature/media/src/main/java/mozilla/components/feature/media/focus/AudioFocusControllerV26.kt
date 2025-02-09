@@ -8,7 +8,6 @@ import android.annotation.TargetApi
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
-
 import android.os.Build
 
 /**
@@ -17,14 +16,14 @@ import android.os.Build
 @TargetApi(Build.VERSION_CODES.O)
 internal class AudioFocusControllerV26(
     private val audioManager: AudioManager,
-    listener: AudioManager.OnAudioFocusChangeListener
+    listener: AudioManager.OnAudioFocusChangeListener,
 ) : AudioFocusController {
     private val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build()
+                .build(),
         )
         .setWillPauseWhenDucked(false)
         .setOnAudioFocusChangeListener(listener)

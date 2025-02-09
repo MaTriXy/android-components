@@ -19,11 +19,12 @@ class CrashTest {
     @Test
     fun `fromIntent() can deserialize a GeckoView crash Intent`() {
         val originalCrash = Crash.NativeCodeCrash(
+            123,
             "/data/data/org.mozilla.samples.browser/files/mozilla/Crash Reports/pending/3ba5f665-8422-dc8e-a88e-fc65c081d304.dmp",
             true,
             "/data/data/org.mozilla.samples.browser/files/mozilla/Crash Reports/pending/3ba5f665-8422-dc8e-a88e-fc65c081d304.extra",
-            false,
-            arrayListOf()
+            Crash.NativeCodeCrash.PROCESS_TYPE_FOREGROUND_CHILD,
+            arrayListOf(),
         )
 
         val intent = Intent()
@@ -32,15 +33,17 @@ class CrashTest {
         val recoveredCrash = Crash.fromIntent(intent) as? Crash.NativeCodeCrash
             ?: throw AssertionError("Expected NativeCodeCrash instance")
 
+        assertEquals(recoveredCrash.timestamp, 123)
         assertEquals(recoveredCrash.minidumpSuccess, true)
         assertEquals(recoveredCrash.isFatal, false)
+        assertEquals(recoveredCrash.processType, Crash.NativeCodeCrash.PROCESS_TYPE_FOREGROUND_CHILD)
         assertEquals(
             "/data/data/org.mozilla.samples.browser/files/mozilla/Crash Reports/pending/3ba5f665-8422-dc8e-a88e-fc65c081d304.dmp",
-            recoveredCrash.minidumpPath
+            recoveredCrash.minidumpPath,
         )
         assertEquals(
             "/data/data/org.mozilla.samples.browser/files/mozilla/Crash Reports/pending/3ba5f665-8422-dc8e-a88e-fc65c081d304.extra",
-            recoveredCrash.extrasPath
+            recoveredCrash.extrasPath,
         )
     }
 
@@ -48,7 +51,7 @@ class CrashTest {
     fun `Serialize and deserialize UncaughtExceptionCrash`() {
         val exception = RuntimeException("Hello World!")
 
-        val originalCrash = Crash.UncaughtExceptionCrash(exception, arrayListOf())
+        val originalCrash = Crash.UncaughtExceptionCrash(0, exception, arrayListOf())
 
         val intent = Intent()
         originalCrash.fillIn(intent)
@@ -65,20 +68,28 @@ class CrashTest {
     fun `isCrashIntent()`() {
         assertFalse(Crash.isCrashIntent(Intent()))
 
-        assertFalse(Crash.isCrashIntent(Intent()
-            .putExtra("crash", "I am a crash!")))
+        assertFalse(
+            Crash.isCrashIntent(
+                Intent()
+                    .putExtra("crash", "I am a crash!"),
+            ),
+        )
 
-        assertTrue(Crash.isCrashIntent(
-            Intent().apply {
-                Crash.UncaughtExceptionCrash(RuntimeException(), arrayListOf()).fillIn(this)
-            }
-        ))
+        assertTrue(
+            Crash.isCrashIntent(
+                Intent().apply {
+                    Crash.UncaughtExceptionCrash(0, RuntimeException(), arrayListOf()).fillIn(this)
+                },
+            ),
+        )
 
-        assertTrue(Crash.isCrashIntent(
-            Intent().apply {
-                val crash = Crash.NativeCodeCrash("", true, "", false, arrayListOf())
-                crash.fillIn(this)
-            }
-        ))
+        assertTrue(
+            Crash.isCrashIntent(
+                Intent().apply {
+                    val crash = Crash.NativeCodeCrash(0, "", true, "", "", arrayListOf())
+                    crash.fillIn(this)
+                },
+            ),
+        )
     }
 }

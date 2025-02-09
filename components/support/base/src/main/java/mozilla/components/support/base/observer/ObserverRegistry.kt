@@ -5,16 +5,14 @@
 package mozilla.components.support.base.observer
 
 import android.view.View
+import androidx.annotation.MainThread
 import androidx.annotation.VisibleForTesting
-import androidx.lifecycle.Lifecycle.Event.ON_DESTROY
-import androidx.lifecycle.Lifecycle.Event.ON_PAUSE
-import androidx.lifecycle.Lifecycle.Event.ON_RESUME
+import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle.State.DESTROYED
 import androidx.lifecycle.Lifecycle.State.RESUMED
-import androidx.lifecycle.LifecycleObserver
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.OnLifecycleEvent
 import java.util.Collections
+import java.util.LinkedList
 import java.util.WeakHashMap
 
 /**
@@ -23,12 +21,12 @@ import java.util.WeakHashMap
  *
  * ObserverRegistry is thread-safe.
  */
-@Suppress("TooManyFunctions")
-class ObserverRegistry<T> : Observable<T> {
+open class ObserverRegistry<T> : Observable<T> {
     private val observers = mutableSetOf<T>()
-    private val lifecycleObservers = WeakHashMap<T, LifecycleBoundObserver<T>>()
+    private val lifecycleObservers = WeakHashMap<T, DefaultLifecycleObserver>()
     private val viewObservers = WeakHashMap<T, ViewBoundObserver<T>>()
     private val pausedObservers = Collections.newSetFromMap(WeakHashMap<T, Boolean>())
+    private val queuedNotifications = LinkedList<T.() -> Unit>()
 
     /**
      * Registers an observer to get notified about changes. Does nothing if [observer] is already registered.
@@ -37,11 +35,16 @@ class ObserverRegistry<T> : Observable<T> {
      * @param observer the observer to register.
      */
     @Synchronized
-    override fun register(observer: T) {
+    open override fun register(observer: T) {
         observers.add(observer)
+
+        while (!queuedNotifications.isEmpty()) {
+            queuedNotifications.poll()?.let { notify -> observer.notify() }
+        }
     }
 
     @Synchronized
+    @MainThread
     override fun register(observer: T, owner: LifecycleOwner, autoPause: Boolean) {
         // Don't register if the owner is already destroyed
         if (owner.lifecycle.currentState == DESTROYED) {
@@ -58,15 +61,20 @@ class ObserverRegistry<T> : Observable<T> {
 
         lifecycleObservers[observer] = lifecycleObserver
 
+        // In newer AndroidX versions of the lifecycle lib, the default requirement is for
+        // lifecycleRegistry to be only touched on the main thread. We don't know if `onwer`'s
+        // lifecycle registry was created with or without this requirement, but assume so since
+        // that's the default and also the reasonable thing to do.
         owner.lifecycle.addObserver(lifecycleObserver)
     }
 
     @Synchronized
     override fun register(observer: T, view: View) {
         val viewObserver = ViewBoundObserver(
-                view,
-                registry = this,
-                observer = observer)
+            view,
+            registry = this,
+            observer = observer,
+        )
 
         viewObservers[observer] = viewObserver
 
@@ -88,8 +96,7 @@ class ObserverRegistry<T> : Observable<T> {
         observers.remove(observer)
         pausedObservers.remove(observer)
 
-        // Unregister lifecycle/view observers
-        lifecycleObservers[observer]?.remove()
+        // Unregister view observers
         viewObservers[observer]?.remove()
 
         // Remove lifecycle/view observers from map
@@ -134,6 +141,15 @@ class ObserverRegistry<T> : Observable<T> {
     }
 
     @Synchronized
+    override fun notifyAtLeastOneObserver(block: T.() -> Unit) {
+        if (observers.isEmpty()) {
+            queuedNotifications.add(block)
+        } else {
+            notifyObservers(block)
+        }
+    }
+
+    @Synchronized
     override fun <V> wrapConsumers(block: T.(V) -> Boolean): List<(V) -> Boolean> {
         val consumers: MutableList<(V) -> Boolean> = mutableListOf()
 
@@ -166,12 +182,21 @@ class ObserverRegistry<T> : Observable<T> {
     private open class LifecycleBoundObserver<T>(
         private val owner: LifecycleOwner,
         protected val registry: ObserverRegistry<T>,
-        protected val observer: T
-    ) : LifecycleObserver {
-        @OnLifecycleEvent(ON_DESTROY)
-        fun onDestroy() = registry.unregister(observer)
+        protected val observer: T,
+    ) : DefaultLifecycleObserver {
 
-        fun remove() = owner.lifecycle.removeObserver(this)
+        @MainThread
+        fun remove() {
+            // In newer AndroidX versions of the lifecycle lib, the default requirement is for
+            // lifecycleRegistry to be only touched on the main thread. We don't know if `onwer`'s
+            // lifecycle registry was created with or without this requirement, but assume so since
+            // that's the default and also the reasonable thing to do.
+            owner.lifecycle.removeObserver(this)
+        }
+
+        override fun onDestroy(owner: LifecycleOwner) {
+            registry.unregister(observer)
+        }
     }
 
     /**
@@ -180,20 +205,22 @@ class ObserverRegistry<T> : Observable<T> {
      */
     private class AutoPauseLifecycleBoundObserver<T>(
         owner: LifecycleOwner,
-        registry: ObserverRegistry<T>,
-        observer: T
-    ) : LifecycleBoundObserver<T>(owner, registry, observer) {
+        private val registry: ObserverRegistry<T>,
+        private val observer: T,
+    ) : DefaultLifecycleObserver {
         init {
             if (!owner.lifecycle.currentState.isAtLeast(RESUMED)) {
                 registry.pauseObserver(observer)
             }
         }
 
-        @OnLifecycleEvent(ON_PAUSE)
-        fun onPause() = registry.pauseObserver(observer)
+        override fun onResume(owner: LifecycleOwner) {
+            registry.resumeObserver(observer)
+        }
 
-        @OnLifecycleEvent(ON_RESUME)
-        fun onResume() = registry.resumeObserver(observer)
+        override fun onPause(owner: LifecycleOwner) {
+            registry.pauseObserver(observer)
+        }
     }
 
     /**
@@ -203,7 +230,7 @@ class ObserverRegistry<T> : Observable<T> {
     private class ViewBoundObserver<T>(
         private val view: View,
         private val registry: ObserverRegistry<T>,
-        private val observer: T
+        private val observer: T,
     ) : View.OnAttachStateChangeListener {
         override fun onViewDetachedFromWindow(view: View) {
             registry.unregister(observer)
@@ -218,3 +245,13 @@ class ObserverRegistry<T> : Observable<T> {
         }
     }
 }
+
+/**
+ * A deprecated version of [ObserverRegistry] to migrate and deprecate existing
+ * components individually. All components implement [ObserverRegistry] by
+ * delegate so this makes it easy to deprecate without having to override
+ * all methods in each component separately.
+ */
+@Deprecated(OBSERVER_DEPRECATION_MESSAGE)
+@Suppress("Deprecation")
+class DeprecatedObserverRegistry<T> : ObserverRegistry<T>(), DeprecatedObservable<T>

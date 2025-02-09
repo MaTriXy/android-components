@@ -7,7 +7,7 @@ package mozilla.components.concept.push
 import android.content.Context
 
 /**
- * Implemented by push services like Firebase Cloud Messaging and Amazon Device Messaging SDKs to allow
+ * Implemented by push services like Firebase Cloud Messaging SDKs to allow
  * the [PushProcessor] to manage their lifecycle.
  */
 interface PushService {
@@ -31,4 +31,31 @@ interface PushService {
      * If the push service is support on the device.
      */
     fun isServiceAvailable(context: Context): Boolean
+
+    companion object {
+        /**
+         * Message key for "channel ID" in a push message.
+         */
+        const val MESSAGE_KEY_CHANNEL_ID = "chid"
+
+        /**
+         * Message key for the body in a push message.
+         */
+        const val MESSAGE_KEY_BODY = "body"
+
+        /**
+         * Message key for encoding in a push message.
+         */
+        const val MESSAGE_KEY_ENCODING = "con"
+
+        /**
+         * Message key for encryption salt in a push message.
+         */
+        const val MESSAGE_KEY_SALT = "enc"
+
+        /**
+         * Message key for "cryptoKey" in a push message.
+         */
+        const val MESSAGE_KEY_CRYPTO_KEY = "cryptokey"
+    }
 }

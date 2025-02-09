@@ -5,6 +5,7 @@
 package mozilla.components.feature.intent.ext
 
 import android.content.Intent
+import android.os.BadParcelableException
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import mozilla.components.support.test.mock
 import mozilla.components.support.utils.SafeIntent
@@ -12,6 +13,8 @@ import mozilla.components.support.utils.toSafeIntent
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.Mockito.never
+import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 
 @RunWith(AndroidJUnit4::class)
@@ -39,5 +42,42 @@ class IntentExtensionsTest {
 
         assertEquals(id, intent.getSessionId())
         assertEquals(id, intent.toSafeIntent().getSessionId())
+    }
+
+    @Test
+    fun `WHEN unparcel successful THEN extras are not removed`() {
+        val intent: Intent = mock()
+        `when`(intent.getBooleanExtra("TriggerUnparcel", false)).thenReturn(false)
+
+        intent.sanitize()
+        verify(intent, never()).replaceExtras(null)
+    }
+
+    @Test
+    fun `WHEN unparcel fails with BadParcelableException THEN extras are cleared`() {
+        val intent: Intent = mock()
+        `when`(intent.getBooleanExtra("TriggerUnparcel", false)).thenThrow(BadParcelableException("test"))
+        `when`(intent.replaceExtras(null)).thenReturn(intent)
+
+        intent.sanitize()
+        verify(intent).replaceExtras(null)
+    }
+
+    @Test
+    fun `WHEN unparcel fails with RuntimeException and ClassNotFoundException cause THEN extras are cleared`() {
+        val intent: Intent = mock()
+        `when`(intent.getBooleanExtra("TriggerUnparcel", false)).thenThrow(RuntimeException("test", ClassNotFoundException("test")))
+        `when`(intent.replaceExtras(null)).thenReturn(intent)
+
+        intent.sanitize()
+        verify(intent).replaceExtras(null)
+    }
+
+    @Test(expected = RuntimeException::class)
+    fun `WHEN unparcel fails with RuntimeException THEN extras are cleared`() {
+        val intent: Intent = mock()
+        `when`(intent.getBooleanExtra("TriggerUnparcel", false)).thenThrow(RuntimeException("test"))
+
+        intent.sanitize()
     }
 }

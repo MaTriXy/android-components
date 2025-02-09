@@ -10,6 +10,7 @@ import mozilla.components.support.base.log.logger.Logger
 import mozilla.components.support.ktx.android.org.json.asSequence
 import mozilla.components.support.ktx.android.org.json.toJSONArray
 import mozilla.components.support.ktx.android.org.json.tryGetString
+import mozilla.components.support.ktx.kotlin.sanitizeURL
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -27,7 +28,7 @@ private val typeMap: Map<String, IconRequest.Resource.Type> = mutableMapOf(
     "og:image:url" to IconRequest.Resource.Type.OPENGRAPH,
     "og:image:secure_url" to IconRequest.Resource.Type.OPENGRAPH,
     "twitter:image" to IconRequest.Resource.Type.TWITTER,
-    "msapplication-TileImage" to IconRequest.Resource.Type.MICROSOFT_TILE
+    "msapplication-TileImage" to IconRequest.Resource.Type.MICROSOFT_TILE,
 )
 
 private fun Map<String, IconRequest.Resource.Type>.reverseLookup(type: IconRequest.Resource.Type): String {
@@ -88,11 +89,11 @@ private fun JSONObject.toIconResource(): IconRequest.Resource? {
         val maskable = optBoolean("maskable", false)
 
         return IconRequest.Resource(
-            url = url,
+            url = url.sanitizeURL(),
             type = type,
             sizes = sizes,
             mimeType = if (mimeType.isNullOrEmpty()) null else mimeType,
-            maskable = maskable
+            maskable = maskable,
         )
     } catch (e: JSONException) {
         Logger.warn("Could not parse message from icons extensions", e)

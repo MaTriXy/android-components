@@ -16,7 +16,7 @@
 
 
 # If a command fails then do not proceed and fail this script too.
-set -e
+set -ex
 
 #########################
 # The command line help #
@@ -30,6 +30,9 @@ display_help() {
     echo
     echo "To run component/feature tests on X86 device (on 3 shards)"
     echo "$ execute-firebase-test.sh feature x86 3"
+    echo
+    echo "To run UI samples/sampleName tests"
+    echo "$ execute-firebase-test.sh sample-sampleName arm 1"
     echo
 }
 
@@ -48,25 +51,20 @@ fi
 
 JAVA_BIN="/usr/bin/java"
 PATH_TEST="./automation/taskcluster/androidTest"
-FLANK_BIN="/build/test-tools/flank.jar"
+FLANK_BIN="/builds/worker/test-tools/flank.jar"
 FLANK_CONF_ARM="${PATH_TEST}/flank-arm.yml"
 FLANK_CONF_X86="${PATH_TEST}/flank-x86.yml"
-
-echo
-echo "RETRIEVE SERVICE ACCT TOKEN"
-echo
-python automation/taskcluster/helper/get-secret.py --json -s project/mobile/android-components/firebase -k firebaseToken  -f $GOOGLE_APPLICATION_CREDENTIALS 
-echo
-echo
+ARTIFACT_DIR="/builds/worker/artifacts"
+RESULTS_DIR="${ARTIFACT_DIR}/results"
 
 echo
 echo "ACTIVATE SERVICE ACCT"
 echo
 # this is where the Google Testcloud project ID is set
-gcloud config set project "$GOOGLE_PROJECT" 
+gcloud config set project "$GOOGLE_PROJECT"
 echo
 
-gcloud auth activate-service-account --key-file "$GOOGLE_APPLICATION_CREDENTIALS" 
+gcloud auth activate-service-account --key-file "$GOOGLE_APPLICATION_CREDENTIALS"
 echo
 echo
 
@@ -81,51 +79,57 @@ else
     flank_template="$FLANK_CONF_ARM"
 fi
 
-APK_APP="./samples/${component}/build/outputs/apk/geckoNightly/debug/samples-browser-geckoNightly-debug.apk"
-APK_TEST="./components/${component}/engine-gecko-nightly/build/outputs/apk/androidTest/debug/browser-engine-gecko-nightly-debug-androidTest.apk"
+# Remove samples- from the component for each APK path
+samples=${component//samples-}
 
+# If tests are for components, the path is different than for samples
+if [[ "${component}" != samples-* ]]
+then
+    # Case 1: tests for any component (but NOT samples, NOT real UI tests)
+    APK_APP="./samples/browser/build/outputs/apk/gecko/debug/samples-browser-gecko-debug.apk"
+    if [[ "${component}" == *"-"* ]]
+    then
+      regex='([a-z]*)-(.*)'
+      [[ "$component" =~ $regex ]]
+      APK_TEST="./components/${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/build/outputs/apk/androidTest/debug/${component}-debug-androidTest.apk"
+      else
+        APK_TEST="./components/${component}/engine-gecko/build/outputs/apk/androidTest/debug/browser-engine-gecko-debug-androidTest.apk"
+    fi
+elif [[ "${component}" == "samples-browser" ]]
+then
+    # Case 2: tests for browser sample (gecko sample only)
+    APK_APP="./samples/${samples}/build/outputs/apk/gecko/debug/samples-${samples}-gecko-debug.apk"
+    APK_TEST="./samples/${samples}/build/outputs/apk/androidTest/gecko/debug/samples-{$samples}-gecko-debug-androidTest.apk"
+else
+    # Case 3: tests for non-browser samples (i.e.  samples-glean)
+    APK_APP="./samples/${samples}/build/outputs/apk/debug/samples-${samples}-debug.apk"
+    APK_TEST="./samples/${samples}/build/outputs/apk/androidTest/debug/samples-${samples}-debug-androidTest.apk"
+fi
 
 # function to exit script with exit code from test run.
 # (Only 0 if all test executions passed)
 function failure_check() {
+    echo
+    echo
     if [[ $exitcode -ne 0 ]]; then
-        echo
-        echo
-	echo "ERROR: UI test run failed, please check above URL"
+        echo "ERROR: UI test run failed, please check above URL"
+    else
+    echo "All UI test(s) have passed!"
     fi
-    exit $exitcode
+
+    echo
+    echo "RESULTS"
+    echo
+    ls -la "${RESULTS_DIR}"
+    echo
+    echo
 }
 
 echo
 echo "EXECUTE TEST(S)"
 echo
-$JAVA_BIN -jar $FLANK_BIN android run --config=$flank_template --max-test-shards=$num_shards --app=$APK_APP --test=$APK_TEST --project=$GOOGLE_PROJECT
+$JAVA_BIN -jar $FLANK_BIN android run --config=$flank_template --max-test-shards=$num_shards --app=$APK_APP --test=$APK_TEST --project=$GOOGLE_PROJECT --local-result-dir="${RESULTS_DIR}"
 exitcode=$?
 
-echo
-echo
-echo "COPY ARTIFACTS"
-echo
-cp -r "./results" "./test_artifacts"
-exitcode=$?
 failure_check
-echo
-echo
-
-echo
-echo "RESULTS"
-echo
-ls -la ./results
-echo 
-echo
-
-echo
-echo "RESULTS"
-echo
-ls -la ./test_results
-
-echo "All UI test(s) have passed!"
-echo
-echo
-
-
+exit $exitcode

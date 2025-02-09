@@ -21,19 +21,19 @@ class IconMessageKtTest {
                 url = "https://www.mozilla.org/icon64.png",
                 sizes = listOf(Size(64, 64)),
                 mimeType = "image/png",
-                type = IconRequest.Resource.Type.FAVICON
+                type = IconRequest.Resource.Type.FAVICON,
             ),
             IconRequest.Resource(
                 url = "https://www.mozilla.org/icon128.png",
                 sizes = listOf(Size(128, 128)),
                 mimeType = "image/png",
-                type = IconRequest.Resource.Type.FAVICON
+                type = IconRequest.Resource.Type.FAVICON,
             ),
             IconRequest.Resource(
                 url = "https://www.mozilla.org/icon128.png",
                 sizes = listOf(Size(180, 180)),
-                type = IconRequest.Resource.Type.APPLE_TOUCH_ICON
-            )
+                type = IconRequest.Resource.Type.APPLE_TOUCH_ICON,
+            ),
         )
 
         val json = resources.toJSON()
@@ -41,5 +41,22 @@ class IconMessageKtTest {
 
         val restoredResources = json.toIconResources()
         assertEquals(resources, restoredResources)
+    }
+
+    @Test
+    fun `Url must be sanitized`() {
+        val resources = listOf(
+            IconRequest.Resource(
+                url = "\nhttps://www.mozilla.org/icon64.png\n",
+                sizes = listOf(Size(64, 64)),
+                mimeType = "image/png",
+                type = IconRequest.Resource.Type.FAVICON,
+            ),
+        )
+
+        val json = resources.toJSON()
+
+        val restoredResource = json.toIconResources().first()
+        assertEquals("https://www.mozilla.org/icon64.png", restoredResource.url)
     }
 }

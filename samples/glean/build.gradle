@@ -2,13 +2,24 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+buildscript {
+    repositories {
+        maven {
+            url "https://maven.mozilla.org/maven2"
+        }
+
+        dependencies {
+            classpath "org.mozilla.telemetry:glean-gradle-plugin:${Versions.mozilla_glean}"
+        }
+    }
+}
+
 plugins {
     id "com.jetbrains.python.envs" version "0.0.26"
 }
 
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
-apply plugin: 'kotlin-android-extensions'
 
 android {
     compileSdkVersion config.compileSdkVersion
@@ -20,7 +31,7 @@ android {
         versionCode 1
         versionName "1.0"
 
-        testInstrumentationRunner "org.mozilla.samples.glean.GleanTestRunner"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -32,12 +43,19 @@ android {
             applicationIdSuffix ".debug"
         }
     }
+
+    buildFeatures {
+        viewBinding true
+    }
 }
 
 dependencies {
     implementation project(':service-glean')
-    implementation project(':service-experiments')
+    implementation project(':service-nimbus')
     implementation project(':support-base')
+    implementation project(':support-rusthttp')
+    implementation project(':support-rustlog')
+    implementation project(':lib-fetch-httpurlconnection')
 
     implementation Dependencies.kotlin_stdlib
     implementation Dependencies.kotlin_coroutines
@@ -57,4 +75,4 @@ dependencies {
     androidTestImplementation Dependencies.testing_mockwebserver
 }
 
-apply from: '../../components/service/glean/scripts/sdk_generator.gradle'
+apply plugin: "org.mozilla.telemetry.glean-gradle-plugin"

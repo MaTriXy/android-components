@@ -12,9 +12,9 @@ import android.os.Build
 import android.os.Build.VERSION.SDK_INT
 import androidx.core.graphics.applyCanvas
 import androidx.core.graphics.createBitmap
-import mozilla.components.browser.icons.DesiredSize
 import mozilla.components.browser.icons.Icon
 import mozilla.components.browser.icons.IconRequest
+import mozilla.components.support.images.DesiredSize
 import kotlin.math.max
 
 /**
@@ -31,7 +31,7 @@ class AdaptiveIconProcessor : IconProcessor {
         request: IconRequest,
         resource: IconRequest.Resource?,
         icon: Icon,
-        desiredSize: DesiredSize
+        desiredSize: DesiredSize,
     ): Icon {
         val maskable = resource?.maskable == true
         if (!maskable && SDK_INT < Build.VERSION_CODES.O) {

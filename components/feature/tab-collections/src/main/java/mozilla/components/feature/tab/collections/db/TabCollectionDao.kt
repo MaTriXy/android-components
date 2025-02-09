@@ -4,7 +4,6 @@
 
 package mozilla.components.feature.tab.collections.db
 
-import androidx.lifecycle.LiveData
 import androidx.paging.DataSource
 import androidx.room.Dao
 import androidx.room.Delete
@@ -12,6 +11,7 @@ import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import kotlinx.coroutines.flow.Flow
 
 /**
  * Internal DAO for accessing [TabCollectionEntity] instances.
@@ -28,22 +28,35 @@ internal interface TabCollectionDao {
     fun updateTabCollection(collection: TabCollectionEntity)
 
     @Transaction
-    @Query("""
+    @Query(
+        """
         SELECT tab_collections.id, tab_collections.title, tab_collections.created_at, tab_collections.updated_at
         FROM tab_collections LEFT JOIN tabs ON tab_collections.id = tab_collection_id
         GROUP BY tab_collections.id
         ORDER BY tab_collections.created_at DESC
-    """)
+    """,
+    )
     fun getTabCollectionsPaged(): DataSource.Factory<Int, TabCollectionWithTabs>
 
     @Transaction
-    @Query("""
+    @Query(
+        """
         SELECT *
         FROM tab_collections
         ORDER BY created_at DESC
-        LIMIT :limit
-    """)
-    fun getTabCollections(limit: Int): LiveData<List<TabCollectionWithTabs>>
+    """,
+    )
+    fun getTabCollections(): Flow<List<TabCollectionWithTabs>>
+
+    @Transaction
+    @Query(
+        """
+        SELECT *
+        FROM tab_collections
+        ORDER BY created_at DESC
+    """,
+    )
+    suspend fun getTabCollectionsList(): List<TabCollectionWithTabs>
 
     @Query("SELECT COUNT(*) FROM tab_collections")
     fun countTabCollections(): Int

@@ -6,11 +6,11 @@ package mozilla.components.lib.state.ext
 
 import android.view.View
 import androidx.annotation.MainThread
+import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleObserver
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.OnLifecycleEvent
 import androidx.lifecycle.ProcessLifecycleOwner
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.MainScope
@@ -38,11 +38,11 @@ import mozilla.components.lib.state.Store
 @MainThread
 fun <S : State, A : Action> Store<S, A>.observe(
     owner: LifecycleOwner,
-    observer: Observer<S>
-) {
+    observer: Observer<S>,
+): Store.Subscription<S, A>? {
     if (owner.lifecycle.currentState == Lifecycle.State.DESTROYED) {
         // This owner is already destroyed. No need to register.
-        return
+        return null
     }
 
     val subscription = observeManually(observer)
@@ -50,6 +50,8 @@ fun <S : State, A : Action> Store<S, A>.observe(
     subscription.binding = SubscriptionLifecycleBinding(owner, subscription).apply {
         owner.lifecycle.addObserver(this)
     }
+
+    return subscription
 }
 
 /**
@@ -69,7 +71,7 @@ fun <S : State, A : Action> Store<S, A>.observe(
 @MainThread
 fun <S : State, A : Action> Store<S, A>.observe(
     view: View,
-    observer: Observer<S>
+    observer: Observer<S>,
 ) {
     val subscription = observeManually(observer)
 
@@ -90,7 +92,7 @@ fun <S : State, A : Action> Store<S, A>.observe(
  * Right after registering the [Observer] will be invoked with the current [State].
  */
 fun <S : State, A : Action> Store<S, A>.observeForever(
-    observer: Observer<S>
+    observer: Observer<S>,
 ) {
     observeManually(observer).resume()
 }
@@ -109,7 +111,7 @@ fun <S : State, A : Action> Store<S, A>.observeForever(
 @ExperimentalCoroutinesApi
 @MainThread
 fun <S : State, A : Action> Store<S, A>.channel(
-    owner: LifecycleOwner = ProcessLifecycleOwner.get()
+    owner: LifecycleOwner = ProcessLifecycleOwner.get(),
 ): ReceiveChannel<S> {
     if (owner.lifecycle.currentState == Lifecycle.State.DESTROYED) {
         // This owner is already destroyed. No need to register.
@@ -119,7 +121,15 @@ fun <S : State, A : Action> Store<S, A>.channel(
     val channel = Channel<S>(Channel.CONFLATED)
 
     val subscription = observeManually { state ->
-        runBlocking { channel.send(state) }
+        runBlocking {
+            try {
+                channel.send(state)
+            } catch (e: CancellationException) {
+                // It's possible for this channel to have been closed concurrently before
+                // we had a chance to unsubscribe. In this case we can just ignore this
+                // one subscription and keep going.
+            }
+        }
     }
 
     subscription.binding = SubscriptionLifecycleBinding(owner, subscription).apply {
@@ -139,14 +149,39 @@ fun <S : State, A : Action> Store<S, A>.channel(
  * Once the [Lifecycle] switches back to at least STARTED state then the latest [State] and further
  * updates will be emitted.
  */
-@ExperimentalCoroutinesApi
 @MainThread
 fun <S : State, A : Action> Store<S, A>.flow(
-    owner: LifecycleOwner? = null
+    owner: LifecycleOwner? = null,
 ): Flow<S> {
+    var destroyed = owner?.lifecycle?.currentState == Lifecycle.State.DESTROYED
+    val ownerDestroyedObserver = object : DefaultLifecycleObserver {
+        override fun onDestroy(owner: LifecycleOwner) {
+            destroyed = true
+        }
+    }
+    owner?.lifecycle?.addObserver(ownerDestroyedObserver)
+
     return channelFlow {
+        // By the time this block executes the fragment or view could already be destroyed
+        // so we exit early to avoid creating an unnecessary subscription. This is important
+        // as otherwise we'd be leaking the owner via the subscription because we only
+        // unsubscribe on destroy which already happened.
+        if (destroyed) {
+            return@channelFlow
+        }
+
+        owner?.lifecycle?.removeObserver(ownerDestroyedObserver)
+
         val subscription = observeManually { state ->
-            runBlocking { send(state) }
+            runBlocking {
+                try {
+                    send(state)
+                } catch (e: CancellationException) {
+                    // It's possible for this channel to have been closed concurrently before
+                    // we had a chance to unsubscribe. In this case we can just ignore this
+                    // one subscription and keep going.
+                }
+            }
         }
 
         if (owner == null) {
@@ -173,11 +208,10 @@ fun <S : State, A : Action> Store<S, A>.flow(
  * updates will be emitted.
  * @return The [CoroutineScope] [block] is getting executed in.
  */
-@ExperimentalCoroutinesApi
 @MainThread
 fun <S : State, A : Action> Store<S, A>.flowScoped(
     owner: LifecycleOwner? = null,
-    block: suspend (Flow<S>) -> Unit
+    block: suspend (Flow<S>) -> Unit,
 ): CoroutineScope {
     return MainScope().apply {
         launch {
@@ -191,20 +225,17 @@ fun <S : State, A : Action> Store<S, A>.flowScoped(
  */
 private class SubscriptionLifecycleBinding<S : State, A : Action>(
     private val owner: LifecycleOwner,
-    private val subscription: Store.Subscription<S, A>
-) : LifecycleObserver, Store.Subscription.Binding {
-    @OnLifecycleEvent(Lifecycle.Event.ON_START)
-    fun onStart() {
+    private val subscription: Store.Subscription<S, A>,
+) : DefaultLifecycleObserver, Store.Subscription.Binding {
+    override fun onStart(owner: LifecycleOwner) {
         subscription.resume()
     }
 
-    @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
-    fun onStop() {
+    override fun onStop(owner: LifecycleOwner) {
         subscription.pause()
     }
 
-    @OnLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-    fun onDestroy() {
+    override fun onDestroy(owner: LifecycleOwner) {
         subscription.unsubscribe()
     }
 
@@ -218,7 +249,7 @@ private class SubscriptionLifecycleBinding<S : State, A : Action>(
  */
 private class SubscriptionViewBinding<S : State, A : Action>(
     private val view: View,
-    private val subscription: Store.Subscription<S, A>
+    private val subscription: Store.Subscription<S, A>,
 ) : View.OnAttachStateChangeListener, Store.Subscription.Binding {
     override fun onViewAttachedToWindow(v: View?) {
         subscription.resume()

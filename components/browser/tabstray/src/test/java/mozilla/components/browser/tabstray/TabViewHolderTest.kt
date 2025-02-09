@@ -4,203 +4,49 @@
 
 package mozilla.components.browser.tabstray
 
-import android.graphics.Bitmap
-import android.view.LayoutInflater
 import android.view.View
-import android.widget.ImageView
-import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import mozilla.components.browser.session.Session
-import mozilla.components.concept.tabstray.TabsTray
-import mozilla.components.support.base.observer.ObserverRegistry
-import mozilla.components.support.test.mock
+import junit.framework.TestCase
+import mozilla.components.browser.state.state.TabSessionState
+import mozilla.components.support.test.expectException
 import mozilla.components.support.test.robolectric.testContext
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.Mockito.doReturn
-import org.mockito.Mockito.never
-import org.mockito.Mockito.spy
-import org.mockito.Mockito.verify
 
 @RunWith(AndroidJUnit4::class)
-class TabViewHolderTest {
+class TabViewHolderTest : TestCase() {
 
     @Test
-    fun `URL from session is assigned to view`() {
-        val view = LayoutInflater.from(testContext).inflate(R.layout.mozac_browser_tabstray_item, null)
-        val urlView = view.findViewById<TextView>(R.id.mozac_browser_tabstray_url)
-
-        val holder = TabViewHolder(view, mockTabsTrayWithStyles())
-
-        assertEquals("", urlView.text)
-
-        val session = Session("https://www.mozilla.org")
-
-        holder.bind(session, isSelected = false, observable = mock())
-
-        assertEquals("https://www.mozilla.org", urlView.text)
-    }
-
-    @Test
-    fun `Holder registers to session and updates view`() {
-        val view = LayoutInflater.from(testContext).inflate(R.layout.mozac_browser_tabstray_item, null)
-        val urlView = view.findViewById<TextView>(R.id.mozac_browser_tabstray_url)
-
-        val holder = TabViewHolder(view, mockTabsTrayWithStyles())
-        val session = Session("https://www.mozilla.org")
-
-        holder.bind(session, isSelected = false, observable = mock())
-
-        assertEquals("https://www.mozilla.org", urlView.text)
-
-        session.url = "https://getpocket.com"
-
-        assertEquals("https://getpocket.com", urlView.text)
-    }
-
-    @Test
-    fun `After unbind holder is no longer registered to session`() {
-        val view = LayoutInflater.from(testContext).inflate(R.layout.mozac_browser_tabstray_item, null)
-        val urlView = view.findViewById<TextView>(R.id.mozac_browser_tabstray_url)
-
-        val holder = TabViewHolder(view, mockTabsTrayWithStyles())
-        val session = Session("https://www.mozilla.org")
-
-        holder.bind(session, isSelected = false, observable = mock())
-
-        assertEquals("https://www.mozilla.org", urlView.text)
-
-        holder.unbind()
-
-        session.url = "https://getpocket.com"
-        assertEquals("https://www.mozilla.org", urlView.text)
-    }
-
-    @Test
-    fun `observer gets notified if item is clicked`() {
-        val observer: TabsTray.Observer = mock()
-        val registry = ObserverRegistry<TabsTray.Observer>().also {
-            it.register(observer)
+    fun `updateSelectedTabIndicator needs to have a provided implementation`() {
+        val simpleTabViewHolder = object : TabViewHolder(View(testContext)) {
+            override var tab: TabSessionState? = null
+            override fun bind(
+                tab: TabSessionState,
+                isSelected: Boolean,
+                styling: TabsTrayStyling,
+                delegate: TabsTray.Delegate,
+            ) { /* noop */ }
         }
 
-        val view = LayoutInflater.from(testContext).inflate(R.layout.mozac_browser_tabstray_item, null)
-        val holder = TabViewHolder(view, mockTabsTrayWithStyles())
-
-        val session = Session("https://www.mozilla.org")
-        holder.bind(session, isSelected = false, observable = registry)
-
-        view.performClick()
-
-        verify(observer).onTabSelected(session)
+        expectException(UnsupportedOperationException::class) {
+            simpleTabViewHolder.updateSelectedTabIndicator(true)
+        }
     }
 
     @Test
-    fun `observer gets notified if tab gets closed`() {
-        val observer: TabsTray.Observer = mock()
-        val registry = ObserverRegistry<TabsTray.Observer>().also {
-            it.register(observer)
+    fun `updateSelectedTabIndicator with a provided implementation just works`() {
+        val tabViewHolder = object : TabViewHolder(View(testContext)) {
+            override var tab: TabSessionState? = null
+            override fun bind(
+                tab: TabSessionState,
+                isSelected: Boolean,
+                styling: TabsTrayStyling,
+                delegate: TabsTray.Delegate,
+            ) { /* noop */ }
+            override fun updateSelectedTabIndicator(showAsSelected: Boolean) { /* noop */ }
         }
 
-        val view = LayoutInflater.from(testContext).inflate(R.layout.mozac_browser_tabstray_item, null)
-        val holder = TabViewHolder(view, mockTabsTrayWithStyles())
-
-        val session = Session("https://www.mozilla.org")
-        holder.bind(session, isSelected = true, observable = registry)
-
-        view.findViewById<View>(R.id.mozac_browser_tabstray_close).performClick()
-
-        verify(observer).onTabClosed(session)
-    }
-
-    @Test
-    fun `url from session is displayed by default`() {
-        val observer: TabsTray.Observer = mock()
-        val registry = ObserverRegistry<TabsTray.Observer>().also {
-            it.register(observer)
-        }
-
-        val view = LayoutInflater.from(testContext).inflate(R.layout.mozac_browser_tabstray_item, null)
-        val holder = TabViewHolder(view, mockTabsTrayWithStyles())
-
-        val session = Session("https://www.mozilla.org")
-        val titleView = holder.itemView.findViewById<TextView>(R.id.mozac_browser_tabstray_url)
-
-        holder.bind(session, isSelected = true, observable = registry)
-
-        assertEquals(session.url, titleView.text)
-    }
-
-    @Test
-    fun `title from session is displayed if available`() {
-        val observer: TabsTray.Observer = mock()
-        val registry = ObserverRegistry<TabsTray.Observer>().also {
-            it.register(observer)
-        }
-
-        val view = LayoutInflater.from(testContext).inflate(R.layout.mozac_browser_tabstray_item, null)
-        val holder = TabViewHolder(view, mockTabsTrayWithStyles())
-
-        val session = Session("https://www.mozilla.org")
-        val titleView = holder.itemView.findViewById<TextView>(R.id.mozac_browser_tabstray_url)
-
-        session.title = "Mozilla Firefox"
-
-        holder.bind(session, isSelected = true, observable = registry)
-
-        assertEquals("Mozilla Firefox", titleView.text)
-    }
-
-    @Test
-    fun `session unregisters on unbind`() {
-        val observer: TabsTray.Observer = mock()
-        val registry = ObserverRegistry<TabsTray.Observer>().also {
-            it.register(observer)
-        }
-
-        val view = LayoutInflater.from(testContext).inflate(R.layout.mozac_browser_tabstray_item, null)
-        val holder = TabViewHolder(view, mockTabsTrayWithStyles())
-        val session = spy(Session("https://www.mozilla.org"))
-
-        holder.unbind()
-
-        assertNull(holder.session)
-        verify(session, never()).unregister(holder)
-
-        holder.bind(session, isSelected = true, observable = registry)
-
-        holder.unbind()
-
-        assertNotNull(holder.session)
-        verify(session).unregister(holder)
-    }
-
-    @Test
-    fun `thumbnail from session is assigned to thumbnail image view`() {
-        val view = LayoutInflater.from(testContext).inflate(R.layout.mozac_browser_tabstray_item, null)
-        val thumbnailView = view.findViewById<ImageView>(R.id.mozac_browser_tabstray_thumbnail)
-
-        val holder = TabViewHolder(view, mockTabsTrayWithStyles())
-        assertEquals(null, thumbnailView.drawable)
-
-        val session = Session("https://www.mozilla.org")
-        val emptyBitmap = Bitmap.createBitmap(40, 40, Bitmap.Config.ARGB_8888)
-        session.thumbnail = emptyBitmap
-        holder.bind(session, isSelected = false, observable = mock())
-        assertTrue(thumbnailView.drawable != null)
-    }
-
-    companion object {
-        fun mockTabsTrayWithStyles(): BrowserTabsTray {
-            val styles: TabsTrayStyling = mock()
-
-            val tabsTray: BrowserTabsTray = mock()
-            doReturn(styles).`when`(tabsTray).styling
-
-            return tabsTray
-        }
+        // Simply test that this would not fail the test like it would happen above.
+        tabViewHolder.updateSelectedTabIndicator(true)
     }
 }

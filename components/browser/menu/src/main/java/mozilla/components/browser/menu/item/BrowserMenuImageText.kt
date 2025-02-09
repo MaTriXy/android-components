@@ -4,6 +4,7 @@
 
 package mozilla.components.browser.menu.item
 
+import android.content.Context
 import android.view.View
 import android.widget.ImageView
 import android.widget.TextView
@@ -11,9 +12,15 @@ import androidx.annotation.ColorRes
 import androidx.annotation.DrawableRes
 import androidx.appcompat.widget.AppCompatImageView
 import androidx.core.content.ContextCompat
+import androidx.core.content.ContextCompat.getColor
 import mozilla.components.browser.menu.BrowserMenu
 import mozilla.components.browser.menu.BrowserMenuItem
 import mozilla.components.browser.menu.R
+import mozilla.components.concept.menu.candidate.ContainerStyle
+import mozilla.components.concept.menu.candidate.DrawableMenuIcon
+import mozilla.components.concept.menu.candidate.MenuCandidate
+import mozilla.components.concept.menu.candidate.TextMenuCandidate
+import mozilla.components.concept.menu.candidate.TextStyle
 
 internal const val NO_ID = -1
 
@@ -36,17 +43,23 @@ internal fun TextView.setColorResource(@ColorRes textColorResource: Int) {
  * @param imageResource ID of a drawable resource to be shown as icon.
  * @param iconTintColorResource Optional ID of color resource to tint the icon.
  * @param textColorResource Optional ID of color resource to tint the text.
+ * @param isCollapsingMenuLimit Whether this menu item can serve as the limit of a collapsing menu.
+ * @param isSticky whether this item menu should not be scrolled offscreen (downwards or upwards
+ * depending on the menu position).
  * @param listener Callback to be invoked when this menu item is clicked.
  */
+@Suppress("LongParameterList")
 open class BrowserMenuImageText(
     private val label: String,
     @DrawableRes
-    private val imageResource: Int,
+    internal val imageResource: Int,
     @ColorRes
-    private val iconTintColorResource: Int = NO_ID,
+    internal val iconTintColorResource: Int = NO_ID,
     @ColorRes
     private val textColorResource: Int = NO_ID,
-    private val listener: () -> Unit = {}
+    override val isCollapsingMenuLimit: Boolean = false,
+    override val isSticky: Boolean = false,
+    private val listener: () -> Unit = {},
 ) : BrowserMenuItem {
 
     override var visible: () -> Boolean = { true }
@@ -77,4 +90,18 @@ open class BrowserMenuImageText(
             setTintResource(iconTintColorResource)
         }
     }
+
+    override fun asCandidate(context: Context): MenuCandidate = TextMenuCandidate(
+        label,
+        start = DrawableMenuIcon(
+            context,
+            resource = imageResource,
+            tint = if (iconTintColorResource == NO_ID) null else getColor(context, iconTintColorResource),
+        ),
+        textStyle = TextStyle(
+            color = if (textColorResource == NO_ID) null else getColor(context, textColorResource),
+        ),
+        containerStyle = ContainerStyle(isVisible = visible()),
+        onClick = listener,
+    )
 }

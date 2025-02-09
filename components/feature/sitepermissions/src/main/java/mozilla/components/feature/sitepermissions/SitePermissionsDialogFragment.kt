@@ -6,19 +6,20 @@ package mozilla.components.feature.sitepermissions
 
 import android.annotation.SuppressLint
 import android.app.Dialog
+import android.content.DialogInterface
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.View.VISIBLE
+import android.view.ViewGroup
 import android.view.Window
+import android.widget.Button
 import android.widget.CheckBox
 import android.widget.ImageView
-import android.widget.TextView
-import android.view.ViewGroup
-import android.widget.Button
 import android.widget.LinearLayout.LayoutParams
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatDialogFragment
 import androidx.core.content.ContextCompat
 
@@ -27,14 +28,18 @@ internal const val KEY_TITLE = "KEY_TITLE"
 private const val KEY_DIALOG_GRAVITY = "KEY_DIALOG_GRAVITY"
 private const val KEY_DIALOG_WIDTH_MATCH_PARENT = "KEY_DIALOG_WIDTH_MATCH_PARENT"
 private const val KEY_TITLE_ICON = "KEY_TITLE_ICON"
+private const val KEY_MESSAGE = "KEY_MESSAGE"
+private const val KEY_NEGATIVE_BUTTON_TEXT = "KEY_NEGATIVE_BUTTON_TEXT"
 private const val KEY_POSITIVE_BUTTON_BACKGROUND_COLOR = "KEY_POSITIVE_BUTTON_BACKGROUND_COLOR"
 private const val KEY_POSITIVE_BUTTON_TEXT_COLOR = "KEY_POSITIVE_BUTTON_TEXT_COLOR"
+private const val KEY_SHOULD_SHOW_LEARN_MORE_LINK = "KEY_SHOULD_SHOW_LEARN_MORE_LINK"
 private const val KEY_SHOULD_SHOW_DO_NOT_ASK_AGAIN_CHECKBOX = "KEY_SHOULD_SHOW_DO_NOT_ASK_AGAIN_CHECKBOX"
 private const val KEY_SHOULD_PRESELECT_DO_NOT_ASK_AGAIN_CHECKBOX = "KEY_SHOULD_PRESELECT_DO_NOT_ASK_AGAIN_CHECKBOX"
 private const val KEY_IS_NOTIFICATION_REQUEST = "KEY_IS_NOTIFICATION_REQUEST"
 private const val DEFAULT_VALUE = Int.MAX_VALUE
+private const val KEY_PERMISSION_ID = "KEY_PERMISSION_ID"
 
-internal class SitePermissionsDialogFragment : AppCompatDialogFragment() {
+internal open class SitePermissionsDialogFragment : AppCompatDialogFragment() {
 
     // Safe Arguments
 
@@ -46,6 +51,10 @@ internal class SitePermissionsDialogFragment : AppCompatDialogFragment() {
         safeArguments.getString(KEY_TITLE, "")
     internal val icon get() =
         safeArguments.getInt(KEY_TITLE_ICON, DEFAULT_VALUE)
+    internal val message: String? get() =
+        safeArguments.getString(KEY_MESSAGE, null)
+    internal val negativeButtonText: String? get() =
+        safeArguments.getString(KEY_NEGATIVE_BUTTON_TEXT, null)
 
     internal val dialogGravity: Int get() =
         safeArguments.getInt(KEY_DIALOG_GRAVITY, DEFAULT_VALUE)
@@ -60,10 +69,14 @@ internal class SitePermissionsDialogFragment : AppCompatDialogFragment() {
     internal val isNotificationRequest get() =
         safeArguments.getBoolean(KEY_IS_NOTIFICATION_REQUEST, false)
 
+    internal val shouldShowLearnMoreLink: Boolean get() =
+        safeArguments.getBoolean(KEY_SHOULD_SHOW_LEARN_MORE_LINK, false)
     internal val shouldShowDoNotAskAgainCheckBox: Boolean get() =
         safeArguments.getBoolean(KEY_SHOULD_SHOW_DO_NOT_ASK_AGAIN_CHECKBOX, true)
     internal val shouldPreselectDoNotAskAgainCheckBox: Boolean get() =
         safeArguments.getBoolean(KEY_SHOULD_PRESELECT_DO_NOT_ASK_AGAIN_CHECKBOX, false)
+    internal val permissionRequestId: String get() =
+        safeArguments.getString(KEY_PERMISSION_ID, "")
 
     // State
 
@@ -82,7 +95,6 @@ internal class SitePermissionsDialogFragment : AppCompatDialogFragment() {
         sheetDialog.setContainerView(rootView)
 
         sheetDialog.window?.apply {
-
             if (dialogGravity != DEFAULT_VALUE) {
                 setGravity(dialogGravity)
             }
@@ -97,6 +109,11 @@ internal class SitePermissionsDialogFragment : AppCompatDialogFragment() {
         return sheetDialog
     }
 
+    override fun onDismiss(dialog: DialogInterface) {
+        super.onDismiss(dialog)
+        feature?.onDismiss(permissionRequestId, sessionId)
+    }
+
     private fun Dialog.setContainerView(rootView: View) {
         if (dialogShouldWidthMatchParent) {
             setContentView(rootView)
@@ -105,27 +122,44 @@ internal class SitePermissionsDialogFragment : AppCompatDialogFragment() {
                 rootView,
                 LayoutParams(
                     LayoutParams.MATCH_PARENT,
-                    LayoutParams.MATCH_PARENT
-                )
+                    LayoutParams.MATCH_PARENT,
+                ),
             )
         }
     }
+
     @SuppressLint("InflateParams")
     private fun createContainer(): View {
         val rootView = LayoutInflater.from(requireContext()).inflate(
             R.layout.mozac_site_permissions_prompt,
             null,
-            false
+            false,
         )
 
         rootView.findViewById<TextView>(R.id.title).text = title
         rootView.findViewById<ImageView>(R.id.icon).setImageResource(icon)
+        message?.let {
+            rootView.findViewById<TextView>(R.id.message).apply {
+                visibility = VISIBLE
+                text = it
+            }
+        }
+        if (shouldShowLearnMoreLink) {
+            rootView.findViewById<TextView>(R.id.learn_more).apply {
+                visibility = VISIBLE
+                isLongClickable = false
+                setOnClickListener {
+                    dismiss()
+                    feature?.onLearnMorePress(permissionRequestId, sessionId)
+                }
+            }
+        }
 
         val positiveButton = rootView.findViewById<Button>(R.id.allow_button)
         val negativeButton = rootView.findViewById<Button>(R.id.deny_button)
 
         positiveButton.setOnClickListener {
-            feature?.onPositiveButtonPress(sessionId, userSelectionCheckBox)
+            feature?.onPositiveButtonPress(permissionRequestId, sessionId, userSelectionCheckBox)
             dismiss()
         }
 
@@ -140,12 +174,15 @@ internal class SitePermissionsDialogFragment : AppCompatDialogFragment() {
         }
 
         negativeButton.setOnClickListener {
-            feature?.onNegativeButtonPress(sessionId, userSelectionCheckBox)
+            feature?.onNegativeButtonPress(permissionRequestId, sessionId, userSelectionCheckBox)
             dismiss()
         }
         if (isNotificationRequest) {
             positiveButton.setText(R.string.mozac_feature_sitepermissions_always_allow)
             negativeButton.setText(R.string.mozac_feature_sitepermissions_never_allow)
+        }
+        negativeButtonText?.let {
+            negativeButton.text = it
         }
 
         if (shouldShowDoNotAskAgainCheckBox) {
@@ -171,12 +208,15 @@ internal class SitePermissionsDialogFragment : AppCompatDialogFragment() {
             sessionId: String,
             title: String,
             titleIcon: Int,
+            permissionRequestId: String = "",
             feature: SitePermissionsFeature,
             shouldShowDoNotAskAgainCheckBox: Boolean,
             shouldSelectDoNotAskAgainCheckBox: Boolean = false,
-            isNotificationRequest: Boolean = false
+            isNotificationRequest: Boolean = false,
+            message: String? = null,
+            negativeButtonText: String? = null,
+            shouldShowLearnMoreLink: Boolean = false,
         ): SitePermissionsDialogFragment {
-
             val fragment = SitePermissionsDialogFragment()
             val arguments = fragment.arguments ?: Bundle()
 
@@ -184,6 +224,10 @@ internal class SitePermissionsDialogFragment : AppCompatDialogFragment() {
                 putString(KEY_SESSION_ID, sessionId)
                 putString(KEY_TITLE, title)
                 putInt(KEY_TITLE_ICON, titleIcon)
+                putString(KEY_MESSAGE, message)
+                putString(KEY_NEGATIVE_BUTTON_TEXT, negativeButtonText)
+                putString(KEY_PERMISSION_ID, permissionRequestId)
+                putBoolean(KEY_SHOULD_SHOW_LEARN_MORE_LINK, shouldShowLearnMoreLink)
 
                 putBoolean(KEY_IS_NOTIFICATION_REQUEST, isNotificationRequest)
                 if (isNotificationRequest) {

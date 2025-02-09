@@ -60,7 +60,8 @@ data class WebAppManifest(
     val scope: String? = null,
     @ColorInt val themeColor: Int? = null,
     val relatedApplications: List<ExternalApplicationResource> = emptyList(),
-    val preferRelatedApplications: Boolean = false
+    val preferRelatedApplications: Boolean = false,
+    val shareTarget: ShareTarget? = null,
 ) {
     /**
      * Defines the developers’ preferred display mode for the website.
@@ -88,7 +89,7 @@ data class WebAppManifest(
          * The application opens in a conventional browser tab or new window, depending on the browser and platform.
          * This is the default.
          */
-        BROWSER
+        BROWSER,
     }
 
     /**
@@ -105,14 +106,14 @@ data class WebAppManifest(
         val src: String,
         val sizes: List<Size> = emptyList(),
         val type: String? = null,
-        val purpose: Set<Purpose> = setOf(Purpose.ANY)
+        val purpose: Set<Purpose> = setOf(Purpose.ANY),
     ) {
         enum class Purpose {
             /**
              * A user agent can present this icon where space constraints and/or color requirements differ from those
              * of the application icon.
              */
-            BADGE,
+            MONOCHROME,
 
             /**
              * The image is designed with icon masks and safe zone in mind, such that any part of the image that is
@@ -125,7 +126,7 @@ data class WebAppManifest(
             /**
              * The user agent is free to display the icon in any context (this is the default value).
              */
-            ANY
+            ANY,
         }
     }
 
@@ -140,7 +141,7 @@ data class WebAppManifest(
         LANDSCAPE_SECONDARY,
         PORTRAIT,
         PORTRAIT_PRIMARY,
-        PORTRAIT_SECONDARY
+        PORTRAIT_SECONDARY,
     }
 
     /**
@@ -162,7 +163,7 @@ data class WebAppManifest(
          * If the value is set to auto, the browser will use the Unicode bidirectional algorithm to make a best guess
          * about the text's direction.
          */
-        AUTO
+        AUTO,
     }
 
     /**
@@ -179,7 +180,7 @@ data class WebAppManifest(
         val url: String? = null,
         val id: String? = null,
         val minVersion: String? = null,
-        val fingerprints: List<Fingerprint> = emptyList()
+        val fingerprints: List<Fingerprint> = emptyList(),
     ) {
 
         /**
@@ -188,7 +189,65 @@ data class WebAppManifest(
          */
         data class Fingerprint(
             val type: String,
-            val value: String
+            val value: String,
         )
+    }
+
+    /**
+     * Used to define how the web app receives share data.
+     * If present, a share target should be created so that other Android apps can share to this web app.
+     *
+     * @property action URL to open on share
+     * @property method Method to use with [action]. Either "GET" or "POST".
+     * @property encType MIME type to specify how the params are encoded.
+     * @property params Specifies what query parameters correspond to share data.
+     */
+    data class ShareTarget(
+        val action: String,
+        val method: RequestMethod = RequestMethod.GET,
+        val encType: EncodingType = EncodingType.URL_ENCODED,
+        val params: Params = Params(),
+    ) {
+
+        /**
+         * Specifies what query parameters correspond to share data.
+         *
+         * @property title Name of the query parameter used for the title of the data being shared.
+         * @property text Name of the query parameter used for the body of the data being shared.
+         * @property url Name of the query parameter used for a URL referring to a shared resource.
+         * @property files Form fields used to share files.
+         */
+        data class Params(
+            val title: String? = null,
+            val text: String? = null,
+            val url: String? = null,
+            val files: List<Files> = emptyList(),
+        )
+
+        /**
+         * Specifies a form field member used to share files.
+         *
+         * @property name Name of the form field.
+         * @property accept Accepted MIME types or file extensions.
+         */
+        data class Files(
+            val name: String,
+            val accept: List<String>,
+        )
+
+        /**
+         * Valid HTTP methods for [ShareTarget.method].
+         */
+        enum class RequestMethod {
+            GET, POST
+        }
+
+        /**
+         * Valid encoding MIME types for [ShareTarget.encType].
+         */
+        enum class EncodingType(val type: String) {
+            URL_ENCODED("application/x-www-form-urlencoded"),
+            MULTIPART("multipart/form-data"),
+        }
     }
 }

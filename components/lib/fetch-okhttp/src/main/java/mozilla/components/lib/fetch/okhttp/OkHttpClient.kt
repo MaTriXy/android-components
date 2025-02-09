@@ -5,11 +5,13 @@
 package mozilla.components.lib.fetch.okhttp
 
 import android.content.Context
+import mozilla.components.concept.fetch.BuildConfig
 import mozilla.components.concept.fetch.Client
 import mozilla.components.concept.fetch.Headers
 import mozilla.components.concept.fetch.MutableHeaders
 import mozilla.components.concept.fetch.Request
 import mozilla.components.concept.fetch.Response
+import mozilla.components.concept.fetch.isDataUri
 import mozilla.components.lib.fetch.okhttp.OkHttpClient.Companion.CACHE_MAX_SIZE
 import mozilla.components.lib.fetch.okhttp.OkHttpClient.Companion.getOrCreateCookieManager
 import okhttp3.Cache
@@ -27,9 +29,22 @@ typealias RequestBuilder = okhttp3.Request.Builder
  */
 class OkHttpClient(
     private val client: OkHttpClient = OkHttpClient(),
-    private val context: Context? = null
+    private val context: Context? = null,
 ) : Client() {
+    private val defaultHeaders: Headers = MutableHeaders(
+        "User-Agent" to "MozacFetch/${BuildConfig.LIBRARY_VERSION}",
+        "Accept-Encoding" to "gzip",
+    )
+
     override fun fetch(request: Request): Response {
+        if (request.private) {
+            throw IllegalArgumentException("Client doesn't support private request")
+        }
+
+        if (request.isDataUri()) {
+            return fetchDataUri(request)
+        }
+
         val requestClient = client.rebuildFor(request, context)
 
         val requestBuilder = createRequestBuilderWithBody(request)
@@ -40,14 +55,14 @@ class OkHttpClient(
         }
 
         val actualResponse = requestClient.newCall(
-            requestBuilder.build()
+            requestBuilder.build(),
         ).execute()
 
         return actualResponse.toResponse()
     }
 
     companion object {
-        internal const val CACHE_MAX_SIZE: Long = 10 * 1024 * 1024
+        internal const val CACHE_MAX_SIZE: Long = 10L * 1024L * 1024L
 
         fun getOrCreateCookieManager(): CookieManager {
             if (CookieHandler.getDefault() == null) {
@@ -96,7 +111,7 @@ private fun okhttp3.Response.toResponse(): Response {
         url = request().url().toString(),
         headers = headers,
         status = code(),
-        body = if (body != null) Response.Body(body.byteStream(), headers["Content-Type"]) else Response.Body.empty()
+        body = if (body != null) Response.Body(body.byteStream(), headers["Content-Type"]) else Response.Body.empty(),
     )
 }
 

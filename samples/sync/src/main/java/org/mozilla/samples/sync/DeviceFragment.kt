@@ -4,6 +4,7 @@
 
 package org.mozilla.samples.sync
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -28,7 +29,7 @@ class DeviceFragment : Fragment() {
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
-        savedInstanceState: Bundle?
+        savedInstanceState: Bundle?,
     ): View? {
         val view = inflater.inflate(R.layout.fragment_device_list, container, false)
 
@@ -57,6 +58,10 @@ class DeviceFragment : Fragment() {
         listenerDevice = null
     }
 
+    /**
+     * Updates the list of devices.
+     */
+    @SuppressLint("NotifyDataSetChanged")
     fun updateDevices(devices: List<Device>) {
         adapter.devices.clear()
         adapter.devices.addAll(devices)

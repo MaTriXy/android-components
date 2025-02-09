@@ -30,17 +30,17 @@ class FirefoxAccountsAuthFeature(
     private val accountManager: FxaAccountManager,
     private val redirectUrl: String,
     private val coroutineContext: CoroutineContext = Dispatchers.IO,
-    private val onBeginAuthentication: (Context, String) -> Unit = { _, _ -> }
+    private val onBeginAuthentication: (Context, String) -> Unit = { _, _ -> },
 ) {
     fun beginAuthentication(context: Context) {
         beginAuthenticationAsync(context) {
-            accountManager.beginAuthenticationAsync().await()
+            accountManager.beginAuthentication()
         }
     }
 
     fun beginPairingAuthentication(context: Context, pairingUrl: String) {
         beginAuthenticationAsync(context) {
-            accountManager.beginAuthenticationAsync(pairingUrl).await()
+            accountManager.beginAuthentication(pairingUrl)
         }
     }
 
@@ -62,7 +62,16 @@ class FirefoxAccountsAuthFeature(
     }
 
     val interceptor = object : RequestInterceptor {
-        override fun onLoadRequest(session: EngineSession, uri: String): RequestInterceptor.InterceptionResponse? {
+        override fun onLoadRequest(
+            engineSession: EngineSession,
+            uri: String,
+            lastUri: String?,
+            hasUserGesture: Boolean,
+            isSameDomain: Boolean,
+            isRedirect: Boolean,
+            isDirectNavigation: Boolean,
+            isSubframeRequest: Boolean,
+        ): RequestInterceptor.InterceptionResponse? {
             if (uri.startsWith(redirectUrl)) {
                 val parsedUri = Uri.parse(uri)
                 val code = parsedUri.getQueryParameter("code")
@@ -72,11 +81,15 @@ class FirefoxAccountsAuthFeature(
                     val state = parsedUri.getQueryParameter("state") as String
 
                     // Notify the state machine about our success.
-                    accountManager.finishAuthenticationAsync(FxaAuthData(
-                        authType = authType,
-                        code = code,
-                        state = state
-                    ))
+                    CoroutineScope(Dispatchers.Main).launch {
+                        accountManager.finishAuthentication(
+                            FxaAuthData(
+                                authType = authType,
+                                code = code,
+                                state = state,
+                            ),
+                        )
+                    }
 
                     return RequestInterceptor.InterceptionResponse.Url(redirectUrl)
                 }

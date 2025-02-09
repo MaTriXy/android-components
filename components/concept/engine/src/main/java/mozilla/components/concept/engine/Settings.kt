@@ -4,8 +4,9 @@
 
 package mozilla.components.concept.engine
 
-import mozilla.components.concept.engine.EngineSession.TrackingProtectionPolicy
+import mozilla.components.concept.engine.EngineSession.CookieBannerHandlingMode
 import mozilla.components.concept.engine.EngineSession.SafeBrowsingPolicy
+import mozilla.components.concept.engine.EngineSession.TrackingProtectionPolicy
 import mozilla.components.concept.engine.history.HistoryTrackingDelegate
 import mozilla.components.concept.engine.mediaquery.PreferredColorScheme
 import mozilla.components.concept.engine.request.RequestInterceptor
@@ -48,6 +49,16 @@ abstract class Settings {
      * Setting to control tracking protection.
      */
     open var trackingProtectionPolicy: TrackingProtectionPolicy? by UnsupportedSetting()
+
+    /**
+     * Setting to control the cookie banner handling feature.
+     */
+    open var cookieBannerHandlingMode: CookieBannerHandlingMode by UnsupportedSetting()
+
+    /**
+     * Setting to control the cookie banner handling feature in the private browsing mode.
+     */
+    open var cookieBannerHandlingModePrivateBrowsing: CookieBannerHandlingMode by UnsupportedSetting()
 
     /**
      * Setting to control tracking protection.
@@ -151,11 +162,6 @@ abstract class Settings {
     open var preferredColorScheme: PreferredColorScheme by UnsupportedSetting()
 
     /**
-     * Setting to control whether media is allowed to auto-play on page load.
-     */
-    open var allowAutoplayMedia: Boolean by UnsupportedSetting()
-
-    /**
      * Setting to control whether media should be suspended when the session is inactive.
      */
     open var suspendMediaWhenInactive: Boolean by UnsupportedSetting()
@@ -169,6 +175,31 @@ abstract class Settings {
      * Setting to control the font size factor. All font sizes will be multiplied by this factor.
      */
     open var fontSizeFactor: Float? by UnsupportedSetting()
+
+    /**
+     * Setting to control login autofill.
+     */
+    open var loginAutofillEnabled: Boolean by UnsupportedSetting()
+
+    /**
+     * Setting to force the ability to scale the content
+     */
+    open var forceUserScalableContent: Boolean by UnsupportedSetting()
+
+    /**
+     * Setting to control the clear color while drawing.
+     */
+    open var clearColor: Int? by UnsupportedSetting()
+
+    /**
+     * Setting to control whether enterprise root certs are enabled.
+     */
+    open var enterpriseRootsEnabled: Boolean by UnsupportedSetting()
+
+    /**
+     * Setting the HTTPS-Only mode for upgrading connections to HTTPS.
+     */
+    open var httpsOnlyMode: Engine.HttpsOnlyMode by UnsupportedSetting()
 }
 
 /**
@@ -199,21 +230,32 @@ data class DefaultSettings(
     override var supportMultipleWindows: Boolean = false,
     override var preferredColorScheme: PreferredColorScheme = PreferredColorScheme.System,
     override var testingModeEnabled: Boolean = false,
-    override var allowAutoplayMedia: Boolean = true,
     override var suspendMediaWhenInactive: Boolean = false,
     override var fontInflationEnabled: Boolean? = null,
-    override var fontSizeFactor: Float? = null
+    override var fontSizeFactor: Float? = null,
+    override var forceUserScalableContent: Boolean = false,
+    override var loginAutofillEnabled: Boolean = false,
+    override var clearColor: Int? = null,
+    override var enterpriseRootsEnabled: Boolean = false,
+    override var httpsOnlyMode: Engine.HttpsOnlyMode = Engine.HttpsOnlyMode.DISABLED,
+    override var cookieBannerHandlingMode: CookieBannerHandlingMode = CookieBannerHandlingMode.DISABLED,
+    override var cookieBannerHandlingModePrivateBrowsing: CookieBannerHandlingMode =
+        CookieBannerHandlingMode.REJECT_ALL,
 ) : Settings()
 
 class UnsupportedSetting<T> {
     operator fun getValue(thisRef: Any?, prop: KProperty<*>): T {
-        throw UnsupportedSettingException("The setting ${prop.name} is not supported by this engine or session. " +
-                "Check both the engine and engine session implementation.")
+        throw UnsupportedSettingException(
+            "The setting ${prop.name} is not supported by this engine or session. " +
+                "Check both the engine and engine session implementation.",
+        )
     }
 
     operator fun setValue(thisRef: Any?, prop: KProperty<*>, value: T) {
-        throw UnsupportedSettingException("The setting ${prop.name} is not supported by this engine or session. " +
-                "Check both the engine and engine session implementation.")
+        throw UnsupportedSettingException(
+            "The setting ${prop.name} is not supported by this engine or session. " +
+                "Check both the engine and engine session implementation.",
+        )
     }
 }
 

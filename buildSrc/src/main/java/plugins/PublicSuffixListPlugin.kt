@@ -21,7 +21,7 @@ import java.util.TreeSet
  */
 class PublicSuffixListPlugin : Plugin<Project> {
     override fun apply(project: Project) {
-        project.task("updatePSL") {
+        project.tasks.register("updatePSL") {
             doLast {
                 val filename = project.projectDir.absolutePath + "/src/main/assets/publicsuffixes"
                 updatePublicSuffixList(filename)
@@ -118,5 +118,5 @@ data class PublicSuffixListData(
     var totalExceptionRuleBytes: Int = 0,
 
     val sortedRules: TreeSet<ByteString> = TreeSet(),
-    val sortedExceptionRules: TreeSet<ByteString> = TreeSet()
+    val sortedExceptionRules: TreeSet<ByteString> = TreeSet(),
 )

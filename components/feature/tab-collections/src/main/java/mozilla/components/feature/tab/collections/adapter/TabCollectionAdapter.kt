@@ -5,8 +5,8 @@
 package mozilla.components.feature.tab.collections.adapter
 
 import android.content.Context
-import mozilla.components.browser.session.Session
-import mozilla.components.browser.session.ext.readSnapshotItem
+import mozilla.components.browser.session.storage.serialize.BrowserStateReader
+import mozilla.components.browser.state.state.recover.RecoverableTab
 import mozilla.components.concept.engine.Engine
 import mozilla.components.feature.tab.collections.Tab
 import mozilla.components.feature.tab.collections.TabCollection
@@ -14,7 +14,7 @@ import mozilla.components.feature.tab.collections.db.TabCollectionWithTabs
 import mozilla.components.feature.tab.collections.db.TabEntity
 
 internal class TabCollectionAdapter(
-    internal val entity: TabCollectionWithTabs
+    internal val entity: TabCollectionWithTabs,
 ) : TabCollection {
     override val title: String
         get() = entity.collection.title
@@ -22,14 +22,18 @@ internal class TabCollectionAdapter(
     override val tabs: List<Tab> by lazy {
         entity
             .tabs
-            .sortedBy { it.createdAt }
+            .sortedByDescending { it.createdAt }
             .map { TabAdapter(it) }
     }
 
     override val id: Long
         get() = entity.collection.id!!
 
-    override fun restore(context: Context, engine: Engine, restoreSessionId: Boolean): List<Session> {
+    override fun restore(
+        context: Context,
+        engine: Engine,
+        restoreSessionId: Boolean,
+    ): List<RecoverableTab> {
         return restore(context, engine, entity.tabs, restoreSessionId)
     }
 
@@ -37,10 +41,11 @@ internal class TabCollectionAdapter(
         context: Context,
         engine: Engine,
         tabs: List<Tab>,
-        restoreSessionId: Boolean
-    ): List<Session> {
+        restoreSessionId: Boolean,
+    ): List<RecoverableTab> {
         val entities = entity.tabs.filter {
-            candidate -> tabs.find { tab -> tab.id == candidate.id } != null
+                candidate ->
+            tabs.find { tab -> tab.id == candidate.id } != null
         }
         return restore(context, engine, entities, restoreSessionId)
     }
@@ -49,10 +54,12 @@ internal class TabCollectionAdapter(
         context: Context,
         engine: Engine,
         tabs: List<TabEntity>,
-        restoreSessionId: Boolean
-    ): List<Session> {
+        restoreSessionId: Boolean,
+    ): List<RecoverableTab> {
+        val reader = BrowserStateReader()
         return tabs.mapNotNull { tab ->
-            tab.getStateFile(context.filesDir).readSnapshotItem(engine, restoreSessionId)?.session
+            val file = tab.getStateFile(context.filesDir)
+            reader.readTab(engine, file, restoreSessionId, restoreParentId = false)
         }
     }
 

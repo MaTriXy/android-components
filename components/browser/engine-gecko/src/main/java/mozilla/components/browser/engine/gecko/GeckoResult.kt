@@ -4,9 +4,12 @@
 
 package mozilla.components.browser.engine.gecko
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.launch
+import mozilla.components.concept.engine.CancellableOperation
 import org.mozilla.geckoview.GeckoResult
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
@@ -18,13 +21,39 @@ import kotlin.coroutines.suspendCoroutine
  * Wait for a GeckoResult to be complete in a co-routine.
  */
 suspend fun <T> GeckoResult<T>.await() = suspendCoroutine<T?> { continuation ->
-    then({
-        continuation.resume(it)
-        GeckoResult<Void>()
-    }, {
-        continuation.resumeWithException(it)
-        GeckoResult<Void>()
-    })
+    then(
+        {
+            continuation.resume(it)
+            GeckoResult<Void>()
+        },
+        {
+            continuation.resumeWithException(it)
+            GeckoResult<Void>()
+        },
+    )
+}
+
+/**
+ * Converts a [GeckoResult] to a [CancellableOperation].
+ */
+fun <T> GeckoResult<T>.asCancellableOperation(): CancellableOperation {
+    val geckoResult = this
+    return object : CancellableOperation {
+        override fun cancel(): Deferred<Boolean> {
+            val result = CompletableDeferred<Boolean>()
+            geckoResult.cancel().then(
+                {
+                    result.complete(it ?: false)
+                    GeckoResult<Void>()
+                },
+                { throwable ->
+                    result.completeExceptionally(throwable)
+                    GeckoResult<Void>()
+                },
+            )
+            return result
+        }
+    }
 }
 
 /**
@@ -34,7 +63,7 @@ suspend fun <T> GeckoResult<T>.await() = suspendCoroutine<T?> { continuation ->
 fun <T> CoroutineScope.launchGeckoResult(
     context: CoroutineContext = EmptyCoroutineContext,
     start: CoroutineStart = CoroutineStart.DEFAULT,
-    block: suspend CoroutineScope.() -> T
+    block: suspend CoroutineScope.() -> T,
 ) = GeckoResult<T>().apply {
     launch(context, start) {
         try {

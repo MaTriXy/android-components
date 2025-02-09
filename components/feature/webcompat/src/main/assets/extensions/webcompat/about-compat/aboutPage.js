@@ -4,13 +4,11 @@
 
 "use strict";
 
-/* global ExtensionAPI, Services, XPCOMUtils */
+/* global ExtensionAPI, XPCOMUtils */
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "Services",
-  "resource://gre/modules/Services.jsm"
-);
+const Services =
+  globalThis.Services ||
+  ChromeUtils.import("resource://gre/modules/Services.jsm").Services;
 
 XPCOMUtils.defineLazyServiceGetter(
   this,
@@ -21,6 +19,7 @@ XPCOMUtils.defineLazyServiceGetter(
 
 const ResourceSubstitution = "webcompat";
 const ProcessScriptURL = "resource://webcompat/aboutPageProcessScript.js";
+const ContractID = "@mozilla.org/network/protocol/about;1?what=compat";
 
 this.aboutPage = class extends ExtensionAPI {
   onStartup() {
@@ -31,12 +30,17 @@ this.aboutPage = class extends ExtensionAPI {
       Services.io.newURI("about-compat/", null, rootURI)
     );
 
-    Services.ppmm.loadProcessScript(ProcessScriptURL, true);
+    if (!(ContractID in Cc)) {
+      Services.ppmm.loadProcessScript(ProcessScriptURL, true);
+      this.processScriptRegistered = true;
+    }
   }
 
   onShutdown() {
     resProto.setSubstitution(ResourceSubstitution, null);
 
-    Services.ppmm.removeDelayedProcessScript(ProcessScriptURL);
+    if (this.processScriptRegistered) {
+      Services.ppmm.removeDelayedProcessScript(ProcessScriptURL);
+    }
   }
 };

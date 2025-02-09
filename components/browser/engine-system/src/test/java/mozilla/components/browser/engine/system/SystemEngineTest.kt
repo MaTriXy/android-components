@@ -43,6 +43,12 @@ class SystemEngineTest {
             // Private browsing not yet supported
             fail("Expected UnsupportedOperationException")
         } catch (e: UnsupportedOperationException) { }
+
+        try {
+            engine.createSession(false, "1")
+            // Contextual identities not yet supported
+            fail("Expected UnsupportedOperationException")
+        } catch (e: UnsupportedOperationException) { }
     }
 
     @Test
@@ -53,10 +59,13 @@ class SystemEngineTest {
 
     @Test
     fun settings() {
-        val engine = SystemEngine(testContext, DefaultSettings(
+        val engine = SystemEngine(
+            testContext,
+            DefaultSettings(
                 remoteDebuggingEnabled = true,
-                trackingProtectionPolicy = EngineSession.TrackingProtectionPolicy.strict()
-        ))
+                trackingProtectionPolicy = EngineSession.TrackingProtectionPolicy.strict(),
+            ),
+        )
 
         assertTrue(engine.settings.remoteDebuggingEnabled)
         engine.settings.remoteDebuggingEnabled = false
@@ -64,7 +73,7 @@ class SystemEngineTest {
 
         assertEquals(
             engine.settings.trackingProtectionPolicy,
-            EngineSession.TrackingProtectionPolicy.strict()
+            EngineSession.TrackingProtectionPolicy.strict(),
         )
         engine.settings.trackingProtectionPolicy = EngineSession.TrackingProtectionPolicy.none()
         assertEquals(engine.settings.trackingProtectionPolicy, EngineSession.TrackingProtectionPolicy.none())
@@ -83,10 +92,13 @@ class SystemEngineTest {
     // https://github.com/mozilla-mobile/android-components/issues/4206
     @Test(expected = UnsupportedSettingException::class)
     fun safeBrowsingIsNotSupportedYet() {
-        val engine = SystemEngine(testContext, DefaultSettings(
-            remoteDebuggingEnabled = true,
-            trackingProtectionPolicy = EngineSession.TrackingProtectionPolicy.strict()
-        ))
+        val engine = SystemEngine(
+            testContext,
+            DefaultSettings(
+                remoteDebuggingEnabled = true,
+                trackingProtectionPolicy = EngineSession.TrackingProtectionPolicy.strict(),
+            ),
+        )
 
         engine.settings.safeBrowsingPolicy
     }

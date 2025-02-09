@@ -5,12 +5,10 @@
 package mozilla.components.support.base.log.sink
 
 import android.os.Build
+import mozilla.components.support.base.ext.getStacktraceAsString
 import mozilla.components.support.base.log.Log
-import java.io.PrintWriter
-import java.io.StringWriter
 
 private const val MAX_TAG_LENGTH = 23
-private const val STACK_TRACE_INITIAL_BUFFER_SIZE = 256
 
 /**
  * <code>LogSink</code> implementation that writes to Android's log.
@@ -18,7 +16,7 @@ private const val STACK_TRACE_INITIAL_BUFFER_SIZE = 256
  * @param defaultTag A default tag that should be used for all logging calls without tag.
  */
 class AndroidLogSink(
-    private val defaultTag: String = "App"
+    private val defaultTag: String = "App",
 ) : LogSink {
     /**
      * Low-level logging call.
@@ -27,11 +25,9 @@ class AndroidLogSink(
         val logTag = tag(tag)
 
         val logMessage: String = if (message != null && throwable != null) {
-            "$message\n${stackTrace(throwable)}"
-        } else message ?: if (throwable != null) {
-            stackTrace(throwable)
+            "$message\n${throwable.getStacktraceAsString()}"
         } else {
-            "(empty)"
+            message ?: (throwable?.getStacktraceAsString() ?: "(empty)")
         }
 
         android.util.Log.println(priority.value, logTag, logMessage)
@@ -43,13 +39,5 @@ class AndroidLogSink(
             return tag.substring(0, MAX_TAG_LENGTH)
         }
         return tag
-    }
-
-    private fun stackTrace(throwable: Throwable): String {
-        val sw = StringWriter(STACK_TRACE_INITIAL_BUFFER_SIZE)
-        val pw = PrintWriter(sw, false)
-        throwable.printStackTrace(pw)
-        pw.flush()
-        return sw.toString()
     }
 }

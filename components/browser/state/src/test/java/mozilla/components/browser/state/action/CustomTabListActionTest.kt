@@ -6,6 +6,7 @@ package mozilla.components.browser.state.action
 
 import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.browser.state.state.CustomTabConfig
+import mozilla.components.browser.state.state.SessionState
 import mozilla.components.browser.state.state.createCustomTab
 import mozilla.components.browser.state.state.createTab
 import mozilla.components.browser.state.store.BrowserStore
@@ -23,13 +24,18 @@ class CustomTabListActionTest {
         assertEquals(0, store.state.tabs.size)
         assertEquals(0, store.state.customTabs.size)
 
-        val config = CustomTabConfig("test")
-        val customTab = createCustomTab("https://www.mozilla.org", config = config)
+        val config = CustomTabConfig()
+        val customTab = createCustomTab(
+            "https://www.mozilla.org",
+            config = config,
+            source = SessionState.Source.Internal.CustomTab,
+        )
 
         store.dispatch(CustomTabListAction.AddCustomTabAction(customTab)).joinBlocking()
 
         assertEquals(0, store.state.tabs.size)
         assertEquals(1, store.state.customTabs.size)
+        assertEquals(SessionState.Source.Internal.CustomTab, store.state.customTabs[0].source)
         assertEquals(customTab, store.state.customTabs[0])
         assertSame(config, store.state.customTabs[0].config)
     }

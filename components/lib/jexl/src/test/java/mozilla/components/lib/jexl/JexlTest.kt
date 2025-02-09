@@ -40,7 +40,7 @@ class JexlTest {
         }
 
         jexl.addTransform("lower") { value, _ ->
-            value.toString().toLowerCase().toJexl()
+            value.toString().lowercase().toJexl()
         }
 
         jexl.addTransform("last") { value, _ ->
@@ -49,11 +49,13 @@ class JexlTest {
 
         assertEquals(
             "poovey".toJexl(),
-            jexl.evaluate(""""Pam Poovey"|lower|split(' ')|last"""))
+            jexl.evaluate(""""Pam Poovey"|lower|split(' ')|last"""),
+        )
 
         assertEquals(
             JexlArray("password".toJexl(), "guest".toJexl()),
-            jexl.evaluate(""""password==guest"|split('=' + '=')"""))
+            jexl.evaluate(""""password==guest"|split('=' + '=')"""),
+        )
     }
 
     @Test
@@ -65,19 +67,19 @@ class JexlTest {
                 JexlObject(
                     "first" to "Sterling".toJexl(),
                     "last" to "Archer".toJexl(),
-                    "age" to 36.toJexl()
+                    "age" to 36.toJexl(),
                 ),
                 JexlObject(
                     "first" to "Malory".toJexl(),
                     "last" to "Archer".toJexl(),
-                    "age" to 75.toJexl()
+                    "age" to 75.toJexl(),
                 ),
                 JexlObject(
                     "first" to "Malory".toJexl(),
                     "last" to "Archer".toJexl(),
-                    "age" to 33.toJexl()
-                )
-            )
+                    "age" to 33.toJexl(),
+                ),
+            ),
         )
 
         assertEquals(
@@ -85,25 +87,26 @@ class JexlTest {
                 JexlObject(
                     "first" to "Sterling".toJexl(),
                     "last" to "Archer".toJexl(),
-                    "age" to 36.toJexl()
+                    "age" to 36.toJexl(),
                 ),
                 JexlObject(
                     "first" to "Malory".toJexl(),
                     "last" to "Archer".toJexl(),
-                    "age" to 33.toJexl()
-                )
+                    "age" to 33.toJexl(),
+                ),
             ),
-            jexl.evaluate("employees[.age >= 30 && .age < 40]", context))
+            jexl.evaluate("employees[.age >= 30 && .age < 40]", context),
+        )
 
         assertEquals(
             JexlArray(
                 JexlObject(
                     "first" to "Malory".toJexl(),
                     "last" to "Archer".toJexl(),
-                    "age" to 33.toJexl()
-                )
+                    "age" to 33.toJexl(),
+                ),
             ),
-            jexl.evaluate("employees[.age >= 30 && .age < 90][.age < 35]", context)
+            jexl.evaluate("employees[.age >= 30 && .age < 90][.age < 35]", context),
         )
     }
 }

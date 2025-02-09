@@ -12,95 +12,89 @@ import androidx.browser.customtabs.TrustedWebUtils.EXTRA_LAUNCH_AS_TRUSTED_WEB_A
 import androidx.core.net.toUri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.runBlockingTest
-import mozilla.components.concept.engine.EngineSession
+import mozilla.components.browser.state.state.CustomTabConfig
+import mozilla.components.browser.state.state.ExternalAppType
+import mozilla.components.browser.state.state.SessionState
+import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.feature.customtabs.store.CustomTabsServiceStore
 import mozilla.components.feature.pwa.intent.WebAppIntentProcessor.Companion.ACTION_VIEW_PWA
-import mozilla.components.feature.session.SessionUseCases
-import mozilla.components.support.test.any
-import mozilla.components.support.test.eq
+import mozilla.components.feature.tabs.CustomTabsUseCases
 import mozilla.components.support.test.mock
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.Mockito.never
-import org.mockito.Mockito.spy
 import org.mockito.Mockito.verify
 
 @RunWith(AndroidJUnit4::class)
 @ExperimentalCoroutinesApi
+@Suppress("DEPRECATION")
+@Ignore("TrustedWebActivityIntentProcessorTest] is deprecated. See https://github.com/mozilla-mobile/android-components/issues/12024")
 class TrustedWebActivityIntentProcessorTest {
 
-    private val apiKey = "XXXXXXXXX"
+    private lateinit var store: BrowserStore
 
-    @Test
-    fun `matches checks if intent is a trusted web activity intent`() {
-        val processor = TrustedWebActivityIntentProcessor(mock(), mock(), mock(), mock(), apiKey, mock())
-
-        assertFalse(processor.matches(Intent(ACTION_VIEW_PWA)))
-        assertFalse(processor.matches(Intent(ACTION_VIEW)))
-        assertFalse(processor.matches(
-            Intent(ACTION_VIEW).apply { putExtra(EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, true) }
-        ))
-        assertFalse(processor.matches(
-            Intent(ACTION_VIEW).apply {
-                putExtra(EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, false)
-                putExtra(EXTRA_SESSION, null as Bundle?)
-            }
-        ))
-        assertTrue(processor.matches(
-            Intent(ACTION_VIEW).apply {
-                putExtra(EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, true)
-                putExtra(EXTRA_SESSION, null as Bundle?)
-            }
-        ))
+    @Before
+    fun setup() {
+        store = BrowserStore()
     }
 
     @Test
-    fun `process checks if intent action is not valid`() = runBlockingTest {
-        val processor = TrustedWebActivityIntentProcessor(mock(), mock(), mock(), mock(), apiKey, mock())
+    fun `process checks if intent action is not valid`() {
+        val processor = TrustedWebActivityIntentProcessor(mock(), mock(), mock(), mock())
 
         assertFalse(processor.process(Intent(ACTION_VIEW_PWA)))
         assertFalse(processor.process(Intent(ACTION_VIEW)))
-        assertFalse(processor.process(
-            Intent(ACTION_VIEW).apply { putExtra(EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, true) }
-        ))
-        assertFalse(processor.process(
-            Intent(ACTION_VIEW).apply {
-                putExtra(EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, false)
-                putExtra(EXTRA_SESSION, null as Bundle?)
-            }
-        ))
-        assertFalse(processor.process(
-            Intent(ACTION_VIEW).apply {
-                putExtra(EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, true)
-                putExtra(EXTRA_SESSION, null as Bundle?)
-            }
-        ))
-        assertFalse(processor.process(
-            Intent(ACTION_VIEW, null).apply {
-                putExtra(EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, true)
-                putExtra(EXTRA_SESSION, null as Bundle?)
-            }
-        ))
+        assertFalse(
+            processor.process(
+                Intent(ACTION_VIEW).apply { putExtra(EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, true) },
+            ),
+        )
+        assertFalse(
+            processor.process(
+                Intent(ACTION_VIEW).apply {
+                    putExtra(EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, false)
+                    putExtra(EXTRA_SESSION, null as Bundle?)
+                },
+            ),
+        )
+        assertFalse(
+            processor.process(
+                Intent(ACTION_VIEW).apply {
+                    putExtra(EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, true)
+                    putExtra(EXTRA_SESSION, null as Bundle?)
+                },
+            ),
+        )
+        assertFalse(
+            processor.process(
+                Intent(ACTION_VIEW, null).apply {
+                    putExtra(EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, true)
+                    putExtra(EXTRA_SESSION, null as Bundle?)
+                },
+            ),
+        )
     }
 
     @Test
-    fun `process adds custom tab config`() = runBlockingTest {
+    fun `process adds custom tab config`() {
         val intent = Intent(ACTION_VIEW, "https://example.com".toUri()).apply {
             putExtra(EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, true)
             putExtra(EXTRA_SESSION, null as Bundle?)
         }
 
-        val loadUrlUseCase: SessionUseCases.DefaultLoadUrlUseCase = mock()
-        val store: CustomTabsServiceStore = mock()
+        val customTabsStore: CustomTabsServiceStore = mock()
+        val addTabUseCase: CustomTabsUseCases.AddCustomTabUseCase = mock()
 
-        val processor = spy(TrustedWebActivityIntentProcessor(mock(), loadUrlUseCase, mock(), mock(), apiKey, store))
-
+        val processor = TrustedWebActivityIntentProcessor(addTabUseCase, mock(), mock(), customTabsStore)
         assertTrue(processor.process(intent))
 
-        verify(loadUrlUseCase).invoke(eq("https://example.com"), any(), eq(EngineSession.LoadUrlFlags.external()))
-        verify(store, never()).state
+        verify(addTabUseCase).invoke(
+            "https://example.com",
+            source = SessionState.Source.Internal.HomeScreen,
+            customTabConfig = CustomTabConfig(externalAppType = ExternalAppType.TRUSTED_WEB_ACTIVITY),
+        )
     }
 }

@@ -33,7 +33,7 @@ fun ByteArray.toBitmap(opts: BitmapFactory.Options? = null): Bitmap? {
 fun ByteArray.toBitmap(
     offset: Int,
     length: Int,
-    opts: BitmapFactory.Options? = null
+    opts: BitmapFactory.Options? = null,
 ): Bitmap? {
     if (length <= 0) {
         return null
@@ -58,6 +58,27 @@ fun ByteArray.toBitmap(
 
 fun ByteArray.toSha256Digest(): ByteArray {
     return MessageDigest.getInstance("SHA-256").digest(this)
+}
+
+/**
+ * @return A SHA-1 digest.
+ */
+fun ByteArray.toSha1Digest(): ByteArray {
+    return MessageDigest.getInstance("SHA-1").digest(this)
+}
+
+/**
+ * @return An unpadded byte array, according to PKCS#7.
+ */
+@Suppress("MagicNumber")
+fun ByteArray.pkcs7unpad(): ByteArray {
+    // Last byte tells us the padding length.
+    val paddingLength = this.last()
+    // Padding can't be more than 15 bytes.
+    if (paddingLength in 0..16) {
+        return this.copyOfRange(0, this.size - paddingLength)
+    }
+    return this
 }
 
 fun ByteArray.toHexString(): String {

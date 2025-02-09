@@ -8,6 +8,7 @@ import android.app.Service
 import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
+import androidx.annotation.VisibleForTesting
 import androidx.browser.customtabs.CustomTabsService
 import androidx.browser.customtabs.CustomTabsSessionToken
 import kotlinx.coroutines.Dispatchers.Main
@@ -16,10 +17,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import mozilla.components.concept.engine.Engine
-import mozilla.components.concept.fetch.Client
 import mozilla.components.feature.customtabs.feature.OriginVerifierFeature
 import mozilla.components.feature.customtabs.store.CustomTabsServiceStore
 import mozilla.components.feature.customtabs.store.SaveCreatorPackageNameAction
+import mozilla.components.service.digitalassetlinks.RelationChecker
 import mozilla.components.support.base.log.logger.Logger
 
 /**
@@ -36,17 +37,13 @@ abstract class AbstractCustomTabsService : CustomTabsService() {
     private val scope = MainScope()
 
     abstract val engine: Engine
-    open val customTabsServiceStore: CustomTabsServiceStore? = null
-    open val httpClient: Client? = null
-    open val apiKey: String? = null
+    abstract val customTabsServiceStore: CustomTabsServiceStore
+    open val relationChecker: RelationChecker? = null
 
-    private val verifier by lazy {
-        val client = httpClient
-        val store = customTabsServiceStore
-        if (client != null && store != null) {
-            OriginVerifierFeature(client, packageManager, apiKey) { store.dispatch(it) }
-        } else {
-            null
+    @VisibleForTesting
+    internal val verifier by lazy {
+        relationChecker?.let { checker ->
+            OriginVerifierFeature(packageManager, checker) { customTabsServiceStore.dispatch(it) }
         }
     }
 
@@ -63,7 +60,7 @@ abstract class AbstractCustomTabsService : CustomTabsService() {
         }
     }
 
-    override fun requestPostMessageChannel(sessionToken: CustomTabsSessionToken, postMessageOrigin: Uri?): Boolean {
+    override fun requestPostMessageChannel(sessionToken: CustomTabsSessionToken, postMessageOrigin: Uri): Boolean {
         return false
     }
 
@@ -77,20 +74,18 @@ abstract class AbstractCustomTabsService : CustomTabsService() {
         val packageName = packageManager.getPackagesForUid(uid)?.singleOrNull()
 
         if (!packageName.isNullOrEmpty()) {
-            customTabsServiceStore?.dispatch(SaveCreatorPackageNameAction(sessionToken, packageName))
+            customTabsServiceStore.dispatch(SaveCreatorPackageNameAction(sessionToken, packageName))
         }
         return true
     }
 
-    override fun extraCommand(commandName: String?, args: Bundle?): Bundle? {
-        return null
-    }
+    override fun extraCommand(commandName: String, args: Bundle?): Bundle? = null
 
     override fun mayLaunchUrl(
         sessionToken: CustomTabsSessionToken,
         url: Uri?,
         extras: Bundle?,
-        otherLikelyBundles: MutableList<Bundle>?
+        otherLikelyBundles: List<Bundle>?,
     ): Boolean {
         logger.debug("Opening speculative connections")
 
@@ -107,18 +102,17 @@ abstract class AbstractCustomTabsService : CustomTabsService() {
         return true
     }
 
-    override fun postMessage(sessionToken: CustomTabsSessionToken, message: String?, extras: Bundle?): Int {
-        return RESULT_FAILURE_DISALLOWED
-    }
+    override fun postMessage(sessionToken: CustomTabsSessionToken, message: String, extras: Bundle?) =
+        RESULT_FAILURE_DISALLOWED
 
     override fun validateRelationship(
         sessionToken: CustomTabsSessionToken,
         @Relation relation: Int,
         origin: Uri,
-        extras: Bundle?
+        extras: Bundle?,
     ): Boolean {
         val verifier = verifier
-        val state = customTabsServiceStore?.state?.tabs?.getOrElse(sessionToken) { null }
+        val state = customTabsServiceStore.state.tabs[sessionToken]
         return if (verifier != null && state != null) {
             scope.launch(Main) {
                 val result = verifier.verify(state, sessionToken, relation, origin)

@@ -11,8 +11,8 @@ import mozilla.components.concept.engine.EngineView
 import mozilla.components.feature.findinpage.internal.FindInPageInteractor
 import mozilla.components.feature.findinpage.internal.FindInPagePresenter
 import mozilla.components.feature.findinpage.view.FindInPageView
-import mozilla.components.support.base.feature.BackHandler
 import mozilla.components.support.base.feature.LifecycleAwareFeature
+import mozilla.components.support.base.feature.UserInteractionHandler
 
 /**
  * Feature implementation that will keep a [FindInPageView] in sync with a bound [SessionState].
@@ -21,9 +21,10 @@ class FindInPageFeature(
     store: BrowserStore,
     view: FindInPageView,
     engineView: EngineView,
-    private val onClose: (() -> Unit)? = null
-) : LifecycleAwareFeature, BackHandler {
+    private val onClose: (() -> Unit)? = null,
+) : LifecycleAwareFeature, UserInteractionHandler {
     @VisibleForTesting internal var presenter = FindInPagePresenter(store, view)
+
     @VisibleForTesting internal var interactor = FindInPageInteractor(this, view, engineView)
 
     private var session: SessionState? = null

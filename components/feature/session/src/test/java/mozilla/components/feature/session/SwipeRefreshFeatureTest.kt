@@ -6,41 +6,56 @@ package mozilla.components.feature.session
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import mozilla.components.browser.session.Session
-import mozilla.components.browser.session.SessionManager
+import mozilla.components.browser.state.action.ContentAction
+import mozilla.components.browser.state.selector.findCustomTabOrSelectedTab
+import mozilla.components.browser.state.state.BrowserState
+import mozilla.components.browser.state.state.createTab
+import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineView
+import mozilla.components.concept.engine.InputResultDetail
+import mozilla.components.concept.engine.selection.SelectionActionDelegate
+import mozilla.components.support.test.ext.joinBlocking
+import mozilla.components.support.test.libstate.ext.waitUntilIdle
 import mozilla.components.support.test.mock
-import mozilla.components.support.test.robolectric.testContext
-import mozilla.components.support.test.whenever
+import mozilla.components.support.test.rule.MainCoroutineRule
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.ArgumentMatchers.anyString
-import org.mockito.Mockito.spy
+import org.mockito.Mockito.doReturn
+import org.mockito.Mockito.reset
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 
 @RunWith(AndroidJUnit4::class)
 class SwipeRefreshFeatureTest {
+    @get:Rule
+    val coroutinesTestRule = MainCoroutineRule()
 
+    private lateinit var store: BrowserStore
     private lateinit var refreshFeature: SwipeRefreshFeature
-    private lateinit var mockSessionManager: SessionManager
     private val mockLayout = mock<SwipeRefreshLayout>()
-    private val mockSession = mock<Session>()
     private val useCase = mock<SessionUseCases.ReloadUrlUseCase>()
 
     @Before
     fun setup() {
-        mockSessionManager = mock()
-        refreshFeature = SwipeRefreshFeature(mockSessionManager, useCase, mockLayout)
+        store = BrowserStore(
+            BrowserState(
+                tabs = listOf(
+                    createTab("https://www.mozilla.org", id = "A"),
+                    createTab("https://www.firefox.com", id = "B"),
+                ),
+                selectedTabId = "B",
+            ),
+        )
 
-        whenever(mockSessionManager.selectedSession).thenReturn(mockSession)
+        refreshFeature = SwipeRefreshFeature(store, useCase, mockLayout)
     }
 
     @Test
@@ -50,15 +65,15 @@ class SwipeRefreshFeatureTest {
     }
 
     @Test
-    fun `gesture should only work if EngineView cannot be scrolled up`() {
-        val engineView = DummyEngineView(testContext).apply {
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        }
+    fun `gesture should only work if the content can be overscrolled`() {
+        val engineView: DummyEngineView = mock()
+        val inputResultDetail: InputResultDetail = mock()
+        doReturn(inputResultDetail).`when`(engineView).getInputResultDetail()
 
-        engineView.scrollY = 0
+        doReturn(true).`when`(inputResultDetail).canOverscrollTop()
         assertFalse(refreshFeature.canChildScrollUp(mockLayout, engineView))
 
-        engineView.scrollY = 100
+        doReturn(false).`when`(inputResultDetail).canOverscrollTop()
         assertTrue(refreshFeature.canChildScrollUp(mockLayout, engineView))
     }
 
@@ -67,35 +82,51 @@ class SwipeRefreshFeatureTest {
         refreshFeature.start()
         refreshFeature.onRefresh()
 
-        verify(useCase).invoke(mockSession)
+        verify(useCase).invoke("B")
     }
 
     @Test
-    fun `onLoadingStateChanged should update the SwipeRefreshLayout`() {
-        refreshFeature.onLoadingStateChanged(mockSession, false)
-        verify(mockLayout).isRefreshing = false
-
-        refreshFeature.onLoadingStateChanged(mockSession, true)
-        verify(mockLayout).isRefreshing = false
-    }
-
-    @Test
-    fun `start with a sessionId`() {
-        refreshFeature = spy(SwipeRefreshFeature(mockSessionManager, useCase, mockLayout, "abc"))
-        whenever(mockSessionManager.findSessionById(anyString())).thenReturn(mockSession)
-
+    fun `feature MUST reset refreshCanceled after is used`() {
         refreshFeature.start()
 
-        verify(refreshFeature).observeIdOrSelected(anyString())
-        verify(mockSessionManager).findSessionById(anyString())
-        verify(refreshFeature).observeFixed(mockSession)
+        val selectedTab = store.state.findCustomTabOrSelectedTab()!!
+
+        store.dispatch(ContentAction.UpdateRefreshCanceledStateAction(selectedTab.id, true)).joinBlocking()
+        store.waitUntilIdle()
+
+        assertFalse(selectedTab.content.refreshCanceled)
+    }
+
+    @Test
+    fun `feature clears the swipeRefreshLayout#isRefreshing when tab fishes loading or a refreshCanceled`() {
+        refreshFeature.start()
+        store.waitUntilIdle()
+
+        val selectedTab = store.state.findCustomTabOrSelectedTab()!!
+
+        // Ignoring the first event from the initial state.
+        reset(mockLayout)
+
+        store.dispatch(ContentAction.UpdateRefreshCanceledStateAction(selectedTab.id, true)).joinBlocking()
+        store.waitUntilIdle()
+
+        verify(mockLayout, times(2)).isRefreshing = false
+
+        // To trigger to an event we have to change loading from its previous value (false to true).
+        // As if we dispatch with loading = false, none event will be trigger.
+        store.dispatch(ContentAction.UpdateLoadingStateAction(selectedTab.id, true)).joinBlocking()
+        store.dispatch(ContentAction.UpdateLoadingStateAction(selectedTab.id, false)).joinBlocking()
+
+        verify(mockLayout, times(3)).isRefreshing = false
     }
 
     private open class DummyEngineView(context: Context) : FrameLayout(context), EngineView {
-        override fun canScrollVerticallyUp() = scrollY > 0
         override fun setVerticalClipping(clippingHeight: Int) {}
+        override fun setDynamicToolbarMaxHeight(height: Int) {}
         override fun captureThumbnail(onFinish: (Bitmap?) -> Unit) = Unit
+        override fun clearSelection() {}
         override fun render(session: EngineSession) {}
         override fun release() {}
+        override var selectionActionDelegate: SelectionActionDelegate? = null
     }
 }

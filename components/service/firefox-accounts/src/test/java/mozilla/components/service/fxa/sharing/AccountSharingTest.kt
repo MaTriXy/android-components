@@ -13,6 +13,7 @@ import android.content.pm.Signature
 import android.content.pm.SigningInfo
 import android.database.Cursor
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import mozilla.components.concept.sync.MigratingAccountInfo
 import mozilla.components.service.fxa.sharing.AccountSharing.KEY_EMAIL
 import mozilla.components.service.fxa.sharing.AccountSharing.KEY_KSYNC
 import mozilla.components.service.fxa.sharing.AccountSharing.KEY_KXSCS
@@ -147,9 +148,9 @@ class AccountSharingTest {
         `when`(packageManager.getPackageInfo(anyString(), anyInt())).thenReturn(packageInfo)
         `when`(context.packageManager).thenReturn(packageManager)
         `when`(contentResolver.acquireContentProviderClient("$packageNameRelease.fxa.auth"))
-                .thenReturn(contentProviderClient)
+            .thenReturn(contentProviderClient)
         `when`(contentResolver.acquireContentProviderClient("$packageNameBeta.fxa.auth"))
-                .thenReturn(contentProviderClient)
+            .thenReturn(contentProviderClient)
         `when`(context.contentResolver).thenReturn(contentResolver)
 
         // Account without tokens should not be returned
@@ -166,22 +167,22 @@ class AccountSharingTest {
         val expectedAccountRelease = ShareableAccount(
             "user@mozilla.org",
             packageNameRelease,
-            ShareableAuthInfo(
+            MigratingAccountInfo(
                 "sessionToken".toByteArray().toHexString(),
                 "ksync".toByteArray().toHexString(),
-                "kxscs"
-            )
+                "kxscs",
+            ),
         )
         assertEquals(expectedAccountRelease, result[0])
 
         val expectedAccountBeta = ShareableAccount(
-                "user@mozilla.org",
-                packageNameBeta,
-                ShareableAuthInfo(
-                    "sessionToken".toByteArray().toHexString(),
-                    "ksync".toByteArray().toHexString(),
-                    "kxscs"
-                )
+            "user@mozilla.org",
+            packageNameBeta,
+            MigratingAccountInfo(
+                "sessionToken".toByteArray().toHexString(),
+                "ksync".toByteArray().toHexString(),
+                "kxscs",
+            ),
         )
         assertEquals(expectedAccountBeta, result[1])
     }
@@ -190,7 +191,7 @@ class AccountSharingTest {
         email: String? = null,
         sessionToken: String? = null,
         ksync: String? = null,
-        kxscs: String? = null
+        kxscs: String? = null,
     ): Cursor {
         val cursor: Cursor = mock()
         `when`(cursor.getColumnIndex(KEY_EMAIL)).thenReturn(0)

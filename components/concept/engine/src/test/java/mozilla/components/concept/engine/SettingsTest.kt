@@ -4,6 +4,7 @@
 
 package mozilla.components.concept.engine
 
+import android.graphics.Color
 import mozilla.components.concept.engine.EngineSession.TrackingProtectionPolicy
 import mozilla.components.concept.engine.history.HistoryTrackingDelegate
 import mozilla.components.concept.engine.mediaquery.PreferredColorScheme
@@ -71,14 +72,20 @@ class SettingsTest {
             { settings.preferredColorScheme = PreferredColorScheme.System },
             { settings.testingModeEnabled },
             { settings.testingModeEnabled = false },
-            { settings.allowAutoplayMedia },
-            { settings.allowAutoplayMedia = false },
             { settings.suspendMediaWhenInactive },
             { settings.suspendMediaWhenInactive = false },
             { settings.fontInflationEnabled },
             { settings.fontInflationEnabled = false },
             { settings.fontSizeFactor },
-            { settings.fontSizeFactor = 1.0F }
+            { settings.fontSizeFactor = 1.0F },
+            { settings.forceUserScalableContent },
+            { settings.forceUserScalableContent = true },
+            { settings.loginAutofillEnabled },
+            { settings.loginAutofillEnabled = false },
+            { settings.clearColor },
+            { settings.clearColor = Color.BLUE },
+            { settings.enterpriseRootsEnabled },
+            { settings.enterpriseRootsEnabled = false },
         )
     }
 
@@ -114,10 +121,15 @@ class SettingsTest {
         assertFalse(settings.supportMultipleWindows)
         assertEquals(PreferredColorScheme.System, settings.preferredColorScheme)
         assertFalse(settings.testingModeEnabled)
-        assertTrue(settings.allowAutoplayMedia)
         assertFalse(settings.suspendMediaWhenInactive)
         assertNull(settings.fontInflationEnabled)
         assertNull(settings.fontSizeFactor)
+        assertFalse(settings.forceUserScalableContent)
+        assertFalse(settings.loginAutofillEnabled)
+        assertNull(settings.clearColor)
+        assertFalse(settings.enterpriseRootsEnabled)
+        assertEquals(EngineSession.CookieBannerHandlingMode.DISABLED, settings.cookieBannerHandlingMode)
+        assertEquals(EngineSession.CookieBannerHandlingMode.REJECT_ALL, settings.cookieBannerHandlingModePrivateBrowsing)
 
         val interceptor: RequestInterceptor = mock()
         val historyTrackingDelegate: HistoryTrackingDelegate = mock()
@@ -147,10 +159,16 @@ class SettingsTest {
             supportMultipleWindows = true,
             preferredColorScheme = PreferredColorScheme.Dark,
             testingModeEnabled = true,
-            allowAutoplayMedia = false,
             suspendMediaWhenInactive = true,
             fontInflationEnabled = false,
-            fontSizeFactor = 2.0F)
+            fontSizeFactor = 2.0F,
+            forceUserScalableContent = true,
+            loginAutofillEnabled = true,
+            clearColor = Color.BLUE,
+            enterpriseRootsEnabled = true,
+            cookieBannerHandlingMode = EngineSession.CookieBannerHandlingMode.DISABLED,
+            cookieBannerHandlingModePrivateBrowsing = EngineSession.CookieBannerHandlingMode.REJECT_ALL,
+        )
 
         assertFalse(defaultSettings.domStorageEnabled)
         assertFalse(defaultSettings.javascriptEnabled)
@@ -176,9 +194,14 @@ class SettingsTest {
         assertTrue(defaultSettings.supportMultipleWindows)
         assertEquals(PreferredColorScheme.Dark, defaultSettings.preferredColorScheme)
         assertTrue(defaultSettings.testingModeEnabled)
-        assertFalse(defaultSettings.allowAutoplayMedia)
         assertTrue(defaultSettings.suspendMediaWhenInactive)
         assertFalse(defaultSettings.fontInflationEnabled!!)
         assertEquals(2.0F, defaultSettings.fontSizeFactor)
+        assertTrue(defaultSettings.forceUserScalableContent)
+        assertTrue(defaultSettings.loginAutofillEnabled)
+        assertEquals(Color.BLUE, defaultSettings.clearColor)
+        assertTrue(defaultSettings.enterpriseRootsEnabled)
+        assertEquals(EngineSession.CookieBannerHandlingMode.DISABLED, defaultSettings.cookieBannerHandlingMode)
+        assertEquals(EngineSession.CookieBannerHandlingMode.REJECT_ALL, defaultSettings.cookieBannerHandlingModePrivateBrowsing)
     }
 }

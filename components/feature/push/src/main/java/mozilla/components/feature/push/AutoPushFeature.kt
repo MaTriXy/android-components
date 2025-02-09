@@ -6,136 +6,150 @@ package mozilla.components.feature.push
 
 import android.content.Context
 import android.content.SharedPreferences
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.annotation.VisibleForTesting
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
-import mozilla.appservices.push.SubscriptionResponse
-import mozilla.components.concept.push.Bus
+import mozilla.appservices.push.PushException.CommunicationException
+import mozilla.appservices.push.PushException.CommunicationServerException
+import mozilla.appservices.push.PushException.CryptoException
+import mozilla.appservices.push.PushException.GeneralException
+import mozilla.appservices.push.PushException.JsonDeserializeException
+import mozilla.appservices.push.PushException.RequestException
+import mozilla.components.concept.base.crash.CrashReporting
 import mozilla.components.concept.push.EncryptedPushMessage
 import mozilla.components.concept.push.PushError
 import mozilla.components.concept.push.PushProcessor
 import mozilla.components.concept.push.PushService
+import mozilla.components.feature.push.ext.ifInitialized
+import mozilla.components.feature.push.ext.launchAndTry
 import mozilla.components.support.base.log.logger.Logger
 import mozilla.components.support.base.observer.Observable
 import mozilla.components.support.base.observer.ObserverRegistry
-import java.io.File
-import java.util.UUID
+import mozilla.components.support.base.utils.NamedThreadFactory
 import java.util.concurrent.Executors
 import kotlin.coroutines.CoroutineContext
-import mozilla.appservices.push.PushError as RustPushError
 
 /**
  * A implementation of a [PushProcessor] that should live as a singleton by being installed
  * in the Application's onCreate. It receives messages from a service and forwards them
  * to be decrypted and routed.
  *
- * <code>
- *     class Application {
- *          override fun onCreate() {
- *              val feature = AutoPushFeature(context, service, configuration)
- *              PushProvider.install(push)
- *          }
- *     }
- * </code>
+ * ```kotlin
+ * class Application {
+ *      override fun onCreate() {
+ *          val feature = AutoPushFeature(context, service, configuration)
+ *          PushProvider.install(push)
+ *      }
+ * }
+ * ```
  *
- * Listen for subscription information changes for each registered [PushType]:
+ * Observe for subscription information changes for each registered scope:
  *
- * <code>
- *    feature.registerForSubscriptions(object: Bus.Observer<PushType, String> {
- *        override fun onSubscriptionAvailable(subscription: AutoPushSubscription) { }
- *    })
- *    feature.subscribeForType(PushType.Services)
- * </code>
+ * ```kotlin
+ * feature.register(object: AutoPushFeature.Observer {
+ *     override fun onSubscriptionChanged(scope: PushScope) { }
+ * })
  *
- * Listen also for push messages for each registered [PushType]:
+ * feature.subscribe("push_subscription_scope_id")
+ * ```
  *
- * <code>
- *     feature.registerForPushMessages(object: Bus.Observer<PushType, String> {
- *        override fun onEvent(message: String) { }
- *     })
- * </code>
+ * You should also observe for push messages:
  *
+ * ```kotlin
+ * feature.register(object: AutoPushFeature.Observer {
+ *     override fun onMessageReceived(scope: PushScope, message: ByteArray?) { }
+ * })
+ * ```
+ *
+ * @param context the application [Context].
+ * @param service A [PushService] bridge that receives the encrypted push messages - eg, Firebase.
+ * @param config An instance of [PushConfig] to configure the feature.
+ * @param coroutineContext An instance of [CoroutineContext] used for executing async push tasks.
+ * @param connection An implementation of [PushConnection] to communicate with autopush - eg, app-services component.
+ * @param crashReporter An optional instance of a [CrashReporting].
  */
-@Suppress("TooManyFunctions")
+@Suppress("LargeClass", "LongParameterList")
 class AutoPushFeature(
     private val context: Context,
     private val service: PushService,
-    config: PushConfig,
-    coroutineContext: CoroutineContext = Executors.newSingleThreadExecutor().asCoroutineDispatcher(),
+    val config: PushConfig,
+    coroutineContext: CoroutineContext = Executors.newSingleThreadExecutor(
+        NamedThreadFactory("AutoPushFeature"),
+    ).asCoroutineDispatcher(),
     private val connection: PushConnection = RustPushConnection(
+        context = context,
         senderId = config.senderId,
         serverHost = config.serverHost,
         socketProtocol = config.protocol,
         serviceType = config.serviceType,
-        databasePath = File(context.filesDir, DB_NAME).canonicalPath
-    )
-) : PushProcessor {
+    ),
+    private val crashReporter: CrashReporting? = null,
+) : PushProcessor, Observable<AutoPushFeature.Observer> by ObserverRegistry() {
 
     private val logger = Logger("AutoPushFeature")
-    private val subscriptionObservers: Observable<PushSubscriptionObserver> = ObserverRegistry()
-    private val messageObserverBus: Bus<PushType, String> = MessageBus()
+
     // The preference that stores new registration tokens.
     private val prefToken: String?
         get() = preferences(context).getString(PREF_TOKEN, null)
+    private var prefLastVerified: Long
+        get() = preferences(context).getLong(LAST_VERIFIED, 0)
+        set(value) = preferences(context).edit().putLong(LAST_VERIFIED, value).apply()
 
-    internal var job: Job = SupervisorJob()
-    private val scope = CoroutineScope(coroutineContext) + job
+    private val coroutineScope = CoroutineScope(coroutineContext) + SupervisorJob() + exceptionHandler { onError(it) }
 
-    init {
-        // If we have a token, initialize the rust component first.
-        prefToken?.let { token ->
-            scope.launch {
-                logger.debug("Initializing native component with the cached token.")
-
+    /**
+     * Starts the push feature and initialization work needed. Also starts the [PushService] to ensure new messages
+     * come through.
+     */
+    override fun initialize() {
+        // If we have a token, initialize the rust component on a different thread.
+        coroutineScope.launch {
+            prefToken?.let { token ->
+                logger.debug("Initializing rust component with the cached token.")
                 connection.updateToken(token)
+                tryVerifySubscriptions()
             }
         }
+        // Starts the (FCM) push feature so that we receive messages if the service is not already started (safe call).
+        service.start(context)
     }
 
     /**
-     * Starts the push service provided.
-     */
-    override fun initialize() { service.start(context) }
-
-    /**
-     * Un-subscribes from all push message channels and stops the push service.
+     * Un-subscribes from all push message channels and stops periodic verifications.
+     *
+     * We do not stop the push service in case there are other consumers are using it as well. The app should
+     * explicitly stop the service if desired.
+     *
      * This should only be done on an account logout or app data deletion.
      */
     override fun shutdown() {
-        service.stop()
-
-        DeliveryManager.with(connection) {
-            scope.launch {
-                // TODO replace with unsubscribeAll API when available
-                PushType.values().forEach { type ->
-                    unsubscribe(type.toChannelId())
-                }
-                job.cancel()
+        connection.ifInitialized {
+            coroutineScope.launch {
+                unsubscribeAll()
             }
         }
+
+        // Reset the push subscription check.
+        prefLastVerified = 0L
     }
 
     /**
-     * New registration tokens are received and sent to the Autopush server which also performs subscriptions for
+     * New registration tokens are received and sent to the AutoPush server which also performs subscriptions for
      * each push type and notifies the subscribers.
      */
     override fun onNewToken(newToken: String) {
-        scope.launchAndTry {
+        coroutineScope.launchAndTry {
             logger.info("Received a new registration token from push service.")
 
-            connection.updateToken(newToken)
-
-            // Subscribe all only if this is the first time.
-            if (prefToken.isNullOrEmpty()) {
-                subscribeAll()
-            }
-
             saveToken(context, newToken)
+
+            // Tell the autopush service about it and update subscriptions.
+            connection.updateToken(newToken)
+            tryVerifySubscriptions()
         }
     }
 
@@ -143,110 +157,121 @@ class AutoPushFeature(
      * New encrypted messages received from a supported push messaging service.
      */
     override fun onMessageReceived(message: EncryptedPushMessage) {
-        scope.launchAndTry {
-            val type = DeliveryManager.serviceForChannelId(message.channelId)
-            DeliveryManager.with(connection) {
+        connection.ifInitialized {
+            coroutineScope.launchAndTry {
                 logger.info("New push message decrypted.")
-                val decrypted = decrypt(
+
+                val (scope, decryptedMessage) = decryptMessage(
                     channelId = message.channelId,
                     body = message.body,
                     encoding = message.encoding,
                     salt = message.salt,
-                    cryptoKey = message.cryptoKey
-                )
-                messageObserverBus.notifyObservers(type, String(decrypted))
+                    cryptoKey = message.cryptoKey,
+                ) ?: return@launchAndTry
+
+                notifyObservers { onMessageReceived(scope, decryptedMessage) }
             }
         }
     }
 
     override fun onError(error: PushError) {
-        // Only log errors for now.
-        logger.error("${error.javaClass.simpleName} error: ${error.desc}")
+        logger.error("${error.javaClass.simpleName} error: ${error.message}")
+
+        crashReporter?.submitCaughtException(error)
     }
 
     /**
-     * Register to receive push subscriptions when requested or when they have been re-registered.
+     * Subscribes for push notifications and invokes the [onSubscribe] callback with the subscription information.
      *
-     * @param observer the observer that will be notified.
-     * @param owner the lifecycle owner for the observer. Defaults to [ProcessLifecycleOwner].
-     * @param autoPause whether to stop notifying the observer during onPause lifecycle events.
-     * Defaults to false so that subscriptions are always delivered to observers.
+     * @param scope The subscription identifier which usually represents the website's URI.
+     * @param appServerKey An optional key provided by the application server.
+     * @param onSubscribeError The callback invoked with an [Exception] if the call does not successfully complete.
+     * @param onSubscribe The callback invoked when a subscription for the [scope] is created.
      */
-    fun registerForSubscriptions(
-        observer: PushSubscriptionObserver,
-        owner: LifecycleOwner = ProcessLifecycleOwner.get(),
-        autoPause: Boolean = false
-    ) = subscriptionObservers.register(observer, owner, autoPause)
-
-    /**
-     * Register to receive push messages for the associated [PushType].
-     *
-     * @param type the push message type that you want to be registered.
-     * @param observer the observer that will be notified.
-     * @param owner the lifecycle owner for the observer. Defaults to [ProcessLifecycleOwner].
-     * @param autoPause whether to stop notifying the observer during onPause lifecycle events.
-     * Defaults to false so that messages are always delivered to observers.
-     */
-    fun registerForPushMessages(
-        type: PushType,
-        observer: Bus.Observer<PushType, String>,
-        owner: LifecycleOwner = ProcessLifecycleOwner.get(),
-        autoPause: Boolean = false
-    ) = messageObserverBus.register(type, observer, owner, autoPause)
-
-    /**
-     * Notifies observers about the subscription information for the push type if available.
-     */
-    fun subscribeForType(type: PushType) {
-        DeliveryManager.with(connection) {
-            scope.launchAndTry {
-                val sub = subscribe(type.toChannelId()).toPushSubscription()
-                subscriptionObservers.notifyObservers { onSubscriptionAvailable(sub) }
-            }
+    fun subscribe(
+        scope: String,
+        appServerKey: String? = null,
+        onSubscribeError: (Exception) -> Unit = {},
+        onSubscribe: ((AutoPushSubscription) -> Unit) = {},
+    ) {
+        connection.ifInitialized {
+            coroutineScope.launchAndTry(
+                errorBlock = { exception ->
+                    onSubscribeError(exception)
+                },
+                block = {
+                    val sub = subscribe(scope, appServerKey)
+                    onSubscribe(sub)
+                },
+            )
         }
     }
 
     /**
-     * Returns subscription information for the push type if available.
+     * Un-subscribes from a valid subscription and invokes the [onUnsubscribe] callback with the result.
      *
-     * Implementation notes: We need to connect this to the device constellation so that we update our subscriptions
-     * when notified by FxA. See [#3859][0].
-     *
-     * [0]: https://github.com/mozilla-mobile/android-components/issues/3859
+     * @param scope The subscription identifier which usually represents the website's URI.
+     * @param onUnsubscribeError The callback invoked with an [Exception] if the call does not successfully complete.
+     * @param onUnsubscribe The callback invoked when a subscription for the [scope] is removed.
      */
-    fun unsubscribeForType(type: PushType) {
-        DeliveryManager.with(connection) {
-            scope.launchAndTry {
-                unsubscribe(type.toChannelId())
-            }
+    fun unsubscribe(
+        scope: String,
+        onUnsubscribeError: (Exception) -> Unit = {},
+        onUnsubscribe: (Boolean) -> Unit = {},
+    ) {
+        connection.ifInitialized {
+            coroutineScope.launchAndTry(
+                errorBlock = { exception ->
+                    onUnsubscribeError(exception)
+                },
+                block = {
+                    val result = unsubscribe(scope)
+
+                    if (result) {
+                        onUnsubscribe(result)
+                    } else {
+                        onUnsubscribeError(IllegalStateException("Un-subscribing with the native client failed."))
+                    }
+                },
+            )
         }
     }
 
     /**
-     * Returns all subscription for the push type if available.
+     * Checks if a subscription for the [scope] already exists.
+     *
+     * @param scope The subscription identifier which usually represents the website's URI.
+     * @param appServerKey An optional key provided by the application server.
+     * @param block The callback invoked when a subscription for the [scope] is found, otherwise null. Note: this will
+     * not execute on the calls thread.
      */
-    fun subscribeAll() {
-        DeliveryManager.with(connection) {
-            scope.launchAndTry {
-                PushType.values().forEach { type ->
-                    val sub = subscribe(type.toChannelId()).toPushSubscription()
-                    subscriptionObservers.notifyObservers { onSubscriptionAvailable(sub) }
+    fun getSubscription(
+        scope: String,
+        appServerKey: String? = null,
+        block: (AutoPushSubscription?) -> Unit,
+    ) {
+        connection.ifInitialized {
+            coroutineScope.launchAndTry {
+                if (containsSubscription(scope)) {
+                    // If we have a subscription, calling subscribe will give us the existing subscription.
+                    // We do this because we do not have API symmetry across the different layers in this stack.
+                    subscribe(scope, appServerKey, {}, block)
+                } else {
+                    block(null)
                 }
             }
         }
     }
 
     /**
-     * Deletes the registration token locally so that it forces the service to get a new one the
+     * Deletes the FCM registration token locally so that it forces the service to get a new one the
      * next time hits it's messaging server.
-     *
-     * Implementation notes: This shouldn't need to be used unless we're certain. When we introduce
-     * [a polling service][0] to check if endpoints are expired, we would invoke this.
-     *
-     * [0]: https://github.com/mozilla-mobile/android-components/issues/3173
+     * XXX - this is suspect - the only caller of this is FxA, and it calls it when the device
+     * record indicates the end-point is expired. If that's truly necessary, then it will mean
+     * push never recovers for non-FxA users. If that's not truly necessary, we should remove it!
      */
-    fun forceRegistrationRenewal() {
-        logger.warn("Forcing registration renewal by deleting our (cached) token.")
+    override fun renewRegistration() {
+        logger.warn("Forcing FCM registration renewal by deleting our (cached) token.")
 
         // Remove the cached token we have.
         deleteToken(context)
@@ -254,15 +279,41 @@ class AutoPushFeature(
         // Tell the service to delete the token as well, which will trigger a new token to be
         // retrieved the next time it hits the server.
         service.deleteToken()
+
+        // Starts the service if needed to trigger a new registration.
+        service.start(context)
     }
 
-    private fun CoroutineScope.launchAndTry(block: suspend CoroutineScope.() -> Unit) {
-        job = launch {
-            try {
-                block()
-            } catch (e: RustPushError) {
-                onError(PushError.Rust(e.toString()))
+    /**
+     * Verifies status (active, expired) of the push subscriptions and then notifies observers.
+     */
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal suspend fun verifyActiveSubscriptions() {
+        connection.ifInitialized {
+            val subscriptionChanges = verifyConnection()
+
+            if (subscriptionChanges.isNotEmpty()) {
+                logger.info("Subscriptions have changed; notifying observers..")
+
+                subscriptionChanges.forEach { sub ->
+                    notifyObservers { onSubscriptionChanged(sub.scope) }
+                }
+            } else {
+                logger.info("No change to subscriptions. Doing nothing.")
             }
+        }
+    }
+
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal fun tryVerifySubscriptions() = coroutineScope.launch {
+        logger.info("Trying to check validity of push subscriptions.")
+
+        if (config.disableRateLimit || shouldVerifyNow()) {
+            logger.info("Checking now..")
+
+            verifyActiveSubscriptions()
+
+            prefLastVerified = System.currentTimeMillis()
         }
     }
 
@@ -277,62 +328,64 @@ class AutoPushFeature(
     private fun preferences(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFERENCE_NAME, Context.MODE_PRIVATE)
 
+    /**
+     * We should verify if it's been [PERIODIC_INTERVAL_MILLISECONDS] since our last attempt (successful or not).
+     */
+    private fun shouldVerifyNow(): Boolean {
+        return (System.currentTimeMillis() - prefLastVerified) >= PERIODIC_INTERVAL_MILLISECONDS
+    }
+
+    /**
+     * Observers that want to receive updates for new subscriptions and messages.
+     */
+    interface Observer {
+
+        /**
+         * A subscription for the scope is available.
+         */
+        fun onSubscriptionChanged(scope: PushScope) = Unit
+
+        /**
+         * A messaged has been received for the [scope].
+         */
+        fun onMessageReceived(scope: PushScope, message: ByteArray?) = Unit
+    }
+
     companion object {
         internal const val PREFERENCE_NAME = "mozac_feature_push"
         internal const val PREF_TOKEN = "token"
-        internal const val DB_NAME = "push.sqlite"
+
+        internal const val LAST_VERIFIED = "last_verified_push_connection"
+        internal const val PERIODIC_INTERVAL_MILLISECONDS = 24 * 60 * 60 * 1000L // 24 hours
+    }
+}
+
+internal inline fun exceptionHandler(crossinline onError: (PushError) -> Unit) = CoroutineExceptionHandler { _, e ->
+    val isFatal = when (e) {
+        is PushError.MalformedMessage,
+        is GeneralException,
+        is CryptoException,
+        is CommunicationException,
+        is JsonDeserializeException,
+        is RequestException,
+        is CommunicationServerException,
+        -> false
+        else -> true
+    }
+
+    if (isFatal) {
+        onError(PushError.Rust(e, e.message.orEmpty()))
+    } else {
+        Logger.warn("Non-fatal error occurred in AutoPushFeature.", e)
     }
 }
 
 /**
- * The different kind of message types that a [EncryptedPushMessage] can be:
- *  - Application Services (e.g. FxA/Send Tab)
- *  - WebPush messages (see: https://www.w3.org/TR/push-api/)
- */
-enum class PushType {
-    Services,
-    WebPush;
-
-    /**
-     * Retrieve a channel ID from the PushType.
-     *
-     * This is a reproducible UUID that is used for mapping a push message type with the push manager.
-     */
-    fun toChannelId() = UUID.nameUUIDFromBytes(name.toByteArray()).toString().replace("-", "")
-}
-
-/**
- * Observers that want to receive updates for new subscriptions.
- */
-interface PushSubscriptionObserver {
-    fun onSubscriptionAvailable(subscription: AutoPushSubscription)
-}
-
-/**
- * This is manager mapping of service type to channel ID, it will eventually be replaced by the
- * Application Service implementation.
- */
-internal object DeliveryManager {
-    fun serviceForChannelId(channelId: String): PushType {
-        return PushType.values().first { it.toChannelId() == channelId }
-    }
-
-    /**
-     * Executes the block if the Push Manager is initialized.
-     */
-    fun with(connection: PushConnection, block: PushConnection.() -> Unit) {
-        if (connection.isInitialized()) {
-            block(connection)
-        }
-    }
-}
-
-/**
- * Supported push services. These are currently limited to Firebase Cloud Messaging and Amazon Device Messaging.
+ * Supported push services. This are currently limited to Firebase Cloud Messaging and
+ * (previously) Amazon Device Messaging.
  */
 enum class ServiceType {
     FCM,
-    ADM
 }
 
 /**
@@ -340,17 +393,26 @@ enum class ServiceType {
  */
 enum class Protocol {
     HTTP,
-    HTTPS
+    HTTPS,
 }
 
 /**
  * The subscription information from AutoPush that can be used to send push messages to other devices.
  */
 data class AutoPushSubscription(
-    val type: PushType,
+    val scope: PushScope,
     val endpoint: String,
     val publicKey: String,
-    val authKey: String
+    val authKey: String,
+    val appServerKey: String?,
+)
+
+/**
+ * The subscription from AutoPush that has changed on the remote push servers.
+ */
+data class AutoPushSubscriptionChanged(
+    val scope: PushScope,
+    val channelId: String,
 )
 
 /**
@@ -360,23 +422,12 @@ data class AutoPushSubscription(
  * @param serverHost The sync server address.
  * @param protocol The socket protocol to use when communicating with the server.
  * @param serviceType The push services that the AutoPush server supports.
+ * @param disableRateLimit A flag to disable our rate-limit logic. This is useful when debugging.
  */
 data class PushConfig(
     val senderId: String,
     val serverHost: String = "updates.push.services.mozilla.com",
     val protocol: Protocol = Protocol.HTTPS,
-    val serviceType: ServiceType = ServiceType.FCM
+    val serviceType: ServiceType = ServiceType.FCM,
+    val disableRateLimit: Boolean = false,
 )
-
-/**
- * A helper to convert the internal data class.
- */
-internal fun SubscriptionResponse.toPushSubscription(): AutoPushSubscription {
-    val type = DeliveryManager.serviceForChannelId(channelID)
-    return AutoPushSubscription(
-        type = type,
-        endpoint = subscriptionInfo.endpoint,
-        authKey = subscriptionInfo.keys.auth,
-        publicKey = subscriptionInfo.keys.p256dh
-    )
-}

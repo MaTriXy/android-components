@@ -9,8 +9,8 @@ import com.google.android.gms.common.GoogleApiAvailability
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.Dispatchers
 import mozilla.components.concept.push.EncryptedPushMessage
-import mozilla.components.concept.push.PushError
 import mozilla.components.concept.push.PushProcessor
+import mozilla.components.support.test.any
 import mozilla.components.support.test.argumentCaptor
 import mozilla.components.support.test.mock
 import mozilla.components.support.test.robolectric.testContext
@@ -20,10 +20,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.Mockito.`when`
+import org.mockito.Mockito.never
 import org.mockito.Mockito.reset
 import org.mockito.Mockito.verify
-import org.mockito.Mockito.verifyZeroInteractions
+import org.mockito.Mockito.verifyNoInteractions
+import org.mockito.Mockito.`when`
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.gms.Shadows
@@ -57,7 +58,7 @@ class AbstractFirebasePushServiceTest {
             "body" to "contents",
             "con" to "encoding",
             "enc" to "salt",
-            "cryptokey" to "dh256"
+            "cryptokey" to "dh256",
         )
         val captor = argumentCaptor<EncryptedPushMessage>()
         `when`(remoteMessage.data).thenReturn(data)
@@ -73,26 +74,37 @@ class AbstractFirebasePushServiceTest {
     }
 
     @Test
-    fun `malformed message exception handled with the processor`() {
+    fun `malformed message exception should not be thrown`() {
         val remoteMessage: RemoteMessage = mock()
         val data = mapOf(
-            "body" to "contents"
+            "chid" to "1234",
         )
-        val captor = argumentCaptor<PushError>()
+        val captor = argumentCaptor<EncryptedPushMessage>()
         `when`(remoteMessage.data).thenReturn(data)
         service.onMessageReceived(remoteMessage)
 
-        verify(processor).onError(captor.capture())
+        verify(processor, never()).onError(any())
+        verify(processor).onMessageReceived(captor.capture())
 
-        assertTrue(captor.value is PushError.MalformedMessage)
-        assertTrue(captor.value.desc.contains("NoSuchElementException"))
+        assertEquals("1234", captor.value.channelId)
+        assertEquals("aes128gcm", captor.value.encoding)
+        assertEquals("", captor.value.salt)
+        assertEquals("", captor.value.cryptoKey)
     }
 
     @Test
-    fun `processor is not called when no remote message provided`() {
-        service.onMessageReceived(null)
+    fun `do nothing if the message is not for us`() {
+        val remoteMessage: RemoteMessage = mock()
+        val data = mapOf(
+            "con" to "encoding",
+            "enc" to "salt",
+            "cryptokey" to "dh256",
+        )
+        `when`(remoteMessage.data).thenReturn(data)
 
-        verifyZeroInteractions(processor)
+        service.onMessageReceived(remoteMessage)
+
+        verifyNoInteractions(processor)
     }
 
     @Test

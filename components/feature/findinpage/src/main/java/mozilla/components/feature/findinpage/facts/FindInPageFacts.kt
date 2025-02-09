@@ -28,14 +28,14 @@ private fun emitFindInPageFact(
     action: Action,
     item: String,
     value: String? = null,
-    metadata: Map<String, Any>? = null
+    metadata: Map<String, Any>? = null,
 ) {
     Fact(
         Component.FEATURE_FINDINPAGE,
         action,
         item,
         value,
-        metadata
+        metadata,
     ).collect()
 }
 
@@ -43,4 +43,4 @@ internal fun emitCloseFact() = emitFindInPageFact(Action.CLICK, FindInPageFacts.
 internal fun emitNextFact() = emitFindInPageFact(Action.CLICK, FindInPageFacts.Items.NEXT)
 internal fun emitPreviousFact() = emitFindInPageFact(Action.CLICK, FindInPageFacts.Items.PREVIOUS)
 internal fun emitCommitFact(value: String) =
-        emitFindInPageFact(Action.COMMIT, FindInPageFacts.Items.INPUT, value)
+    emitFindInPageFact(Action.COMMIT, FindInPageFacts.Items.INPUT, value)

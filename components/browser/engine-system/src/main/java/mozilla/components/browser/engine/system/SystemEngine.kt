@@ -6,9 +6,11 @@ package mozilla.components.browser.engine.system
 
 import android.content.Context
 import android.util.AttributeSet
+import android.util.JsonReader
 import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.annotation.VisibleForTesting
+import mozilla.components.concept.base.profiler.Profiler
 import mozilla.components.concept.engine.DefaultSettings
 import mozilla.components.concept.engine.Engine
 import mozilla.components.concept.engine.EngineSession
@@ -26,11 +28,12 @@ import java.lang.IllegalStateException
  */
 class SystemEngine(
     private val context: Context,
-    private val defaultSettings: Settings = DefaultSettings()
+    private val defaultSettings: Settings = DefaultSettings(),
 ) : Engine {
     init {
         initDefaultUserAgent(context)
     }
+
     /**
      * Creates a new WebView-based EngineView implementation.
      */
@@ -41,11 +44,16 @@ class SystemEngine(
     /**
      * Creates a new WebView-based EngineSession implementation.
      */
-    override fun createSession(private: Boolean): EngineSession {
+    override fun createSession(private: Boolean, contextId: String?): EngineSession {
         if (private) {
             // TODO Implement private browsing: https://github.com/mozilla-mobile/android-components/issues/649
             throw UnsupportedOperationException("Private browsing is not supported in ${this::class.java.simpleName}")
+        } else if (contextId != null) {
+            throw UnsupportedOperationException(
+                "Contextual identities are not supported in ${this::class.java.simpleName}",
+            )
         }
+
         return SystemEngineSession(context, defaultSettings)
     }
 
@@ -55,6 +63,11 @@ class SystemEngine(
      * Note: This implementation is a no-op.
      */
     override fun speculativeConnect(url: String) = Unit
+
+    /**
+     * See [Engine.profiler].
+     */
+    override val profiler: Profiler? = null
 
     /**
      * See [Engine.name]
@@ -80,6 +93,10 @@ class SystemEngine(
 
     override fun createSessionState(json: JSONObject): EngineSessionState {
         return SystemEngineSessionState.fromJSON(json)
+    }
+
+    override fun createSessionStateFrom(reader: JsonReader): EngineSessionState {
+        return SystemEngineSessionState.from(reader)
     }
 
     /**

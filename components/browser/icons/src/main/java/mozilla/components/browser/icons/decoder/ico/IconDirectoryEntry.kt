@@ -7,8 +7,8 @@ package mozilla.components.browser.icons.decoder.ico
 import android.graphics.Bitmap
 import mozilla.components.browser.icons.decoder.HEADER_LENGTH_BYTES
 import mozilla.components.browser.icons.decoder.ICON_DIRECTORY_ENTRY_LENGTH_BYTES
-import mozilla.components.browser.icons.decoder.IconDecoder
 import mozilla.components.browser.icons.decoder.ZERO_BYTE
+import mozilla.components.support.images.decoder.ImageDecoder
 import mozilla.components.support.ktx.kotlin.containsAtOffset
 import mozilla.components.support.ktx.kotlin.toBitmap
 
@@ -22,7 +22,7 @@ internal data class IconDirectoryEntry(
     val payloadSize: Int,
     val payloadOffset: Int,
     val payloadIsPNG: Boolean,
-    val directoryIndex: Int
+    val directoryIndex: Int,
 ) : Comparable<IconDirectoryEntry> {
 
     override fun compareTo(other: IconDirectoryEntry): Int = when {
@@ -241,7 +241,7 @@ internal fun decodeDirectoryEntries(data: ByteArray, maxSize: Int): List<IconDir
 internal fun createIconDirectoryEntry(
     data: ByteArray,
     entryOffset: Int,
-    directoryIndex: Int
+    directoryIndex: Int,
 ): IconDirectoryEntry? {
     // Verify that the reserved field is really zero.
     if (data[entryOffset + 3] != ZERO_BYTE) {
@@ -251,17 +251,23 @@ internal fun createIconDirectoryEntry(
     // Verify that the entry points to a region that actually exists in the buffer, else bin it.
     var fieldPtr = entryOffset + 8
     val entryLength = data[fieldPtr].toInt() and 0xFF or (
-        (data[fieldPtr + 1].toInt() and 0xFF) shl 8) or (
-        (data[fieldPtr + 2].toInt() and 0xFF) shl 16) or (
-        (data[fieldPtr + 3].toInt() and 0xFF) shl 24)
+        (data[fieldPtr + 1].toInt() and 0xFF) shl 8
+        ) or (
+        (data[fieldPtr + 2].toInt() and 0xFF) shl 16
+        ) or (
+        (data[fieldPtr + 3].toInt() and 0xFF) shl 24
+        )
 
     // Advance to the offset field.
     fieldPtr += 4
 
     val payloadOffset = data[fieldPtr].toInt() and 0xFF or (
-        (data[fieldPtr + 1].toInt() and 0xFF) shl 8) or (
-        (data[fieldPtr + 2].toInt() and 0xFF) shl 16) or (
-        (data[fieldPtr + 3].toInt() and 0xFF) shl 24)
+        (data[fieldPtr + 1].toInt() and 0xFF) shl 8
+        ) or (
+        (data[fieldPtr + 2].toInt() and 0xFF) shl 16
+        ) or (
+        (data[fieldPtr + 3].toInt() and 0xFF) shl 24
+        )
 
     // Fail if the entry describes a region outside the buffer.
     if (payloadOffset < 0 || entryLength < 0 || payloadOffset + entryLength > data.size) {
@@ -294,7 +300,7 @@ internal fun createIconDirectoryEntry(
     }
 
     // Look for PNG magic numbers at the start of the payload.
-    val payloadIsPNG = data.containsAtOffset(payloadOffset, IconDecoder.Companion.ImageMagicNumbers.PNG.value)
+    val payloadIsPNG = data.containsAtOffset(payloadOffset, ImageDecoder.Companion.ImageMagicNumbers.PNG.value)
 
     return IconDirectoryEntry(
         imageWidth,
@@ -304,6 +310,6 @@ internal fun createIconDirectoryEntry(
         entryLength,
         payloadOffset,
         payloadIsPNG,
-        directoryIndex
+        directoryIndex,
     )
 }

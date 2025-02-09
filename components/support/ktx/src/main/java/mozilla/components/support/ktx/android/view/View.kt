@@ -4,18 +4,18 @@
 
 package mozilla.components.support.ktx.android.view
 
-import android.content.Context
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.inputmethod.InputMethodManager
 import androidx.annotation.MainThread
 import androidx.core.content.getSystemService
 import androidx.core.view.ViewCompat
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import mozilla.components.support.base.android.Padding
 import mozilla.components.support.ktx.android.util.dpToPx
@@ -47,10 +47,8 @@ fun View.showKeyboard(flags: Int = InputMethodManager.SHOW_IMPLICIT) {
  * Hides the soft input window.
  */
 fun View.hideKeyboard() {
-    val imm = (context.getSystemService(Context.INPUT_METHOD_SERVICE) ?: return)
-        as InputMethodManager
-
-    imm.hideSoftInputFromWindow(windowToken, 0)
+    val imm = context.getSystemService<InputMethodManager>()
+    imm?.hideSoftInputFromWindow(windowToken, 0)
 }
 
 /**
@@ -60,10 +58,12 @@ fun View.hideKeyboard() {
  */
 fun View.getRectWithViewLocation(): Rect {
     val locationInWindow = IntArray(2).apply { getLocationInWindow(this) }
-    return Rect(locationInWindow[0],
-            locationInWindow[1],
-            locationInWindow[0] + width,
-            locationInWindow[1] + height)
+    return Rect(
+        locationInWindow[0],
+        locationInWindow[1],
+        locationInWindow[0] + width,
+        locationInWindow[1] + height,
+    )
 }
 
 /**
@@ -75,7 +75,7 @@ fun View.setPadding(padding: Padding) {
             padding.left.dpToPx(displayMetrics),
             padding.top.dpToPx(displayMetrics),
             padding.right.dpToPx(displayMetrics),
-            padding.bottom.dpToPx(displayMetrics)
+            padding.bottom.dpToPx(displayMetrics),
         )
     }
 }
@@ -91,18 +91,36 @@ fun View.setPadding(padding: Padding) {
  */
 @MainThread
 fun View.toScope(): CoroutineScope {
-    val scope = CoroutineScope(Dispatchers.Main)
+    val scope = MainScope()
 
-    addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-        override fun onViewAttachedToWindow(view: View) = Unit
+    addOnAttachStateChangeListener(
+        object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) = Unit
 
-        override fun onViewDetachedFromWindow(view: View) {
-            scope.cancel()
-            view.removeOnAttachStateChangeListener(this)
-        }
-    })
+            override fun onViewDetachedFromWindow(view: View) {
+                scope.cancel()
+                view.removeOnAttachStateChangeListener(this)
+            }
+        },
+    )
 
     return scope
+}
+
+/**
+ * Finds the first a view in the hierarchy, for which the provided predicate is true.
+ */
+fun View.findViewInHierarchy(predicate: (View) -> Boolean): View? {
+    if (predicate(this)) return this
+
+    if (this is ViewGroup) {
+        for (i in 0 until this.childCount) {
+            val childView = this.getChildAt(i).findViewInHierarchy(predicate)
+            if (childView != null) return childView
+        }
+    }
+
+    return null
 }
 
 /**
@@ -120,7 +138,7 @@ inline fun View.onNextGlobalLayout(crossinline callback: () -> Unit) {
 
 private class ShowKeyboard(
     view: View,
-    private val flags: Int = InputMethodManager.SHOW_IMPLICIT
+    private val flags: Int = InputMethodManager.SHOW_IMPLICIT,
 ) : Runnable {
     private val weakReference: WeakReference<View> = WeakReference(view)
     private val handler: Handler = Handler(Looper.getMainLooper())

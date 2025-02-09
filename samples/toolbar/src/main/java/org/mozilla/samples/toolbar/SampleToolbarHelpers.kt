@@ -14,6 +14,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.core.content.res.ResourcesCompat
 import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,13 +27,14 @@ enum class ToolbarConfiguration(val label: String) {
     DEFAULT("Default"),
     FOCUS_TABLET("Firefox Focus (Tablet)"),
     FOCUS_PHONE("Firefox Focus (Phone)"),
-    SEEDLING("Seedling"),
     CUSTOM_MENU("Custom Menu"),
-    PRIVATE_MODE("Private Mode")
+    PRIVATE_MODE("Private Mode"),
+    FENIX("Fenix"),
+    FENIX_CUSTOMTAB("Fenix (Custom Tab)"),
 }
 
 class ConfigurationAdapter(
-    private val configuration: ToolbarConfiguration
+    private val configuration: ToolbarConfiguration,
 ) : RecyclerView.Adapter<ConfigurationViewHolder>() {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ConfigurationViewHolder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_toolbar_configuration, parent, false)
@@ -81,7 +83,7 @@ object Extra {
  * A custom view to be drawn behind the URL and page actions. Acts as a custom progress view.
  */
 class UrlBoxProgressView(
-    context: Context
+    context: Context,
 ) : View(context) {
     var progress: Int = 0
         set(value) {
@@ -112,16 +114,18 @@ class UrlBoxProgressView(
         }
 
     private var backgroundDrawable = ClipDrawable(
-        resources.getDrawable(R.drawable.sample_url_background, context.theme),
+        ResourcesCompat.getDrawable(resources, R.drawable.sample_url_background, context.theme),
         Gravity.END,
-        ClipDrawable.HORIZONTAL).apply {
+        ClipDrawable.HORIZONTAL,
+    ).apply {
         level = MAX_LEVEL
     }
 
     private var progressDrawable = ClipDrawable(
-        resources.getDrawable(R.drawable.sample_url_progress, context.theme),
+        ResourcesCompat.getDrawable(resources, R.drawable.sample_url_progress, context.theme),
         Gravity.START,
-        ClipDrawable.HORIZONTAL).apply {
+        ClipDrawable.HORIZONTAL,
+    ).apply {
         level = 0
     }
 

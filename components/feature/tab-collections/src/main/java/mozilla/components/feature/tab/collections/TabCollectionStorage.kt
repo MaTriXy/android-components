@@ -5,12 +5,11 @@
 package mozilla.components.feature.tab.collections
 
 import android.content.Context
-import androidx.lifecycle.LiveData
-import androidx.lifecycle.Transformations
 import androidx.paging.DataSource
-import mozilla.components.browser.session.Session
-import mozilla.components.browser.session.SessionManager
-import mozilla.components.browser.session.ext.writeSnapshotItem
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import mozilla.components.browser.session.storage.serialize.BrowserStateWriter
+import mozilla.components.browser.state.state.TabSessionState
 import mozilla.components.feature.tab.collections.adapter.TabAdapter
 import mozilla.components.feature.tab.collections.adapter.TabCollectionAdapter
 import mozilla.components.feature.tab.collections.db.TabCollectionDatabase
@@ -25,49 +24,48 @@ import java.util.UUID
  */
 class TabCollectionStorage(
     context: Context,
-    private val sessionManager: SessionManager,
-    private val filesDir: File = context.filesDir
+    private val writer: BrowserStateWriter = BrowserStateWriter(),
+    private val filesDir: File = context.filesDir,
 ) {
     internal var database: Lazy<TabCollectionDatabase> = lazy { TabCollectionDatabase.get(context) }
 
     /**
-     * Creates a new [TabCollection] and save the state of the given [Session]s in it.
+     * Creates a new [TabCollection] and save the state of the given [TabSessionState]s in it.
      */
-    fun createCollection(title: String, sessions: List<Session> = emptyList()) {
+    fun createCollection(title: String, sessions: List<TabSessionState> = emptyList()): Long? {
         val entity = TabCollectionEntity(
             title = title,
             updatedAt = System.currentTimeMillis(),
-            createdAt = System.currentTimeMillis()
+            createdAt = System.currentTimeMillis(),
         ).also { entity ->
             entity.id = database.value.tabCollectionDao().insertTabCollection(entity)
         }
 
         addTabsToCollection(entity, sessions)
+        return entity.id
     }
 
     /**
-     * Adds the state of the given [Session]s to the [TabCollection].
+     * Adds the state of the given [TabSessionState]s to the [TabCollection].
      */
-    fun addTabsToCollection(collection: TabCollection, sessions: List<Session>) {
+    fun addTabsToCollection(collection: TabCollection, sessions: List<TabSessionState>): Long? {
         val collectionEntity = (collection as TabCollectionAdapter).entity.collection
-        addTabsToCollection(collectionEntity, sessions)
+        return addTabsToCollection(collectionEntity, sessions)
     }
 
-    private fun addTabsToCollection(collection: TabCollectionEntity, sessions: List<Session>) {
+    private fun addTabsToCollection(collection: TabCollectionEntity, sessions: List<TabSessionState>): Long? {
         sessions.forEach { session ->
             val fileName = UUID.randomUUID().toString()
 
             val entity = TabEntity(
-                title = session.title,
-                url = session.url,
+                title = session.content.title,
+                url = session.content.url,
                 stateFile = fileName,
                 tabCollectionId = collection.id!!,
-                createdAt = System.currentTimeMillis()
+                createdAt = System.currentTimeMillis(),
             )
 
-            val snapshot = sessionManager.createSessionSnapshot(session)
-
-            val success = entity.getStateFile(filesDir).writeSnapshotItem(snapshot)
+            val success = writer.writeTab(session, entity.getStateFile(filesDir))
             if (success) {
                 database.value.tabDao().insertTab(entity)
             }
@@ -75,6 +73,7 @@ class TabCollectionStorage(
 
         collection.updatedAt = System.currentTimeMillis()
         database.value.tabCollectionDao().updateTabCollection(collection)
+        return collection.id
     }
 
     /**
@@ -108,16 +107,20 @@ class TabCollectionStorage(
         .map { entity -> TabCollectionAdapter(entity) }
 
     /**
-     * Returns the last [TabCollection] instances (up to [limit]) as a [LiveData] list.
-     *
-     * @param limit (Optional) Maximum number of [TabCollection] instances that should be returned.
+     * Returns the last [TabCollection] instances as a [Flow] list.
      */
-    fun getCollections(limit: Int = 20): LiveData<List<TabCollection>> {
-        limit.hashCode()
-        return Transformations.map(
-            database.value.tabCollectionDao().getTabCollections(limit)
-        ) { list ->
+    fun getCollections(): Flow<List<TabCollection>> {
+        return database.value.tabCollectionDao().getTabCollections().map { list ->
             list.map { entity -> TabCollectionAdapter(entity) }
+        }
+    }
+
+    /**
+     * Returns all [TabCollection] instances as a list.
+     */
+    suspend fun getCollectionsList(): List<TabCollection> {
+        return database.value.tabCollectionDao().getTabCollectionsList().map { e ->
+            TabCollectionAdapter(e)
         }
     }
 

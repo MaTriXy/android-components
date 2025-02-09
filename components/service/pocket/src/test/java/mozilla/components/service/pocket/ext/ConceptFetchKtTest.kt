@@ -10,11 +10,11 @@ import mozilla.components.concept.fetch.Request
 import mozilla.components.concept.fetch.Response
 import mozilla.components.support.test.any
 import mozilla.components.support.test.mock
+import mozilla.components.support.test.whenever
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.`when`
 import org.mockito.Mockito.spy
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
@@ -39,13 +39,13 @@ class ConceptFetchKtTest {
         testRequest = Request(TEST_URL)
 
         client = mock<Client>().also {
-            `when`(it.fetch(any())).thenReturn(defaultResponse)
+            whenever(it.fetch(any())).thenReturn(defaultResponse)
         }
     }
 
     @Test
     fun `GIVEN fetch throws an exception WHEN fetchBodyOrNull is called THEN null is returned`() {
-        `when`(client.fetch(any())).thenThrow(IOException())
+        whenever(client.fetch(any())).thenThrow(IOException())
         assertNull(client.fetchBodyOrNull(testRequest))
     }
 
@@ -75,6 +75,6 @@ class ConceptFetchKtTest {
     }
 
     private fun setUpClientFailureResponse() {
-        `when`(client.fetch(any())).thenReturn(failureResponse)
+        whenever(client.fetch(any())).thenReturn(failureResponse)
     }
 }

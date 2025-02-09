@@ -14,12 +14,15 @@ import android.os.Build
 import android.os.IBinder
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import mozilla.components.support.base.ids.SharedIdsHelper
 
-private const val NOTIFICATION_CHANNEL_ID = "lib-crash"
+private const val NOTIFICATION_CHANNEL_ID = "mozac.lib.crash.notification"
+private const val NOTIFICATION_TAG = "mozac.lib.crash.foreground-service"
 private const val DELAY_CRASH_MS = 10000L
 
 /**
@@ -29,13 +32,14 @@ private const val DELAY_CRASH_MS = 10000L
 class CrashService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
+    @OptIn(DelicateCoroutinesApi::class) // GlobalScope usage
     @Suppress("TooGenericExceptionThrown")
     override fun onCreate() {
         Toast.makeText(this, "Crashing from background soonish...", Toast.LENGTH_SHORT).show()
 
         // We need to put this service into foreground because otherwise Android may kill it (with no visible app UI)
         // before we can crash.
-        startForeground(1, createNotification())
+        startForeground(SharedIdsHelper.getIdForTag(this, NOTIFICATION_TAG), createNotification())
 
         GlobalScope.launch(Dispatchers.Main) {
             delay(DELAY_CRASH_MS)
@@ -61,13 +65,13 @@ class CrashService : Service() {
     private fun ensureChannelExists(): String {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val notificationManager: NotificationManager = getSystemService(
-                Context.NOTIFICATION_SERVICE
+                Context.NOTIFICATION_SERVICE,
             ) as NotificationManager
 
             val channel = NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
                 "Crash Service",
-                NotificationManager.IMPORTANCE_DEFAULT
+                NotificationManager.IMPORTANCE_DEFAULT,
             )
 
             notificationManager.createNotificationChannel(channel)

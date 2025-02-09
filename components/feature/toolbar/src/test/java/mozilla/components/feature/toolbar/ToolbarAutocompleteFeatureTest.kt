@@ -5,22 +5,25 @@
 package mozilla.components.feature.toolbar
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import mozilla.components.browser.domains.Domain
 import mozilla.components.browser.domains.autocomplete.BaseDomainAutocompleteProvider
 import mozilla.components.browser.domains.autocomplete.DomainList
-import mozilla.components.browser.storage.memory.InMemoryHistoryStorage
+import mozilla.components.concept.engine.Engine
+import mozilla.components.concept.storage.HistoryAutocompleteResult
 import mozilla.components.concept.storage.HistoryStorage
-import mozilla.components.concept.storage.VisitType
 import mozilla.components.concept.toolbar.AutocompleteDelegate
 import mozilla.components.concept.toolbar.AutocompleteResult
 import mozilla.components.concept.toolbar.Toolbar
 import mozilla.components.support.test.any
+import mozilla.components.support.test.argumentCaptor
+import mozilla.components.support.test.eq
 import mozilla.components.support.test.mock
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.never
 import org.mockito.Mockito.reset
 import org.mockito.Mockito.times
@@ -30,6 +33,7 @@ import org.mockito.Mockito.verify
 class ToolbarAutocompleteFeatureTest {
 
     class TestToolbar : Toolbar {
+        override var highlight: Toolbar.Highlight = Toolbar.Highlight.NONE
         override var siteTrackingProtection: Toolbar.SiteTrackingProtection =
             Toolbar.SiteTrackingProtection.OFF_GLOBALLY
         override var title: String = ""
@@ -68,11 +72,23 @@ class ToolbarAutocompleteFeatureTest {
             fail()
         }
 
+        override fun removeBrowserAction(action: Toolbar.Action) {
+            fail()
+        }
+
+        override fun removePageAction(action: Toolbar.Action) {
+            fail()
+        }
+
         override fun addPageAction(action: Toolbar.Action) {
             fail()
         }
 
         override fun addNavigationAction(action: Toolbar.Action) {
+            fail()
+        }
+
+        override fun removeNavigationAction(action: Toolbar.Action) {
             fail()
         }
 
@@ -88,13 +104,45 @@ class ToolbarAutocompleteFeatureTest {
             fail()
         }
 
-        override fun addEditAction(action: Toolbar.Action) {
+        override fun addEditActionStart(action: Toolbar.Action) {
+            fail()
+        }
+
+        override fun addEditActionEnd(action: Toolbar.Action) {
+            fail()
+        }
+
+        override fun removeEditActionEnd(action: Toolbar.Action) {
+            fail()
+        }
+
+        override fun invalidateActions() {
+            fail()
+        }
+
+        override fun dismissMenu() {
+            fail()
+        }
+
+        override fun enableScrolling() {
+            fail()
+        }
+
+        override fun disableScrolling() {
+            fail()
+        }
+
+        override fun collapse() {
+            fail()
+        }
+
+        override fun expand() {
             fail()
         }
     }
 
     @Test
-    fun `feature can be used without providers`() {
+    fun `feature can be used without providers`() = runTest {
         val toolbar = TestToolbar()
 
         ToolbarAutocompleteFeature(toolbar)
@@ -102,10 +150,9 @@ class ToolbarAutocompleteFeatureTest {
         assertNotNull(toolbar.autocompleteFilter)
 
         val autocompleteDelegate: AutocompleteDelegate = mock()
-        runBlocking {
-            toolbar.autocompleteFilter!!("moz", autocompleteDelegate)
-        }
-        verify(autocompleteDelegate, never()).applyAutocompleteResult(any())
+        toolbar.autocompleteFilter!!("moz", autocompleteDelegate)
+
+        verify(autocompleteDelegate, never()).applyAutocompleteResult(any(), any())
         verify(autocompleteDelegate, times(1)).noAutocompleteResult("moz")
     }
 
@@ -115,7 +162,7 @@ class ToolbarAutocompleteFeatureTest {
         var feature = ToolbarAutocompleteFeature(toolbar)
         val autocompleteDelegate: AutocompleteDelegate = mock()
 
-        var history: HistoryStorage = InMemoryHistoryStorage()
+        var history: HistoryStorage = mock()
         val domains = object : BaseDomainAutocompleteProvider(DomainList.CUSTOM, { emptyList() }) {
             fun testDomains(list: List<Domain>) {
                 domains = list
@@ -127,18 +174,28 @@ class ToolbarAutocompleteFeatureTest {
         verifyNoAutocompleteResult(toolbar, autocompleteDelegate, "hi")
 
         // Can autocomplete with a non-empty history provider.
-        runBlocking {
-            history.recordVisit("https://www.mozilla.org", VisitType.TYPED)
-        }
+        doReturn(
+            HistoryAutocompleteResult(
+                input = "mo",
+                text = "mozilla.org",
+                url = "https://www.mozilla.org",
+                source = "memoryHistory",
+                totalItems = 1,
+            ),
+        ).`when`(history).getAutocompleteSuggestion("mo")
 
         verifyNoAutocompleteResult(toolbar, autocompleteDelegate, "hi")
-        verifyAutocompleteResult(toolbar, autocompleteDelegate, "mo",
+        verifyAutocompleteResult(
+            toolbar,
+            autocompleteDelegate,
+            "mo",
             AutocompleteResult(
                 input = "mo",
                 text = "mozilla.org",
                 url = "https://www.mozilla.org",
-                source = "memoryHistory", totalItems = 1
-            )
+                source = "memoryHistory",
+                totalItems = 1,
+            ),
         )
 
         // Can autocomplete with just an empty domain provider.
@@ -148,23 +205,28 @@ class ToolbarAutocompleteFeatureTest {
         verifyNoAutocompleteResult(toolbar, autocompleteDelegate, "hi")
 
         // Can autocomplete with a non-empty domain provider.
-        domains.testDomains(listOf(
-            Domain.create("https://www.mozilla.org")
-        ))
+        domains.testDomains(
+            listOf(
+                Domain.create("https://www.mozilla.org"),
+            ),
+        )
 
         verifyNoAutocompleteResult(toolbar, autocompleteDelegate, "hi")
-        verifyAutocompleteResult(toolbar, autocompleteDelegate, "mo",
+        verifyAutocompleteResult(
+            toolbar,
+            autocompleteDelegate,
+            "mo",
             AutocompleteResult(
                 input = "mo",
                 text = "mozilla.org",
                 url = "https://www.mozilla.org",
                 source = "custom",
-                totalItems = 1
-            )
+                totalItems = 1,
+            ),
         )
 
         // Can autocomplete with empty history and domain providers.
-        history = InMemoryHistoryStorage()
+        history = mock()
         domains.testDomains(listOf())
         feature.addHistoryStorageProvider(history)
 
@@ -172,61 +234,131 @@ class ToolbarAutocompleteFeatureTest {
 
         // Can autocomplete with both domains providing data; test that history is prioritized,
         // falling back to domains.
-        domains.testDomains(listOf(
-            Domain.create("https://www.mozilla.org"),
-            Domain.create("https://moscow.ru")
-        ))
+        domains.testDomains(
+            listOf(
+                Domain.create("https://www.mozilla.org"),
+                Domain.create("https://moscow.ru"),
+            ),
+        )
 
-        verifyAutocompleteResult(toolbar, autocompleteDelegate, "mo",
+        verifyAutocompleteResult(
+            toolbar,
+            autocompleteDelegate,
+            "mo",
             AutocompleteResult(
                 input = "mo",
                 text = "mozilla.org",
                 url = "https://www.mozilla.org",
                 source = "custom",
-                totalItems = 2
-            )
+                totalItems = 2,
+            ),
         )
 
-        runBlocking {
-            history.recordVisit("https://www.mozilla.org", VisitType.TYPED)
-        }
+        doReturn(
+            HistoryAutocompleteResult(
+                input = "mo",
+                text = "mozilla.org",
+                url = "https://www.mozilla.org",
+                source = "memoryHistory",
+                totalItems = 1,
+            ),
+        ).`when`(history).getAutocompleteSuggestion("mo")
 
-        verifyAutocompleteResult(toolbar, autocompleteDelegate, "mo",
+        verifyAutocompleteResult(
+            toolbar,
+            autocompleteDelegate,
+            "mo",
             AutocompleteResult(
                 input = "mo",
                 text = "mozilla.org",
                 url = "https://www.mozilla.org",
                 source = "memoryHistory",
-                totalItems = 1
-            )
+                totalItems = 1,
+            ),
         )
 
-        verifyAutocompleteResult(toolbar, autocompleteDelegate, "mos",
+        verifyAutocompleteResult(
+            toolbar,
+            autocompleteDelegate,
+            "mos",
             AutocompleteResult(
                 input = "mos",
                 text = "moscow.ru",
                 url = "https://moscow.ru",
                 source = "custom",
-                totalItems = 2
-            )
+                totalItems = 2,
+            ),
         )
     }
 
-    @Suppress("SameParameterValue")
-    private fun verifyNoAutocompleteResult(toolbar: TestToolbar, autocompleteDelegate: AutocompleteDelegate, query: String) {
-        runBlocking {
-            toolbar.autocompleteFilter!!(query, autocompleteDelegate)
+    @Test
+    fun `feature triggers speculative connect for results if engine provided`() = runTest {
+        val toolbar = TestToolbar()
+        val engine: Engine = mock()
+        var feature = ToolbarAutocompleteFeature(toolbar, engine)
+        val autocompleteDelegate: AutocompleteDelegate = mock()
+
+        val domains = object : BaseDomainAutocompleteProvider(DomainList.CUSTOM, { emptyList() }) {
+            fun testDomains(list: List<Domain>) {
+                domains = list
+            }
         }
-        verify(autocompleteDelegate, never()).applyAutocompleteResult(any())
+        domains.testDomains(listOf(Domain.create("https://www.mozilla.org")))
+        feature.addDomainProvider(domains)
+
+        toolbar.autocompleteFilter!!.invoke("mo", autocompleteDelegate)
+
+        val callbackCaptor = argumentCaptor<() -> Unit>()
+        verify(autocompleteDelegate, times(1)).applyAutocompleteResult(any(), callbackCaptor.capture())
+        verify(engine, never()).speculativeConnect("https://www.mozilla.org")
+        callbackCaptor.value.invoke()
+        verify(engine).speculativeConnect("https://www.mozilla.org")
+    }
+
+    @Test
+    fun `WHEN should autocomplete returns false THEN return no results`() = runTest {
+        val toolbar = TestToolbar()
+        val engine: Engine = mock()
+        var shouldAutoComplete = false
+        val feature = ToolbarAutocompleteFeature(toolbar, engine) { shouldAutoComplete }
+        val autocompleteDelegate: AutocompleteDelegate = mock()
+
+        val domains = object : BaseDomainAutocompleteProvider(DomainList.CUSTOM, { emptyList() }) {
+            fun testDomains(list: List<Domain>) {
+                domains = list
+            }
+        }
+        domains.testDomains(listOf(Domain.create("https://www.mozilla.org")))
+        feature.addDomainProvider(domains)
+
+        toolbar.autocompleteFilter!!.invoke("mo", autocompleteDelegate)
+
+        verify(autocompleteDelegate, times(1)).noAutocompleteResult(any())
+        verify(engine, never()).speculativeConnect("https://www.mozilla.org")
+
+        shouldAutoComplete = true
+        toolbar.autocompleteFilter!!.invoke("mo", autocompleteDelegate)
+
+        val callbackCaptor = argumentCaptor<() -> Unit>()
+        verify(autocompleteDelegate, times(1)).applyAutocompleteResult(any(), callbackCaptor.capture())
+        verify(engine, never()).speculativeConnect("https://www.mozilla.org")
+        callbackCaptor.value.invoke()
+        verify(engine).speculativeConnect("https://www.mozilla.org")
+    }
+
+    @Suppress("SameParameterValue")
+    private fun verifyNoAutocompleteResult(toolbar: TestToolbar, autocompleteDelegate: AutocompleteDelegate, query: String) = runTest {
+        toolbar.autocompleteFilter!!(query, autocompleteDelegate)
+
+        verify(autocompleteDelegate, never()).applyAutocompleteResult(any(), any())
         verify(autocompleteDelegate, times(1)).noAutocompleteResult(query)
         reset(autocompleteDelegate)
     }
 
-    private fun verifyAutocompleteResult(toolbar: TestToolbar, autocompleteDelegate: AutocompleteDelegate, query: String, result: AutocompleteResult) {
-        runBlocking {
-            toolbar.autocompleteFilter!!.invoke(query, autocompleteDelegate)
-        }
-        verify(autocompleteDelegate, times(1)).applyAutocompleteResult(result)
+    private fun verifyAutocompleteResult(toolbar: TestToolbar, autocompleteDelegate: AutocompleteDelegate, query: String, result: AutocompleteResult) = runTest {
+        toolbar.autocompleteFilter!!.invoke(query, autocompleteDelegate)
+
+        verify(autocompleteDelegate, times(1)).applyAutocompleteResult(eq(result), any())
         verify(autocompleteDelegate, never()).noAutocompleteResult(query)
         reset(autocompleteDelegate)
     }
